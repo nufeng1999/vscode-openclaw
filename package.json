@@ -4,11 +4,24 @@
   "description": "AI chat sidebar for OpenClaw gateway",
   "version": "0.0.1",
   "publisher": "nufeng",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nufeng/openclaw-vscode"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
+    "Chat",
     "Other"
+  ],
+  "keywords": [
+    "openclaw",
+    "ai",
+    "chat",
+    "llm",
+    "agent"
   ],
   "activationEvents": [
     "onStartupFinished"

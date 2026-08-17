@@ -593,6 +593,17 @@ body {
 .tab-item { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 .tab-item:hover { background: var(--hover); color: var(--text); }
 .tab-item.active { background: var(--accent); color: #fff; }
+.tab-close {
+  margin-left: 4px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  border-radius: 3px;
+  padding: 0 2px;
+  transition: opacity 0.15s;
+}
+.tab-item:hover .tab-close { opacity: 0.7; }
+.tab-close:hover { opacity: 1 !important; background: rgba(255,255,255,0.15); }
 .tab-add { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 16px; }
 .tab-add:hover { background: var(--hover); color: var(--text); }
 
@@ -1173,16 +1184,40 @@ body {
   function renderTabs() {
     const tabBar = document.getElementById('tabsBar');
     if (!tabBar) return;
-    // Remove old tab items (keep hudToggle and btnAddTab)
     tabBar.querySelectorAll('.tab-item').forEach(el => el.remove());
     for (const t of tabs) {
       const div = document.createElement('div');
       div.className = 'tab-item' + (t.id === activeTabId ? ' active' : '');
       div.dataset.tabId = t.id;
-      div.textContent = t.label;
+      const label = document.createElement('span');
+      label.textContent = t.label;
+      div.appendChild(label);
+      // Close button (not for the default Chat tab)
+      if (t.id !== 'tab-main') {
+        const close = document.createElement('span');
+        close.className = 'tab-close';
+        close.textContent = '\u00d7';
+        close.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeTab(t.id);
+        });
+        div.appendChild(close);
+      }
       div.addEventListener('click', () => switchToTab(t.id));
-      // Insert before btnAddTab
       tabBar.insertBefore(div, document.getElementById('btnAddTab'));
+    }
+  }
+
+  function closeTab(tabId) {
+    const idx = tabs.findIndex(t => t.id === tabId);
+    if (idx < 0 || tabId === 'tab-main') return;
+    tabs.splice(idx, 1);
+    if (activeTabId === tabId) {
+      // Switch to the last tab, or default Chat tab
+      const newTab = tabs[Math.min(idx, tabs.length - 1)] || tabs[0];
+      switchToTab(newTab.id);
+    } else {
+      renderTabs();
     }
   }
 
