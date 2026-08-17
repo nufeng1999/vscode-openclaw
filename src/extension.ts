@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
-import { OpenClawGateway } from "./gateway";
+import { OpenClawGateway, NodeHost } from "./gateway";
 import { OpenClawChatView } from "./chatView";
 
 let gateway: OpenClawGateway;
+let nodeHost: NodeHost;
 let chatView: OpenClawChatView;
 let outputChannel: vscode.OutputChannel;
 
@@ -27,13 +28,79 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  // NodeHost: 第二个连接 (role=node)，处理 node.invoke.request
+  nodeHost = new NodeHost(url, token, outputChannel);
+  await nodeHost.initDeviceIdentity({
+    get(key: string) {
+      return context.globalState.get(key);
+    },
+    update(key: string, value: any) {
+      context.globalState.update(key, value);
+    }
+  });
+
+  // 更新 agent 配置 + 自动审批节点配对
+  const nodeDeviceId = nodeHost.getDeviceId();
+  let nodeApproved = false;
+
+  async function doApproveAndReconnect() {
+    if (nodeApproved) return;
+    outputChannel.appendLine(`doApproveAndReconnect: nodeDeviceId=${nodeDeviceId?.substring(0, 16)}...`);
+    try {
+      const approved = await approveNodePairing(gateway, nodeDeviceId || "", outputChannel);
+      if (approved) {
+        nodeApproved = true;
+        outputChannel.appendLine("Pairing approved! Reconnecting node in 2s...");
+        await sleep(2000);
+        nodeHost.disconnect();
+        await sleep(500);
+        nodeHost.connect();
+      }
+    } catch (err: any) {
+      outputChannel.appendLine(`WARNING: approveNodePairing failed: ${err.message}`);
+    }
+  }
+
+  // gateway 连接后：更新 agent 配置
+  gateway.on("connected", async () => {
+    nodeApproved = false;
+    chatView.updateConnectionStatus(true);
+    if (nodeDeviceId) {
+      try {
+        await updateNodeAgentConfig(gateway, nodeDeviceId, outputChannel);
+      } catch (err: any) {
+        outputChannel.appendLine(`WARNING: updateNodeAgentConfig failed: ${err.message}`);
+      }
+      // 延迟 3 秒等 node 也连上并创建配对请求
+      setTimeout(() => doApproveAndReconnect(), 3000);
+    }
+  });
+
+  // 监听 node.pair.requested 事件（node 连上后 gateway 会发此事件）
+  gateway.on("node.pair.requested", (msg: any) => {
+    outputChannel.appendLine(`[EVENT] node.pair.requested: ${JSON.stringify(msg).substring(0, 300)}`);
+    // 收到事件后立即审批
+    setTimeout(() => doApproveAndReconnect(), 500);
+  });
+
+  // node 连接成功后也触发审批（双保险）
+  nodeHost.on("connected", () => {
+    outputChannel.appendLine("[NodeHost] connected, checking pairing in 3s...");
+    setTimeout(() => doApproveAndReconnect(), 3000);
+  });
+
   context.subscriptions.push(
     vscode.commands.registerCommand("openclaw.openChat", () => {
       chatView.show();
     }),
     vscode.commands.registerCommand("openclaw.reconnect", () => {
       gateway.disconnect();
+      nodeHost.disconnect();
       gateway.connect();
+      nodeHost.connect();
+    }),
+    vscode.commands.registerCommand("openclaw.approvePairing", () => {
+      doApproveAndReconnect();
     }),
     vscode.commands.registerCommand("openclaw.newChat", () => {
       chatView.newChat();
@@ -41,17 +108,32 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("openclaw.settings", () => {
       vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
     }),
+    vscode.commands.registerCommand("openclaw.resetDevice", () => {
+      gateway.resetDeviceIdentity({
+        get(key: string) { return context.globalState.get(key); },
+        update(key: string, value: any) { context.globalState.update(key, value); }
+      });
+      // 也清除 node 设备身份
+      context.globalState.update("nodeDeviceIdentityV2", undefined);
+      gateway.disconnect();
+      nodeHost.disconnect();
+      vscode.window.showInformationMessage("Device identities cleared. Reconnecting...");
+      gateway.connect();
+      nodeHost.connect();
+    }),
     vscode.window.registerWebviewViewProvider("openclaw.chatView", chatView, {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
 
-  gateway.on("connected", () => {
-    chatView.updateConnectionStatus(true);
-  });
-
   gateway.on("disconnected", () => {
     chatView.updateConnectionStatus(false);
+  });
+
+  // Handle node notifications
+  gateway.on("notification", (notif: { title: string; message: string }) => {
+    outputChannel.appendLine(`NOTIFY: ${notif.title} - ${notif.message}`);
+    vscode.window.showInformationMessage(`${notif.title}: ${notif.message}`);
   });
 
   // Handle gateway events (matching Obsidian plugin's onEvent handler)
@@ -68,8 +150,120 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   gateway.connect();
+  nodeHost.connect();
 }
 
 export function deactivate() {
   gateway?.disconnect();
+  nodeHost?.disconnect();
+}
+
+async function updateNodeAgentConfig(gw: OpenClawGateway, nodeDeviceId: string, channel: vscode.OutputChannel) {
+  const agentId = `node:${nodeDeviceId}`;
+  channel.appendLine(`updateNodeAgentConfig: ${agentId}`);
+
+  const configResult = await gw.request("config.get", {}) as any;
+  const baseHash = configResult?.hash;
+  let config = configResult?.config;
+  if (!config && configResult?.raw) {
+    try { config = JSON.parse(configResult.raw); } catch {}
+  }
+  if (!config) config = configResult;
+
+  const agentList: any[] = config?.agents?.list || [];
+
+  // 移除所有旧的 node:* 条目
+  const filtered = agentList.filter((a: any) => !a.id?.startsWith("node:"));
+
+  // 添加新的 node 条目
+  filtered.push({
+    id: agentId,
+    tools: { exec: { host: "node", node: "OpenClaw VSCode", notifyOnExit: false } }
+  });
+
+  const patch = {
+    raw: JSON.stringify({ agents: { list: filtered } }),
+    baseHash: baseHash || undefined,
+    replacePaths: ["agents.list"]
+  };
+  channel.appendLine(`config.patch agents.list (count=${filtered.length})...`);
+  const result = await gw.request("config.patch", patch, 90000) as any;
+  channel.appendLine(`config.patch result: ok=${result?.ok}`);
+}
+
+async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, channel: vscode.OutputChannel): Promise<boolean> {
+  channel.appendLine(`approveNodePairing: looking for pending pairs...`);
+  let listResult: any;
+  try {
+    listResult = await gw.request("node.pair.list", {});
+  } catch (err: any) {
+    channel.appendLine(`node.pair.list failed: ${err.message}`);
+    return false;
+  }
+  channel.appendLine(`node.pair.list: ${JSON.stringify(listResult).substring(0, 800)}`);
+
+  let approved = false;
+
+  // 处理不同的响应格式
+  const allEntries: any[] = [];
+  if (Array.isArray(listResult)) {
+    allEntries.push(...listResult);
+  } else if (listResult) {
+    // 可能是 { pending: [...], paired: [...] } 或直接是数组
+    const pending = listResult.pending || listResult.requests || [];
+    const paired = listResult.paired || listResult.nodes || [];
+    if (Array.isArray(pending)) allEntries.push(...pending);
+    if (Array.isArray(paired)) allEntries.push(...paired);
+    // 也检查顶层数组
+    for (const key of Object.keys(listResult)) {
+      if (Array.isArray(listResult[key])) {
+        for (const item of listResult[key]) {
+          if (item && typeof item === "object") {
+            allEntries.push(item);
+          }
+        }
+      }
+    }
+  }
+
+  channel.appendLine(`Total entries found: ${allEntries.length}`);
+
+  for (const entry of allEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    const entryNodeId = entry.nodeId || entry.deviceId || entry.device?.id || "";
+    const requestId = entry.requestId || entry.id || "";
+    const status = entry.status || "";
+    const token = entry.token || "";
+
+    channel.appendLine(`  entry: id=${requestId} nodeId=${String(entryNodeId).substring(0, 16)}... status=${status} hasToken=${!!token}`);
+
+    // 审批 pending 的配对请求
+    if (status === "pending" || status === "awaiting_approval" || (!status && requestId)) {
+      channel.appendLine(`Approving pairing: ${requestId} for node ${entryNodeId.substring(0, 16)}...`);
+      try {
+        const approveResult = await gw.request("node.pair.approve", {
+          requestId: requestId,
+          name: "VSCode Node",
+          commands: ["system.run.prepare", "system.run", "system.which", "system.execApprovals.get", "system.execApprovals.set"]
+        }, 30000) as any;
+        channel.appendLine(`node.pair.approve result: ${JSON.stringify(approveResult).substring(0, 500)}`);
+
+        // 如果审批返回了 token，保存它
+        const newToken = approveResult?.token || approveResult?.pairedNode?.token || "";
+        if (newToken) {
+          channel.appendLine(`Got pairing token: ${newToken.substring(0, 16)}...`);
+          nodeHost.setToken(newToken);
+        }
+        approved = true;
+      } catch (err: any) {
+        channel.appendLine(`node.pair.approve failed: ${err.message}`);
+      }
+    }
+  }
+
+  return approved;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

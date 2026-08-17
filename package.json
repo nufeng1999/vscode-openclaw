@@ -38,12 +38,20 @@
         "title": "OpenClaw: Reconnect"
       },
       {
+        "command": "openclaw.approvePairing",
+        "title": "OpenClaw: Approve Node Pairing"
+      },
+      {
         "command": "openclaw.newChat",
         "title": "OpenClaw: New Chat"
       },
       {
         "command": "openclaw.settings",
         "title": "OpenClaw: Settings"
+      },
+      {
+        "command": "openclaw.resetDevice",
+        "title": "OpenClaw: Reset Device Identity"
       }
     ],
     "viewsContainers": {
