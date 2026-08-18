@@ -59,6 +59,15 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.messageHistory = context.globalState.get<string[]>("openclaw.messageHistory", []);
     const config = vscode.workspace.getConfiguration("openclaw");
     this.gatewayUrl = config.get<string>("gatewayUrl", "ws://127.0.0.1:18789");
+    // Read agentId and sessionKey from configuration
+    const configAgentId = config.get<string>("agentId", "");
+    const configSessionKey = config.get<string>("sessionKey", "");
+    if (configAgentId) {
+      this.activeAgent = { id: configAgentId, name: configAgentId, emoji: "🤖" };
+    }
+    if (configSessionKey) {
+      this.currentSessionKey = configSessionKey;
+    }
   }
 
   public show() {
