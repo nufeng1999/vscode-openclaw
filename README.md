@@ -46,12 +46,12 @@ Then copy the folder to `~/.vscode/extensions/`.
 
 Open VSCode Settings and search for `openclaw`:
 
-| Setting               | Default                | Description                  |
-| --------------------- | ---------------------- | ---------------------------- |
-| `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the gateway |
-| `openclaw.token`      | _(empty)_              | Auth token for the gateway   |
-| `openclaw.sessionKey` | `main`                 | Default session key          |
-| `openclaw.agentId`    | `main`                 | Default agent ID             |
+| Setting               | Default                | Description                          |
+| --------------------- | ---------------------- | ------------------------------------ |
+| `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the gateway         |
+| `openclaw.token`      | _(empty)_              | Auth token for the gateway           |
+| `openclaw.sessionKey` | `OpenClaw VSCode`      | Default session key                  |
+| `openclaw.agentId`    | `OpenClaw VSCode`      | Default agent ID or node display name |
 
 ## Usage
 
