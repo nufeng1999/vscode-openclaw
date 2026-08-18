@@ -846,11 +846,10 @@ export class NodeHost extends EventEmitter {
       { label: "$(close) Deny", description: "Block this command from running", result: "deny" as const }
     ];
     const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: `Allow command execution?`,
-      title: `OpenClaw Node: Command Approval`,
-      detail: `Command: ${command}\nWorking Directory: ${cwd}`
-    });
-    return selected?.result || "deny";
+      placeHolder: `Command: ${command}\nDirectory: ${cwd}`,
+      title: `OpenClaw Node: Command Approval`
+    } as any);
+    return (selected as any)?.result || "deny";
   }
 
   private isCwdApproved(cwd: string): boolean {

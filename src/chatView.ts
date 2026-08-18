@@ -291,13 +291,29 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     const attachments = await this.buildAttachments(fileRefs);
 
     try {
-      await this.gateway.request("chat.send", {
+      const res = await this.gateway.request("chat.send", {
         sessionKey: this.gwSessionKey(),
         message: text,
         deliver: false,
         idempotencyKey: runId,
         ...(attachments.length > 0 ? { attachments } : {})
-      });
+      }) as any;
+      // If gateway didn't start a stream (e.g. /stop returns aborted:false, runIds:[]),
+      // clear the "Thinking" state and show the gateway's reply as assistant message
+      if (res && typeof res === 'object' && 
+          res.aborted === false && 
+          (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
+        this.postToWebview({ type: "streamDone", runId });
+        // Format slash command response for display
+        const replyText = this.formatCommandResponse(text, res);
+        const assistantMsg: ChatMessage = {
+          role: "assistant",
+          text: replyText,
+          timestamp: Date.now()
+        };
+        this.messages.push(assistantMsg);
+        this.postToWebview({ type: "userMessage", message: assistantMsg });
+      }
     } catch (err: any) {
       this.messages.push({
         role: "assistant",
@@ -339,6 +355,48 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       } catch {}
     }
     return attachments;
+  }
+
+  private formatCommandResponse(command: string, response: any): string {
+    const cmd = command.trim().toLowerCase();
+    if (!response) return 'No response';
+    
+    // Handle specific command responses
+    if (cmd === '/stop') {
+      if (response.aborted === true) {
+        return 'Stream stopped successfully';
+      } else {
+        return 'No active stream to stop';
+      }
+    }
+    
+    // Handle other common slash commands
+    if (cmd === '/new') {
+      return 'New chat session started';
+    }
+    
+    if (cmd === '/models') {
+      if (response.models && Array.isArray(response.models)) {
+        return `Available models: ${response.models.join(', ')}`;
+      }
+      return 'Models list retrieved';
+    }
+    
+    if (cmd === '/help') {
+      return 'Available commands: /stop /new /models /help';
+    }
+    
+    // Fallback: show meaningful fields or JSON
+    if (response.message) return response.message;
+    if (response.ok !== undefined) {
+      const okStr = response.ok === true ? 'Success' : 'Failed';
+      if (response.aborted !== undefined) {
+        return `${okStr}${response.aborted ? ' (aborted)' : ''}`;
+      }
+      return okStr;
+    }
+    
+    return JSON.stringify(response);
   }
 
   private async handleStopStream() {
@@ -960,6 +1018,7 @@ body {
       </button>
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
+        <div class="at-dropdown" id="slashDropdown"></div>
         <textarea class="input-box" id="inputBox" placeholder="Message OpenClaw..." rows="1" style="width:100%;"></textarea>
       </div>
       <button class="send-btn" id="sendBtn" title="Send">
@@ -1015,6 +1074,22 @@ body {
   let atTriggerPos = -1;
   let atFileRefs = [];
   const atDropdown = $('#atDropdown');
+  const slashDropdown = $('#slashDropdown');
+
+  let slashVisible = false;
+  let slashFilter = '';
+  let slashSelectedIndex = 0;
+  const SLASH_COMMANDS = [
+    { cmd: '/new', desc: 'Start a new chat session' },
+    { cmd: '/stop', desc: 'Stop the current response' },
+    { cmd: '/reset', desc: 'Reset session context' },
+    { cmd: '/compact', desc: 'Compact session messages' },
+    { cmd: '/status', desc: 'Show session status' },
+    { cmd: '/models', desc: 'List available models' },
+    { cmd: '/model', desc: 'Switch active model' },
+    { cmd: '/commands', desc: 'List available commands' },
+    { cmd: '/help', desc: 'Show help information' },
+  ];
 
   // Tab management: each tab = { id, label, agentId, sessionKey, messages[] }
   let tabs = [{ id: 'tab-main', label: 'Chat', agentId: 'main', sessionKey: 'main', messages: [] }];
@@ -1052,6 +1127,7 @@ body {
     inputBox.style.height = 'auto';
     inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
     checkAtTrigger();
+    checkSlashTrigger();
   });
   inputBox.addEventListener('keydown', (e) => {
     if (atVisible) {
@@ -1081,6 +1157,37 @@ body {
       if (e.key === 'Escape') {
         e.preventDefault();
         hideAtDropdown();
+        return;
+      }
+    }
+    if (slashVisible) {
+      const filtered = getFilteredSlashCommands();
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (filtered.length > 0) {
+          slashSelectedIndex = (slashSelectedIndex + 1) % filtered.length;
+          updateSlashActive();
+        }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (filtered.length > 0) {
+          slashSelectedIndex = (slashSelectedIndex - 1 + filtered.length) % filtered.length;
+          updateSlashActive();
+        }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (filtered.length > 0) {
+          selectSlashCommand(filtered[slashSelectedIndex]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideSlashDropdown();
         return;
       }
     }
@@ -1114,6 +1221,30 @@ body {
   thinkingChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleThinking' }));
   verboseChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleVerbose' }));
 
+  // Slash dropdown: event delegation (set up once, survives re-renders)
+  slashDropdown.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const item = e.target.closest('.at-item');
+    if (!item || !item.dataset.cmd) return;
+    inputBox.value = item.dataset.cmd + ' ';
+    inputBox.setSelectionRange(inputBox.value.length, inputBox.value.length);
+    inputBox.focus();
+    hideSlashDropdown();
+    inputBox.style.height = 'auto';
+    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+  });
+  slashDropdown.addEventListener('mousemove', (e) => {
+    const item = e.target.closest('.at-item');
+    if (!item) return;
+    const items = Array.from(slashDropdown.querySelectorAll('.at-item'));
+    const idx = items.indexOf(item);
+    if (idx >= 0 && idx !== slashSelectedIndex) {
+      slashSelectedIndex = idx;
+      updateSlashActive();
+    }
+  });
+
   window.addEventListener('message', (e) => {
     const msg = e.data;
     switch (msg.type) {
@@ -1128,7 +1259,7 @@ body {
         historyIndex = -1;
         updateAgentCard();
         updateChips();
-        serverValue.textContent = gatewayUrl.replace(/^wss?:\\/\\//, '') || 'not configured';
+        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : 'not configured';
         if (msg.sessionKey) currentSession = msg.sessionKey;
         break;
       case 'connectionStatus':
@@ -1238,19 +1369,22 @@ body {
     const pos = inputBox.selectionStart;
     if (pos < 0) { hideAtDropdown(); return; }
     const before = val.substring(0, pos);
-    const match = before.match(/@(\S*)$/);
-    if (match) {
-      atTriggerPos = match.index;
-      atQuery = match[1];
-      atRequestId = Math.random().toString(36).substring(2, 10);
-      atSelectedIndex = 0;
-      atVisible = true;
-      vscode.postMessage({ type: 'searchFiles', query: atQuery, requestId: atRequestId });
-      atDropdown.classList.add('visible');
-      renderAtDropdown();
-    } else {
-      hideAtDropdown();
+    const atIndex = before.lastIndexOf('@');
+    if (atIndex >= 0) {
+      const query = before.slice(atIndex + 1);
+      if (query.indexOf(' ') === -1 && query.indexOf('\t') === -1) {
+        atTriggerPos = atIndex;
+        atQuery = query;
+        atRequestId = Math.random().toString(36).substring(2, 10);
+        atSelectedIndex = 0;
+        atVisible = true;
+        vscode.postMessage({ type: 'searchFiles', query: atQuery, requestId: atRequestId });
+        atDropdown.classList.add('visible');
+        renderAtDropdown();
+        return;
+      }
     }
+    hideAtDropdown();
   }
 
   function hideAtDropdown() {
@@ -1301,6 +1435,76 @@ body {
     inputBox.focus();
     if (!atFileRefs.includes(file.path)) atFileRefs.push(file.path);
     hideAtDropdown();
+    inputBox.style.height = 'auto';
+    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+  }
+
+  // ─── / Command Dropdown ───
+  function getFilteredSlashCommands() {
+    if (!slashFilter) return SLASH_COMMANDS;
+    const q = slashFilter.toLowerCase();
+    return SLASH_COMMANDS.filter(c => c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q));
+  }
+
+  function checkSlashTrigger() {
+    if (atVisible) { hideSlashDropdown(); return; }
+    const val = inputBox.value;
+    const pos = inputBox.selectionStart;
+    if (pos < 0) { hideSlashDropdown(); return; }
+    const before = val.substring(0, pos);
+    if (atVisible) { hideSlashDropdown(); return; }
+    const slashIndex = before.lastIndexOf('/');
+    if (slashIndex === 0) {
+      const query = before.slice(1);
+      if (query.indexOf(' ') === -1 && query.indexOf('\t') === -1) {
+        slashFilter = query;
+        slashSelectedIndex = 0;
+        slashVisible = true;
+        slashDropdown.classList.add('visible');
+        renderSlashDropdown();
+        return;
+      }
+    }
+    hideSlashDropdown();
+  }
+
+  function hideSlashDropdown() {
+    slashVisible = false;
+    slashFilter = '';
+    slashDropdown.classList.remove('visible');
+  }
+
+  function renderSlashDropdown() {
+    if (!slashVisible) return;
+    const filtered = getFilteredSlashCommands();
+    if (filtered.length === 0) {
+      slashDropdown.innerHTML = '<div class="at-empty">No matching commands</div>';
+      return;
+    }
+    slashDropdown.innerHTML = '';
+    const maxShow = Math.min(filtered.length, 10);
+    for (let i = 0; i < maxShow; i++) {
+      const c = filtered[i];
+      const div = document.createElement('div');
+      div.className = 'at-item' + (i === slashSelectedIndex ? ' active' : '');
+      div.dataset.cmd = c.cmd;
+      div.innerHTML = '<span class="at-icon">⚡</span><span class="at-label">' + c.cmd + '</span><span style="font-size:11px;color:var(--text-muted);margin-left:8px;white-space:nowrap;">' + c.desc + '</span>';
+      slashDropdown.appendChild(div);
+    }
+    const activeItem = slashDropdown.querySelector('.at-item.active');
+    if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+  }
+
+  function updateSlashActive() {
+    const items = slashDropdown.querySelectorAll('.at-item');
+    items.forEach((el, i) => el.classList.toggle('active', i === slashSelectedIndex));
+  }
+
+  function selectSlashCommand(cmd) {
+    inputBox.value = cmd.cmd + ' ';
+    inputBox.setSelectionRange(inputBox.value.length, inputBox.value.length);
+    inputBox.focus();
+    hideSlashDropdown();
     inputBox.style.height = 'auto';
     inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
   }
