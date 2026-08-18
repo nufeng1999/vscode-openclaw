@@ -9,6 +9,8 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Agent HUD** — Connection status, model settings, session management
 - **Multi-Agent** — Switch between agents with one click, each agent gets its own chat tab
 - **Streaming Responses** — Real-time markdown rendering of AI responses
+- **Image & Video Support** — Automatically display images and videos embedded in gateway replies (base64-encoded data URLs)
+- **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation. Resets when a normal response is received or the user sends a new message.
 - **Slash Commands** — Type `/` to see available commands (`/stop`, `/new`, `/models`, `/help`, etc.), sent to gateway and response displayed in chat
 - **Context Meter** — Visual indicator of token usage per session
 - **Session Management** — Create, switch, and delete chat sessions
@@ -168,6 +170,7 @@ The extension connects to the OpenClaw gateway with two roles:
 4. Registers node capabilities (`system.run`, `system.which`, etc.)
 5. Chat messages are sent via `chat.send` RPC
 6. Responses stream in via `chat` events (`delta` → `final`)
+7. On agent run failure responses, auto-sends "Continue" up to 3 times to resume conversation
 
 ### Node Pairing
 
