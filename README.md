@@ -1,6 +1,8 @@
-# CQClaw - OpenClaw Client for VSCode
+# vscode node & OpenClaw Client for VSCode
 
 AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gateway. Connects to your OpenClaw instance via WebSocket and provides a native chat interface directly in VSCode.
+
+![](https://github.com/nufeng1999/imgs/blob/main/img/HikkX9mXOB.png?raw=true)
 
 ## Features
 
@@ -25,7 +27,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 
 ### From VS Marketplace
 
-Search for **CQClaw** in the VS Code Extensions panel, or visit the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT-nufeng1999.nufeng1999-OpenClaw-vscode).
+Search for **nufeng1999** in the VS Code Extensions panel, or visit the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT-nufeng1999.nufeng1999-OpenClaw-vscode).
 
 ### From Source
 
@@ -42,12 +44,12 @@ Then copy the folder to `~/.vscode/extensions/`.
 
 Open VSCode Settings and search for `openclaw`:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
+| Setting               | Default                | Description                  |
+| --------------------- | ---------------------- | ---------------------------- |
 | `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the gateway |
-| `openclaw.token` | _(empty)_ | Auth token for the gateway |
-| `openclaw.sessionKey` | `main` | Default session key |
-| `openclaw.agentId` | `main` | Default agent ID |
+| `openclaw.token`      | _(empty)_              | Auth token for the gateway   |
+| `openclaw.sessionKey` | `main`                 | Default session key          |
+| `openclaw.agentId`    | `main`                 | Default agent ID             |
 
 ## Usage
 
@@ -77,10 +79,10 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 
 Your sent messages are saved automatically (up to 200 entries, persisted across sessions).
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Up` | Cycle backward through message history |
-| `Ctrl+Down` | Cycle forward through message history |
+| Shortcut    | Action                                 |
+| ----------- | -------------------------------------- |
+| `Ctrl+Up`   | Cycle backward through message history |
+| `Ctrl+Down` | Cycle forward through message history  |
 
 History resets when you send a new message.
 
@@ -88,13 +90,13 @@ History resets when you send a new message.
 
 Type `@` in the input box to trigger file search. A dropdown shows workspace files and folders matching your query.
 
-| Action | Result |
-|--------|--------|
-| Type `@` | Show all workspace files |
+| Action      | Result                        |
+| ----------- | ----------------------------- |
+| Type `@`    | Show all workspace files      |
 | Type `@app` | Filter files containing "app" |
-| `↑` / `↓` | Navigate the dropdown |
-| `Enter` | Select and insert `@filepath` |
-| `Escape` | Close the dropdown |
+| `↑` / `↓`   | Navigate the dropdown         |
+| `Enter`     | Select and insert `@filepath` |
+| `Escape`    | Close the dropdown            |
 
 When you send a message containing `@path`, the referenced file's content is automatically read and attached as context to the AI. The `@path` text remains visible in the message so the AI knows which files you referenced.
 
@@ -115,22 +117,22 @@ On first connection, the extension registers as a **node** alongside its operato
 
 When the agent tries to run a command, a VSCode QuickPick dialog appears:
 
-| Option | Behavior |
-|--------|----------|
-| **Allow Once** | Execute this command once |
+| Option           | Behavior                                                     |
+| ---------------- | ------------------------------------------------------------ |
+| **Allow Once**   | Execute this command once                                    |
 | **Always Allow** | Auto-approve all commands in this cwd and its subdirectories |
-| **Deny** | Cancel the command |
+| **Deny**         | Cancel the command                                           |
 
 Approval is based on the working directory (cwd), not the specific command. Subdirectories inherit approval from their parent.
 
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `OpenClaw: Open Chat` | Open the chat sidebar |
-| `OpenClaw: Reconnect` | Reconnect to the gateway |
-| `OpenClaw: New Chat` | Start a new chat session |
-| `OpenClaw: Settings` | Open extension settings |
+| Command                          | Description                            |
+| -------------------------------- | -------------------------------------- |
+| `OpenClaw: Open Chat`            | Open the chat sidebar                  |
+| `OpenClaw: Reconnect`            | Reconnect to the gateway               |
+| `OpenClaw: New Chat`             | Start a new chat session               |
+| `OpenClaw: Settings`             | Open extension settings                |
 | `OpenClaw: Approve Node Pairing` | Manually trigger node pairing approval |
 
 ## How It Works

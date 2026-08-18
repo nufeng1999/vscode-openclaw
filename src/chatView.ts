@@ -366,11 +366,11 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       const seen = new Set<string>();
 
       for (const uri of uris) {
-        const relPath = vscode.workspace.asRelativePath(uri, false);
+        const relPath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
         if (seen.has(relPath)) continue;
         seen.add(relPath);
 
-        const parts = relPath.replace(/\\/g, "/").split("/");
+        const parts = relPath.split("/");
         const isDir = false;
 
         if (query) {

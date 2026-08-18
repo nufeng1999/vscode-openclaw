@@ -744,16 +744,26 @@ export class NodeHost extends EventEmitter {
   // ─── Command execution ───
 
   private resolveCwd(cwd?: string): string {
-    // Gateway 可能发送 Linux 路径，需要映射到 Windows 路径
-    if (cwd && !cwd.startsWith("/")) {
-      // 已经是 Windows 路径，验证存在性
-      try {
-        const fs = require("fs");
-        if (fs.existsSync(cwd)) return cwd;
-      } catch {}
+    if (cwd) {
+      // 统一路径分隔符
+      const normalized = cwd.replace(/\\/g, "/");
+      // Linux/macOS 绝对路径
+      if (normalized.startsWith("/")) {
+        try {
+          const fs = require("fs");
+          if (fs.existsSync(cwd)) return cwd;
+        } catch {}
+      }
+      // Windows 绝对路径 (C:\...)
+      if (/^[A-Za-z]:/.test(cwd)) {
+        try {
+          const fs = require("fs");
+          if (fs.existsSync(cwd)) return cwd;
+        } catch {}
+      }
     }
-    // 使用 VSCode workspace 或 HOME 目录
-    const fallback = process.env.USERPROFILE || process.env.HOMEPATH || "C:\\";
+    // 跨平台 HOME 目录
+    const fallback = process.env.HOME || process.env.USERPROFILE || process.env.HOMEPATH || "/tmp";
     this.log(`CWD resolved: ${cwd || "(none)"} → ${fallback}`);
     return fallback;
   }
@@ -768,10 +778,13 @@ export class NodeHost extends EventEmitter {
 
     if (Array.isArray(cmd)) {
       // Gateway (Linux) 发送 ["/bin/sh","-lc","command"] 或 ["sh","-c","command"]
+      // Windows 节点可能收到 ["cmd","/c","command"] 或 ["powershell","-c","command"]
       if (cmd.length >= 3) {
-        const shell = String(cmd[0] || "");
+        const shell = String(cmd[0] || "").toLowerCase();
         const flag = String(cmd[1] || "");
-        if ((flag === "-c" || flag === "-lc") && (shell.endsWith("/sh") || shell.endsWith("/bash") || shell === "sh" || shell === "bash")) {
+        const isUnixShell = shell.endsWith("/sh") || shell.endsWith("/bash") || shell === "sh" || shell === "bash";
+        const isWinShell = shell === "cmd" || shell === "cmd.exe" || shell === "powershell" || shell === "pwsh";
+        if ((flag === "-c" || flag === "-lc" || flag === "/c") && (isUnixShell || isWinShell)) {
           return cmd[2]; // 提取原始命令字符串
         }
       }
@@ -885,12 +898,23 @@ export class NodeHost extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const { exec } = require("child_process");
+      // 根据平台和命令选择合适的 shell
+      let shellOpt: string | boolean = true;
+      if (process.platform === "win32") {
+        const lower = cmdStr.toLowerCase().trim();
+        if (lower.startsWith("powershell ") || lower.startsWith("pwsh ")) {
+          shellOpt = "powershell.exe";
+        } else if (lower.startsWith("wsl ")) {
+          shellOpt = "wsl.exe";
+        }
+        // 默认使用 cmd.exe (shell: true)
+      }
       const child = exec(cmdStr, {
         cwd,
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024 * 10,
         env: { ...process.env, ...params.env },
-        shell: true
+        shell: shellOpt
       }, (error: any, stdout: string, stderr: string) => {
         const hasOutput = !!(stdout || "").trim();
         if (error && error.killed) {
