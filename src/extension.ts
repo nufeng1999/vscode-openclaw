@@ -47,14 +47,22 @@ export async function activate(context: vscode.ExtensionContext) {
     if (nodeApproved) return;
     outputChannel.appendLine(`doApproveAndReconnect: nodeDeviceId=${nodeDeviceId?.substring(0, 16)}...`);
     try {
-      const approved = await approveNodePairing(gateway, nodeDeviceId || "", outputChannel);
-      if (approved) {
+      const result = await approveNodePairing(gateway, nodeDeviceId || "", outputChannel);
+      if (result.approved || result.alreadyPaired) {
         nodeApproved = true;
-        outputChannel.appendLine("Pairing approved! Reconnecting node in 2s...");
-        await sleep(2000);
-        nodeHost.disconnect();
-        await sleep(500);
-        nodeHost.connect();
+        // 更新 agent name 为配对信息里的 displayName
+        if (result.displayName) {
+          await updateNodeAgentName(gateway, nodeDeviceId || "", result.displayName, outputChannel);
+        }
+        if (result.approved) {
+          outputChannel.appendLine("Pairing approved! Reconnecting node in 2s...");
+          await sleep(2000);
+          nodeHost.disconnect();
+          await sleep(500);
+          nodeHost.connect();
+        } else {
+          outputChannel.appendLine("Already paired, no reconnect needed");
+        }
       }
     } catch (err: any) {
       outputChannel.appendLine(`WARNING: approveNodePairing failed: ${err.message}`);
@@ -191,18 +199,56 @@ async function updateNodeAgentConfig(gw: OpenClawGateway, nodeDeviceId: string, 
   channel.appendLine(`config.patch result: ok=${result?.ok}`);
 }
 
-async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, channel: vscode.OutputChannel): Promise<boolean> {
+async function updateNodeAgentName(gw: OpenClawGateway, nodeDeviceId: string, displayName: string, channel: vscode.OutputChannel) {
+  const agentId = `node:${nodeDeviceId}`;
+  channel.appendLine(`updateNodeAgentName: ${agentId} -> ${displayName}`);
+
+  const configResult = await gw.request("config.get", {}) as any;
+  const baseHash = configResult?.hash;
+  let config = configResult?.config;
+  if (!config && configResult?.raw) {
+    try { config = JSON.parse(configResult.raw); } catch {}
+  }
+  if (!config) config = configResult;
+
+  const agentList: any[] = config?.agents?.list || [];
+  let changed = false;
+  const updated = agentList.map((agent: any) => {
+    if (agent?.id === agentId && agent.name !== displayName) {
+      changed = true;
+      return { ...agent, name: displayName };
+    }
+    return agent;
+  });
+
+  if (!changed) {
+    channel.appendLine(`updateNodeAgentName: no change needed`);
+    return;
+  }
+
+  const patch = {
+    raw: JSON.stringify({ agents: { list: updated } }),
+    baseHash: baseHash || undefined,
+    replacePaths: ["agents.list"]
+  };
+  const result = await gw.request("config.patch", patch, 90000) as any;
+  channel.appendLine(`updateNodeAgentName result: ok=${result?.ok}`);
+}
+
+async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, channel: vscode.OutputChannel): Promise<{ approved: boolean; alreadyPaired: boolean; displayName?: string }> {
   channel.appendLine(`approveNodePairing: looking for pending pairs...`);
   let listResult: any;
   try {
     listResult = await gw.request("node.pair.list", {});
   } catch (err: any) {
     channel.appendLine(`node.pair.list failed: ${err.message}`);
-    return false;
+    return { approved: false, alreadyPaired: false };
   }
   channel.appendLine(`node.pair.list: ${JSON.stringify(listResult).substring(0, 800)}`);
 
   let approved = false;
+  let alreadyPaired = false;
+  let displayName: string | undefined;
 
   // 处理不同的响应格式
   const allEntries: any[] = [];
@@ -228,6 +274,18 @@ async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, cha
 
   channel.appendLine(`Total entries found: ${allEntries.length}`);
 
+  // 先检查已配对列表，获取 displayName
+  for (const entry of allEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    const entryNodeId = entry.nodeId || entry.deviceId || entry.device?.id || "";
+    if (entryNodeId === nodeDeviceId) {
+      if (entry.displayName) {
+        displayName = entry.displayName;
+        channel.appendLine(`Found displayName for paired node: ${displayName}`);
+      }
+    }
+  }
+
   for (const entry of allEntries) {
     if (!entry || typeof entry !== "object") continue;
     const entryNodeId = entry.nodeId || entry.deviceId || entry.device?.id || "";
@@ -242,9 +300,7 @@ async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, cha
       channel.appendLine(`Approving pairing: ${requestId} for node ${entryNodeId.substring(0, 16)}...`);
       try {
         const approveResult = await gw.request("node.pair.approve", {
-          requestId: requestId,
-          name: "VSCode Node",
-          commands: ["system.run.prepare", "system.run", "system.which", "system.execApprovals.get", "system.execApprovals.set"]
+          requestId: requestId
         }, 30000) as any;
         channel.appendLine(`node.pair.approve result: ${JSON.stringify(approveResult).substring(0, 500)}`);
 
@@ -254,6 +310,10 @@ async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, cha
           channel.appendLine(`Got pairing token: ${newToken.substring(0, 16)}...`);
           nodeHost.setToken(newToken);
         }
+        // 如果审批结果里有 displayName，更新
+        if (approveResult?.displayName) {
+          displayName = approveResult.displayName;
+        }
         approved = true;
       } catch (err: any) {
         channel.appendLine(`node.pair.approve failed: ${err.message}`);
@@ -261,7 +321,20 @@ async function approveNodePairing(gw: OpenClawGateway, nodeDeviceId: string, cha
     }
   }
 
-  return approved;
+  if (!approved) {
+    // 检查是否已经配对
+    for (const entry of allEntries) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryNodeId = entry.nodeId || entry.deviceId || entry.device?.id || "";
+      if (entryNodeId === nodeDeviceId) {
+        alreadyPaired = true;
+        channel.appendLine(`Node ${nodeDeviceId.substring(0, 16)}... already paired`);
+        break;
+      }
+    }
+  }
+
+  return { approved, alreadyPaired, displayName };
 }
 
 function sleep(ms: number): Promise<void> {
