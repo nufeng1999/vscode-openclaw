@@ -182,12 +182,12 @@ async function updateNodeAgentConfig(gw: OpenClawGateway, nodeDeviceId: string, 
 
   // 移除所有旧的 node:* 条目
   const filtered = agentList.filter((a: any) => !a.id?.startsWith("node:"));
-
-  // 添加新的 node 条目
-  filtered.push({
-    id: agentId,
-    tools: { exec: { host: "node", node: "OpenClaw VSCode", notifyOnExit: false } }
-  });
+// 添加/更新 node 条目（直接设置 name 为 OpenClaw VSCode）
+    filtered.push({
+      id: agentId,
+      name: "OpenClaw VSCode",
+      tools: { exec: { host: "node", node: "OpenClaw VSCode", notifyOnExit: false } }
+    });
 
   const patch = {
     raw: JSON.stringify({ agents: { list: filtered } }),
@@ -212,6 +212,7 @@ async function updateNodeAgentName(gw: OpenClawGateway, nodeDeviceId: string, di
   if (!config) config = configResult;
 
   const agentList: any[] = config?.agents?.list || [];
+
   let changed = false;
   const updated = agentList.map((agent: any) => {
     if (agent?.id === agentId && agent.name !== displayName) {

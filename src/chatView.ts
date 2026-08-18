@@ -195,7 +195,15 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
-        case "ready":
+        case "webviewReady":
+          // Load agents first, so resolveActiveAgent can find the correct agent
+          if (this.gateway.connected) {
+            await this.handleRequestAgents();
+            await this.handleRequestModels();
+            await this.handleRequestSessions();
+            await this.handleLoadDefaults();
+          }
+          // Now send init with the resolved agent and session key
           this.postToWebview({
             type: "init",
             sessionKey: this.currentSessionKey,
@@ -207,12 +215,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             verboseLevel: this.verboseLevel,
             messageHistory: this.messageHistory
           });
-          if (this.gateway.connected) {
-            await this.handleRequestModels();
-            await this.handleRequestSessions();
-            await this.handleRequestAgents();
-            await this.handleLoadDefaults();
-          }
           break;
         case "sendMessage":
           await this.handleSendMessage(msg.text, msg.fileRefs);
@@ -245,10 +247,17 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "switchTab":
           if (msg.agentId) {
             const ag = this.agents.find(a => a.id === msg.agentId);
-            if (ag) this.activeAgent = ag;
+            if (ag) {
+              this.activeAgent = ag;
+            } else {
+              // 如果 agents 未加载，尝试通过 name 反查（兼容配置的 agentId 为 display name 的情况）
+              const byName = this.agents.find(a => (a.name || "") === msg.agentId);
+              if (byName) this.activeAgent = byName;
+            }
           }
           this.currentSessionKey = msg.sessionKey || "main";
           await this.handleLoadMessages(this.currentSessionKey);
+          this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
           break;
         case "deleteSession":
           await this.handleDeleteSession(msg.sessionKey);
@@ -487,12 +496,33 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
+  private resolveActiveAgent() {
+    if (!this.agents || this.agents.length === 0) return;
+    const currentId = this.activeAgent?.id;
+    if (!currentId) return;
+    // 1. Exact id match (original behavior)
+    let match = this.agents.find(a => a.id === currentId);
+    // 2. Fallback: match by name (e.g. configured "OpenClaw VSCode" matches node:<deviceId> whose name is "OpenClaw VSCode")
+    if (!match) {
+      match = this.agents.find(a => (a.name || "") === currentId);
+    }
+    if (match) {
+      this.activeAgent = {
+        id: match.id,
+        name: match.name || match.id,
+        emoji: match.emoji || "🤖"
+      };
+    }
+  }
+
   private async handleRequestAgents() {
     try {
       const res = await this.gateway.request("agents.list", {});
       this.agents = res?.agents || [];
       if (this.agents.length === 0) this.agents = [{ id: "main", name: "Agent" }];
+      this.resolveActiveAgent();
       this.postToWebview({ type: "agentsList", agents: this.agents });
+      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
     } catch {
       this.postToWebview({ type: "agentsList", agents: [] });
     }
@@ -1104,11 +1134,12 @@ body {
   let tabs = [{ id: 'tab-main', label: 'Chat', agentId: 'main', sessionKey: 'main', messages: [] }];
   let activeTabId = 'tab-main';
   let streamEl = null;
+  let activeTabMessages = [];
 
   function getActiveTab() { return tabs.find(t => t.id === activeTabId) || tabs[0]; }
 
-  vscode.postMessage({ type: 'ready' });
   renderTabs();
+  vscode.postMessage({ type: 'webviewReady' });
 
   // HUD toggle
   const hudPanel = document.getElementById('hud-panel');
@@ -1270,6 +1301,18 @@ body {
         updateChips();
         serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : 'not configured';
         if (msg.sessionKey) currentSession = msg.sessionKey;
+// Update default tab with resolved agent/session from init message
+      if (tabs.length > 0) {
+        tabs[0].agentId = msg.agent.id;
+        tabs[0].sessionKey = msg.sessionKey;
+        // If we have stored messages for this tab, use them
+        if (activeTabMessages.length > 0 && tabs[0].id === activeTabId) {
+          tabs[0].messages = activeTabMessages.slice();
+        }
+        // Re-render tabs and agent buttons to reflect updated agentId/sessionKey
+        renderTabs();
+        renderAgentButtons();
+      }
         break;
       case 'connectionStatus':
         connected = msg.connected;
@@ -1307,16 +1350,23 @@ body {
         break;
       case 'userMessage':
         appendMessage(msg.message);
-        const utab = getActiveTab();
-        if (utab) utab.messages.push(msg.message);
+        activeTabMessages.push(msg.message);
         break;
       case 'loadMessages':
         clearMessages();
         const tab = getActiveTab();
-        if (tab) tab.messages = msg.messages || [];
+        if (tab) {
+          activeTabMessages = (msg.messages || []).slice();
+          tab.messages = activeTabMessages;
+        }
         for (const m of (msg.messages || [])) appendMessage(m);
         break;
-      case 'clearMessages': clearMessages(); break;
+      case 'clearMessages':
+        clearMessages();
+        activeTabMessages = [];
+        const ct = getActiveTab();
+        if (ct) ct.messages = [];
+        break;
       case 'streamStart':
         streaming = true;
         showTyping(true, 'Thinking');
@@ -1336,6 +1386,18 @@ body {
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
+        // Store the final assistant message in activeTabMessages
+        const lastMsgEl = messagesEl.querySelector('.msg.msg-assistant:last-child');
+        if (lastMsgEl) {
+          const bubble = lastMsgEl.querySelector('.msg-bubble');
+          if (bubble && bubble.textContent.trim()) {
+            activeTabMessages.push({
+              role: 'assistant',
+              text: bubble.textContent,
+              timestamp: Date.now()
+            });
+          }
+        }
         break;
       case 'streamError':
         streaming = false;
@@ -1343,6 +1405,8 @@ body {
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
+        // Store error message in activeTabMessages
+        activeTabMessages.push({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         break;
       case 'toolCall':
         emptyState.style.display = 'none';
@@ -1728,12 +1792,16 @@ body {
   function switchToTab(tabId) {
     const tab = tabs.find(t => t.id === tabId);
     if (!tab) return;
+    // Save current tab's messages
+    const oldTab = getActiveTab();
+    if (oldTab) oldTab.messages = activeTabMessages.slice();
     activeTabId = tabId;
     agent = agents.find(a => a.id === tab.agentId) || agent;
     currentSession = tab.sessionKey;
-    // Clear UI and load tab messages
+    // Load new tab's messages
+    activeTabMessages = (tab.messages || []).slice();
     clearMessages();
-    for (const m of tab.messages) appendMessage(m);
+    for (const m of activeTabMessages) appendMessage(m);
     updateAgentCard();
     renderAgentButtons();
     renderTabs();

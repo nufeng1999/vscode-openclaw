@@ -88,12 +88,12 @@
         },
         "openclaw.sessionKey": {
           "type": "string",
-          "default": "main",
+          "default": "OpenClaw VSCode",
           "description": "Session key"
         },
         "openclaw.agentId": {
           "type": "string",
-          "default": "main",
+          "default": "OpenClaw VSCode",
           "description": "Agent ID"
         }
       }
