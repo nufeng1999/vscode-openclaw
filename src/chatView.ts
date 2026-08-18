@@ -206,7 +206,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           }
           break;
         case "sendMessage":
-          await this.handleSendMessage(msg.text);
+          await this.handleSendMessage(msg.text, msg.fileRefs);
           break;
         case "stopStream":
           await this.handleStopStream();
@@ -257,11 +257,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "openModelPicker":
           vscode.commands.executeCommand("openclaw.settings");
           break;
+        case "searchFiles":
+          await this.handleSearchFiles(msg.query, msg.requestId);
+          break;
       }
     });
   }
 
-  private async handleSendMessage(text: string) {
+  private async handleSendMessage(text: string, fileRefs?: string[]) {
     if (!text.trim()) return;
     if (!this.gateway.connected) {
       vscode.window.showWarningMessage("OpenClaw: Not connected to gateway");
@@ -285,12 +288,15 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
 
+    const attachments = await this.buildAttachments(fileRefs);
+
     try {
       await this.gateway.request("chat.send", {
         sessionKey: this.gwSessionKey(),
         message: text,
         deliver: false,
-        idempotencyKey: runId
+        idempotencyKey: runId,
+        ...(attachments.length > 0 ? { attachments } : {})
       });
     } catch (err: any) {
       this.messages.push({
@@ -302,12 +308,97 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
+  private async buildAttachments(fileRefs?: string[]): Promise<any[]> {
+    if (!fileRefs || fileRefs.length === 0) return [];
+    const attachments: any[] = [];
+    const MAX_TOTAL = 20 * 1024 * 1024;
+    let totalSize = 0;
+    const folders = vscode.workspace.workspaceFolders;
+    const rootUri = folders && folders.length > 0 ? folders[0].uri : undefined;
+
+    for (const relPath of fileRefs) {
+      if (totalSize >= MAX_TOTAL) break;
+      try {
+        if (!rootUri) continue;
+        const fileUri = vscode.Uri.joinPath(rootUri, relPath);
+        const stat = await vscode.workspace.fs.stat(fileUri);
+        if (stat.size > MAX_TOTAL) continue;
+        if (totalSize + stat.size > MAX_TOTAL) continue;
+
+        const bytes = await vscode.workspace.fs.readFile(fileUri);
+        const mimeType = getMimeType(relPath);
+        const content = Buffer.from(bytes).toString("base64");
+
+        attachments.push({
+          type: "file",
+          mimeType,
+          fileName: relPath.split("/").pop() || relPath,
+          content
+        });
+        totalSize += stat.size;
+      } catch {}
+    }
+    return attachments;
+  }
+
   private async handleStopStream() {
     try {
       await this.gateway.request("chat.abort", {
         sessionKey: this.gwSessionKey()
       });
     } catch {}
+  }
+
+  private async handleSearchFiles(query: string, requestId: string) {
+    try {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        this.postToWebview({ type: "fileResults", requestId, files: [] });
+        return;
+      }
+
+      const pattern = query
+        ? `**/*${query.replace(/[/\\]/g, "*")}*`
+        : "**/*";
+      const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
+
+      const files: { path: string; isDir: boolean }[] = [];
+      const seen = new Set<string>();
+
+      for (const uri of uris) {
+        const relPath = vscode.workspace.asRelativePath(uri, false);
+        if (seen.has(relPath)) continue;
+        seen.add(relPath);
+
+        const parts = relPath.replace(/\\/g, "/").split("/");
+        const isDir = false;
+
+        if (query) {
+          const q = query.toLowerCase();
+          const name = parts[parts.length - 1].toLowerCase();
+          const full = relPath.toLowerCase();
+          if (!name.includes(q) && !full.includes(q)) continue;
+        }
+
+        files.push({ path: relPath, isDir });
+        if (files.length >= 30) break;
+      }
+
+      const folders2: { path: string; isDir: boolean }[] = [];
+      for (const folder of folders) {
+        const folderName = folder.name;
+        if (query && !folderName.toLowerCase().includes(query.toLowerCase())) continue;
+        folders2.push({ path: folderName, isDir: true });
+      }
+
+      this.postToWebview({
+        type: "fileResults",
+        requestId,
+        files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
+      });
+    } catch {
+      this.postToWebview({ type: "fileResults", requestId, files: [] });
+    }
   }
 
   private async handleRequestModels() {
@@ -745,6 +836,40 @@ body {
 .agent-btn:hover { background: rgba(128,128,128,0.14); color: var(--text); }
 .agent-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .agent-btn-emoji { font-size: 13px; }
+
+/* @ Mention Dropdown */
+.at-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
+  display: none;
+  z-index: 100;
+}
+.at-dropdown.visible { display: block; }
+.at-dropdown::-webkit-scrollbar { width: 4px; }
+.at-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.at-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(128,128,128,0.08);
+}
+.at-item:last-child { border-bottom: none; }
+.at-item:hover, .at-item.active { background: var(--hover); }
+.at-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 13px; color: var(--text-muted); }
+.at-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-empty { padding: 10px 12px; font-size: 12px; color: var(--text-muted); text-align: center; }
 </style>
 </head>
 <body>
@@ -829,11 +954,14 @@ body {
       <span class="bar-sep">·</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
     </div>
-    <div class="input-row">
+    <div class="input-row" style="position:relative;">
       <button class="stop-btn" id="stopBtn" title="Stop">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <textarea class="input-box" id="inputBox" placeholder="Message OpenClaw..." rows="1"></textarea>
+      <div style="flex:1;position:relative;">
+        <div class="at-dropdown" id="atDropdown"></div>
+        <textarea class="input-box" id="inputBox" placeholder="Message OpenClaw..." rows="1" style="width:100%;"></textarea>
+      </div>
       <button class="send-btn" id="sendBtn" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
@@ -878,6 +1006,16 @@ body {
   let messageHistory = [];
   let historyIndex = -1;
 
+  // @ mention state
+  let atVisible = false;
+  let atQuery = '';
+  let atFiles = [];
+  let atSelectedIndex = 0;
+  let atRequestId = '';
+  let atTriggerPos = -1;
+  let atFileRefs = [];
+  const atDropdown = $('#atDropdown');
+
   // Tab management: each tab = { id, label, agentId, sessionKey, messages[] }
   let tabs = [{ id: 'tab-main', label: 'Chat', agentId: 'main', sessionKey: 'main', messages: [] }];
   let activeTabId = 'tab-main';
@@ -913,8 +1051,39 @@ body {
   inputBox.addEventListener('input', () => {
     inputBox.style.height = 'auto';
     inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+    checkAtTrigger();
   });
   inputBox.addEventListener('keydown', (e) => {
+    if (atVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (atFiles.length > 0) {
+          atSelectedIndex = (atSelectedIndex + 1) % atFiles.length;
+          renderAtDropdown();
+        }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (atFiles.length > 0) {
+          atSelectedIndex = (atSelectedIndex - 1 + atFiles.length) % atFiles.length;
+          renderAtDropdown();
+        }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (atFiles.length > 0) {
+          selectAtItem(atFiles[atSelectedIndex]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideAtDropdown();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     if (e.ctrlKey && e.key === 'ArrowUp') {
       e.preventDefault();
@@ -1043,16 +1212,97 @@ body {
         messageHistory = msg.messageHistory || [];
         historyIndex = -1;
         break;
+      case 'fileResults':
+        if (msg.requestId === atRequestId && atVisible) {
+          atFiles = msg.files || [];
+          renderAtDropdown();
+        }
+        break;
     }
   });
 
   function sendMessage() {
     const text = inputBox.value.trim();
     if (!text || !connected) return;
+    const refs = atFileRefs.slice();
     inputBox.value = '';
     inputBox.style.height = 'auto';
     historyIndex = -1;
-    vscode.postMessage({ type: 'sendMessage', text });
+    atFileRefs = [];
+    hideAtDropdown();
+    vscode.postMessage({ type: 'sendMessage', text, fileRefs: refs });
+  }
+
+  function checkAtTrigger() {
+    const val = inputBox.value;
+    const pos = inputBox.selectionStart;
+    if (pos < 0) { hideAtDropdown(); return; }
+    const before = val.substring(0, pos);
+    const match = before.match(/@(\S*)$/);
+    if (match) {
+      atTriggerPos = match.index;
+      atQuery = match[1];
+      atRequestId = Math.random().toString(36).substring(2, 10);
+      atSelectedIndex = 0;
+      atVisible = true;
+      vscode.postMessage({ type: 'searchFiles', query: atQuery, requestId: atRequestId });
+      atDropdown.classList.add('visible');
+      renderAtDropdown();
+    } else {
+      hideAtDropdown();
+    }
+  }
+
+  function hideAtDropdown() {
+    atVisible = false;
+    atFiles = [];
+    atTriggerPos = -1;
+    atDropdown.classList.remove('visible');
+  }
+
+  function renderAtDropdown() {
+    if (!atVisible) return;
+    if (atFiles.length === 0) {
+      atDropdown.innerHTML = '<div class="at-empty">No matching files</div>';
+      return;
+    }
+    atDropdown.innerHTML = '';
+    const maxShow = Math.min(atFiles.length, 10);
+    for (let i = 0; i < maxShow; i++) {
+      const f = atFiles[i];
+      const div = document.createElement('div');
+      div.className = 'at-item' + (i === atSelectedIndex ? ' active' : '');
+      const icon = document.createElement('span');
+      icon.className = 'at-icon';
+      icon.textContent = f.isDir ? '📁' : '📄';
+      const label = document.createElement('span');
+      label.className = 'at-label';
+      label.textContent = f.path;
+      div.appendChild(icon);
+      div.appendChild(label);
+      const idx = i;
+      div.addEventListener('mouseenter', () => { atSelectedIndex = idx; renderAtDropdown(); });
+      div.addEventListener('click', (e) => { e.preventDefault(); selectAtItem(f); });
+      atDropdown.appendChild(div);
+    }
+    const activeItem = atDropdown.querySelector('.at-item.active');
+    if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+  }
+
+  function selectAtItem(file) {
+    const val = inputBox.value;
+    const pos = inputBox.selectionStart;
+    const before = val.substring(0, atTriggerPos);
+    const after = val.substring(pos);
+    const insert = '@' + file.path + ' ';
+    inputBox.value = before + insert + after;
+    const newPos = before.length + insert.length;
+    inputBox.setSelectionRange(newPos, newPos);
+    inputBox.focus();
+    if (!atFileRefs.includes(file.path)) atFileRefs.push(file.path);
+    hideAtDropdown();
+    inputBox.style.height = 'auto';
+    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
   }
 
   function appendMessage(msg) {
@@ -1288,6 +1538,43 @@ body {
 </body>
 </html>`;
   }
+}
+
+const MIME_MAP: Record<string, string> = {
+  ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json",
+  ".js": "application/javascript", ".ts": "application/typescript",
+  ".jsx": "application/javascript", ".tsx": "application/typescript",
+  ".py": "text/x-python", ".rb": "text/x-ruby", ".go": "text/x-go",
+  ".rs": "text/x-rust", ".java": "text/x-java", ".c": "text/x-c",
+  ".cpp": "text/x-c++", ".h": "text/x-c", ".hpp": "text/x-c++",
+  ".cs": "text/x-csharp", ".php": "text/x-php", ".swift": "text/x-swift",
+  ".kt": "text/x-kotlin", ".scala": "text/x-scala",
+  ".html": "text/html", ".htm": "text/html", ".css": "text/css",
+  ".scss": "text/x-scss", ".less": "text/x-less",
+  ".xml": "application/xml", ".yaml": "application/yaml", ".yml": "application/yaml",
+  ".toml": "application/toml", ".ini": "text/plain", ".cfg": "text/plain",
+  ".sh": "text/x-shellscript", ".bash": "text/x-shellscript",
+  ".zsh": "text/x-shellscript", ".fish": "text/x-shellscript",
+  ".bat": "text/plain", ".cmd": "text/plain", ".ps1": "text/plain",
+  ".sql": "text/x-sql", ".graphql": "text/x-graphql",
+  ".env": "text/plain", ".gitignore": "text/plain", ".dockerignore": "text/plain",
+  ".csv": "text/csv", ".tsv": "text/tab-separated-values",
+  ".log": "text/plain", ".conf": "text/plain", ".config": "text/plain",
+  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+  ".bmp": "image/bmp", ".ico": "image/x-icon", ".tiff": "image/tiff",
+  ".pdf": "application/pdf", ".zip": "application/zip",
+  ".gz": "application/gzip", ".tar": "application/x-tar",
+  ".mp3": "audio/mpeg", ".mp4": "video/mp4", ".wav": "audio/wav",
+  ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
+  ".wasm": "application/wasm",
+};
+
+function getMimeType(filePath: string): string {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return "text/plain";
+  const ext = filePath.substring(dot).toLowerCase();
+  return MIME_MAP[ext] || "text/plain";
 }
 
 function getNonce(): string {
