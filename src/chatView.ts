@@ -43,6 +43,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private verboseLevel = "";
   private gatewayUrl = "";
   private messageHistory: string[] = [];
+  private autoContinueCount = 0;
+  private static readonly AUTO_CONTINUE_MAX = 3;
+  private static readonly ERROR_PATTERNS = [
+    "The agent run failed before producing a reply",
+    "Error: Agent run ended before producing a complete result",
+    "Error: Agent run failed"
+  ];
 
   get agentPrefix(): string {
     return `agent:${this.activeAgent.id}:`;
@@ -111,8 +118,39 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         const finalText = this.extractDeltaText(finalMsg);
         this.log(`final text len=${finalText.length}`);
         if (finalText) {
-          // Display the final message directly
-          this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+          // Check if response is an error pattern that needs "Continue"
+          const isErrorResponse = OpenClawChatView.ERROR_PATTERNS.some(
+            pattern => finalText.includes(pattern)
+          );
+          
+          if (isErrorResponse) {
+            this.autoContinueCount++;
+            this.log(`Auto-continue retry ${this.autoContinueCount}/${OpenClawChatView.AUTO_CONTINUE_MAX}`);
+            
+            if (this.autoContinueCount >= OpenClawChatView.AUTO_CONTINUE_MAX) {
+              // Max retries reached, show error to user
+              this.postToWebview({ 
+                type: "autoContinueFailed", 
+                sessionKey, 
+                count: this.autoContinueCount 
+              });
+              this.autoContinueCount = 0;
+            } else {
+              // Send "Continue" to retry (not recorded in history)
+              this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+              this.postToWebview({ type: "streamDone", sessionKey });
+              this.sendContinueMessage();
+              return;
+            }
+          } else {
+            // Normal response - reset counter
+            if (this.autoContinueCount > 0) {
+              this.autoContinueCount = 0;
+              this.context.globalState.update("openclaw.autoContinueCount", 0);
+            }
+            // Display the final message directly
+            this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+          }
         }
       }
       this.postToWebview({ type: "streamDone", sessionKey });
@@ -417,6 +455,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       vscode.window.showWarningMessage("OpenClaw: Not connected to gateway");
       return;
     }
+    
+    // Reset auto-continue counter when user sends a new message
+    if (this.autoContinueCount > 0) {
+      this.autoContinueCount = 0;
+      this.context.globalState.update("openclaw.autoContinueCount", 0);
+    }
 
     const userMsg: ChatMessage = {
       role: "user",
@@ -467,6 +511,26 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         text: `Error: ${err}`,
         timestamp: Date.now()
       });
+      this.postToWebview({ type: "streamDone", runId });
+    }
+  }
+
+  /**
+   * Send a message without adding it to local history (used for auto-continue).
+   */
+  private async sendContinueMessage() {
+    if (!this.gateway.connected) return;
+    const runId = this.genId();
+    this.postToWebview({ type: "streamStart", runId });
+    try {
+      await this.gateway.request("chat.send", {
+        sessionKey: this.gwSessionKey(),
+        message: "Continue",
+        deliver: false,
+        idempotencyKey: runId
+      }) as any;
+    } catch {
+      // If sending fails, don't add anything to history
       this.postToWebview({ type: "streamDone", runId });
     }
   }
@@ -1531,6 +1595,14 @@ body {
           atFiles = msg.files || [];
           renderAtDropdown();
         }
+        break;
+      case 'autoContinueFailed':
+        streaming = false;
+        appendMessage({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
+        showTyping(false);
+        sendBtn.style.display = '';
+        stopBtn.classList.remove('active');
+        activeTabMessages.push({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
         break;
     }
   });
