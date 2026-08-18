@@ -1,9 +1,10 @@
 {
-  "name": "openclaw-vscode",
-  "displayName": "OpenClaw",
-  "description": "AI chat sidebar for OpenClaw gateway",
-  "version": "0.0.1",
-  "publisher": "nufeng",
+  "name": "nufeng1999-OpenClaw-vscode",
+  "displayName": "nufeng1999 - OpenClaw Client",
+  "description": "AI chat sidebar for OpenClaw gateway & vscode node",
+  "version": "0.0.3",
+  "publisher": "CQCBIT-nufeng1999",
+  "icon": "plugin.png",
   "license": "MIT",
   "repository": {
     "type": "git",
