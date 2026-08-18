@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { OpenClawGateway } from "./gateway";
 import type { OutputChannel } from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -147,7 +149,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   private extractDeltaText(message: any): string {
-    if (typeof message === "string") return message;
+    if (typeof message === "string") return this.resolveMediaPaths(message);
     if (!message) return "";
 
     const content = message.content ?? message;
@@ -160,11 +162,138 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           text += (text ? "\n" : "") + String(item.text);
         }
       }
-      return text;
+      return this.resolveMediaPaths(text);
     }
 
-    if (typeof content === "string") return content;
+    if (typeof content === "string") return this.resolveMediaPaths(content);
     return message.text || "";
+  }
+
+  private resolveMediaPaths(text: string): string {
+    if (!text || text.indexOf("MEDIA:") === -1) return text;
+    
+    const segments = text.split("\n");
+    const resolvedSegments: string[] = [];
+    
+    for (const segment of segments) {
+      if (segment.indexOf("MEDIA:") === 0) {
+        const mediaPath = segment.slice(6).trim();
+        const result = this.convertMediaToMarkdown(mediaPath);
+        if (result) {
+          resolvedSegments.push(result);
+        }
+      } else {
+        resolvedSegments.push(segment);
+      }
+    }
+    
+    return resolvedSegments.join("\n");
+  }
+
+  private convertMediaToMarkdown(mediaPath: string): string | null {
+    try {
+      if (!mediaPath) return null;
+      
+      // Normalize path: handle both forward and backward slashes
+      const normalizedPath = mediaPath.replace(/\\/g, "/");
+      
+      // Try to read file as buffer
+      let buffer: Buffer;
+      try {
+        buffer = fs.readFileSync(mediaPath);
+      } catch {
+        // Try with forward slashes
+        try {
+          buffer = fs.readFileSync(normalizedPath);
+        } catch {
+          // Return original path as text
+          return null;
+        }
+      }
+      
+      // Detect MIME type from extension
+      const ext = path.extname(mediaPath).toLowerCase();
+      let mimeType = "application/octet-stream";
+      let tag = "img";
+      
+      switch (ext) {
+        case ".png":
+          mimeType = "image/png";
+          break;
+        case ".jpg":
+        case ".jpeg":
+          mimeType = "image/jpeg";
+          break;
+        case ".gif":
+          mimeType = "image/gif";
+          break;
+        case ".webp":
+          mimeType = "image/webp";
+          break;
+        case ".svg":
+          mimeType = "image/svg+xml";
+          break;
+        case ".mp4":
+          mimeType = "video/mp4";
+          tag = "video";
+          break;
+        case ".webm":
+          mimeType = "video/webm";
+          tag = "video";
+          break;
+        case ".ogg":
+          mimeType = "video/ogg";
+          tag = "video";
+          break;
+        case ".avi":
+          mimeType = "video/x-msvideo";
+          tag = "video";
+          break;
+        case ".mov":
+          mimeType = "video/quicktime";
+          tag = "video";
+          break;
+      }
+      
+      // Convert to base64
+      const base64 = buffer.toString("base64");
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      
+      // Generate markdown
+      if (tag === "video") {
+        return `<video src="${dataUrl}" controls style="max-width:100%;max-height:400px;"></video>`;
+      } else {
+        return `![media](${dataUrl})`;
+      }
+    } catch {
+      // Return original path if conversion fails
+      return null;
+    }
+  }
+
+  private extractHistoryContent(content: any): string {
+    if (typeof content === "string") return this.resolveMediaPaths(content);
+    if (!content) return "";
+    if (Array.isArray(content)) {
+      let text = "";
+      for (const block of content) {
+        if (block.type === "text" && block.text) {
+          text += (text ? "\n" : "") + block.text;
+        } else if (block.type === "tool_result" && block.content) {
+          if (typeof block.content === "string") {
+            text += (text ? "\n" : "") + block.content;
+          } else if (Array.isArray(block.content)) {
+            for (const sub of block.content) {
+              if (sub?.type === "text" && sub.text) {
+                text += (text ? "\n" : "") + sub.text;
+              }
+            }
+          }
+        }
+      }
+      return this.resolveMediaPaths(text);
+    }
+    return "";
   }
 
   private resolveSession(sessionKey: string): string {
@@ -585,31 +714,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  private extractHistoryContent(content: any): string {
-    if (typeof content === "string") return content;
-    if (!content) return "";
-    if (Array.isArray(content)) {
-      let text = "";
-      for (const block of content) {
-        if (block.type === "text" && block.text) {
-          text += (text ? "\n" : "") + block.text;
-        } else if (block.type === "tool_result" && block.content) {
-          if (typeof block.content === "string") {
-            text += (text ? "\n" : "") + block.content;
-          } else if (Array.isArray(block.content)) {
-            for (const sub of block.content) {
-              if (sub?.type === "text" && sub.text) {
-                text += (text ? "\n" : "") + sub.text;
-              }
-            }
-          }
-        }
-      }
-      return text;
-    }
-    return "";
-  }
-
   private async handleDeleteSession(sessionKey: string) {
     try {
       await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
@@ -646,7 +750,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com; connect-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com; img-src data: https:; media-src data: https:;">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
@@ -885,7 +989,9 @@ body {
 }
 .msg-assistant .msg-bubble strong { font-weight: 600; }
 .msg-assistant .msg-bubble em { font-style: italic; }
-.msg-assistant .msg-bubble img { max-width: 100%; border-radius: 4px; }
+.msg-assistant .msg-bubble img { max-width: 100%; border-radius: 4px; display: block; margin: 4px 0; }
+.msg-assistant .msg-bubble video { max-width: 100%; max-height: 400px; border-radius: 4px; display: block; margin: 4px 0; }
+.msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
 
 /* HUD Toggle */
 .hud-toggle {
@@ -1219,12 +1325,16 @@ body {
         return;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        if (filtered.length > 0) {
-          selectSlashCommand(filtered[slashSelectedIndex]);
+          e.preventDefault();
+          if (filtered.length > 0) {
+            selectSlashCommand(filtered[slashSelectedIndex]);
+          } else {
+            // No matching commands - send as message to gateway for processing
+            hideSlashDropdown();
+            sendMessage();
+          }
+          return;
         }
-        return;
-      }
       if (e.key === 'Escape') {
         e.preventDefault();
         hideSlashDropdown();
