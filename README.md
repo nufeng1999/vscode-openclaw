@@ -1,4 +1,4 @@
-# vscode node & OpenClaw Client for VSCode
+# OpenClaw Client for VSCode
 
 AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gateway. Connects to your OpenClaw instance via WebSocket and provides a native chat interface directly in VSCode.
 
@@ -9,6 +9,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Agent HUD** — Connection status, model settings, session management
 - **Multi-Agent** — Switch between agents with one click, each agent gets its own chat tab
 - **Streaming Responses** — Real-time markdown rendering of AI responses
+- **Slash Commands** — Type `/` to see available commands (`/stop`, `/new`, `/models`, `/help`, etc.), sent to gateway and response displayed in chat
 - **Context Meter** — Visual indicator of token usage per session
 - **Session Management** — Create, switch, and delete chat sessions
 - **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
@@ -16,6 +17,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **@path File Context** — Type `@` to search and attach workspace files as context to your message
 - **Node Capabilities** — Runs as a paired node, enabling `exec`, `read`, `write`, `edit` tool calls from the agent
 - **Exec Approval** — Commands are executed locally with a cwd-based approval dialog (Allow Once / Always Allow / Deny)
+- **Configurable Agent/Session** — Set `agentId` and `sessionKey` in VSCode settings to control which agent and session the extension connects to
 
 ## Requirements
 
@@ -85,6 +87,22 @@ Your sent messages are saved automatically (up to 200 entries, persisted across 
 | `Ctrl+Down` | Cycle forward through message history  |
 
 History resets when you send a new message.
+
+### Slash Commands
+
+Type `/` in the chat input to trigger the slash command dropdown. Commands are sent to the gateway and the response is displayed as an assistant message.
+
+| Command     | Description                          |
+| ----------- | ------------------------------------ |
+| `/stop`     | Stop the current response stream     |
+| `/new`      | Start a new chat session             |
+| `/models`   | List available models                |
+| `/help`     | Show help information                |
+| `/reset`    | Reset session context                |
+| `/compact`  | Compact session messages             |
+| `/status`   | Show session status                  |
+
+Navigate with `↑` / `↓`, press `Enter` to select, or `Escape` to cancel.
 
 ### @path File Context
 
