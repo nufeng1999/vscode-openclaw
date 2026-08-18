@@ -40,6 +40,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private thinkingLevel = "";
   private verboseLevel = "";
   private gatewayUrl = "";
+  private messageHistory: string[] = [];
 
   get agentPrefix(): string {
     return `agent:${this.activeAgent.id}:`;
@@ -55,6 +56,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.log = channel
       ? (msg: string) => channel.appendLine(msg)
       : () => {};
+    this.messageHistory = context.globalState.get<string[]>("openclaw.messageHistory", []);
     const config = vscode.workspace.getConfiguration("openclaw");
     this.gatewayUrl = config.get<string>("gatewayUrl", "ws://127.0.0.1:18789");
   }
@@ -193,7 +195,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             agent: this.activeAgent,
             gatewayUrl: this.gatewayUrl,
             thinkingLevel: this.thinkingLevel,
-            verboseLevel: this.verboseLevel
+            verboseLevel: this.verboseLevel,
+            messageHistory: this.messageHistory
           });
           if (this.gateway.connected) {
             await this.handleRequestModels();
@@ -271,7 +274,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       timestamp: Date.now()
     };
     this.messages.push(userMsg);
+    this.messageHistory.push(text);
+    if (this.messageHistory.length > 200) {
+      this.messageHistory = this.messageHistory.slice(-200);
+    }
+    this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
     this.postToWebview({ type: "userMessage", message: userMsg });
+    this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
 
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
@@ -866,6 +875,8 @@ body {
   let verboseLevel = '';
   let gatewayUrl = '';
   let hudVisible = false;
+  let messageHistory = [];
+  let historyIndex = -1;
 
   // Tab management: each tab = { id, label, agentId, sessionKey, messages[] }
   let tabs = [{ id: 'tab-main', label: 'Chat', agentId: 'main', sessionKey: 'main', messages: [] }];
@@ -905,6 +916,29 @@ body {
   });
   inputBox.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.ctrlKey && e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (messageHistory.length === 0) return;
+      if (historyIndex < messageHistory.length - 1) {
+        historyIndex++;
+        inputBox.value = messageHistory[messageHistory.length - 1 - historyIndex];
+        inputBox.style.height = 'auto';
+        inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+      }
+    }
+    if (e.ctrlKey && e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        historyIndex--;
+        inputBox.value = messageHistory[messageHistory.length - 1 - historyIndex];
+        inputBox.style.height = 'auto';
+        inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+      } else if (historyIndex === 0) {
+        historyIndex = -1;
+        inputBox.value = '';
+        inputBox.style.height = 'auto';
+      }
+    }
   });
   sendBtn.addEventListener('click', sendMessage);
   stopBtn.addEventListener('click', () => vscode.postMessage({ type: 'stopStream' }));
@@ -921,6 +955,8 @@ body {
         thinkingLevel = msg.thinkingLevel || '';
         verboseLevel = msg.verboseLevel || '';
         gatewayUrl = msg.gatewayUrl || '';
+        messageHistory = msg.messageHistory || [];
+        historyIndex = -1;
         updateAgentCard();
         updateChips();
         serverValue.textContent = gatewayUrl.replace(/^wss?:\\/\\//, '') || 'not configured';
@@ -1003,6 +1039,10 @@ body {
         emptyState.style.display = 'none';
         showTyping(true, msg.phase === 'start' ? msg.label : 'Thinking');
         break;
+      case 'historyUpdated':
+        messageHistory = msg.messageHistory || [];
+        historyIndex = -1;
+        break;
     }
   });
 
@@ -1011,6 +1051,7 @@ body {
     if (!text || !connected) return;
     inputBox.value = '';
     inputBox.style.height = 'auto';
+    historyIndex = -1;
     vscode.postMessage({ type: 'sendMessage', text });
   }
 
