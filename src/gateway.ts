@@ -1,7 +1,7 @@
 import * as WebSocket from "ws";
 import { EventEmitter } from "events";
 import * as crypto from "crypto";
-import type { OutputChannel } from "vscode";
+import type { OutputChannel, ExtensionContext } from "vscode";
 
 export interface GatewayMessage {
   type: string;
@@ -465,6 +465,8 @@ export class NodeHost extends EventEmitter {
   private deviceIdentity: DeviceIdentity | null = null;
   private deviceKeyObject: crypto.KeyObject | null = null;
   private closed = false;
+  private alwaysApprovedCommands: Set<string> = new Set();
+  private alwaysApprovedCwds: Set<string> = new Set();
 
   constructor(url: string, token: string, channel?: OutputChannel) {
     super();
@@ -731,6 +733,7 @@ export class NodeHost extends EventEmitter {
   private async sendInvokeResult(id: string, nodeId: string, result: { ok: boolean; payload?: any; error?: any }) {
     const params: any = { id, nodeId, ok: result.ok };
     if (result.ok && result.payload !== undefined) {
+      params.payload = result.payload;
       params.payloadJSON = JSON.stringify(result.payload);
     } else if (!result.ok) {
       params.error = result.error;
@@ -786,7 +789,11 @@ export class NodeHost extends EventEmitter {
       case "system.which":
         return this.handleSystemWhich(params);
       case "system.execApprovals.get":
+        return { approved: this.isCwdApproved(params.cwd || "") };
       case "system.execApprovals.set":
+        if (params.approved && params.cwd) {
+          this.alwaysApprovedCwds.add(params.cwd);
+        }
         return { approved: true };
       default:
         throw new Error(`Unknown command: ${command}`);
@@ -818,7 +825,33 @@ export class NodeHost extends EventEmitter {
     }
   }
 
-  private handleSystemRun(params: any): Promise<any> {
+  private async promptForApproval(command: string, cwd: string): Promise<"allowOnce" | "alwaysAllow" | "deny"> {
+    const vscode = require("vscode") as typeof import("vscode");
+    const items = [
+      { label: "$(check) Allow Once", description: "Allow this command to run one time", result: "allowOnce" as const },
+      { label: "$(shield) Always Allow", description: "Remember this command and always allow", result: "alwaysAllow" as const },
+      { label: "$(close) Deny", description: "Block this command from running", result: "deny" as const }
+    ];
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: `Allow command execution?`,
+      title: `OpenClaw Node: Command Approval`,
+      detail: `Command: ${command}\nWorking Directory: ${cwd}`
+    });
+    return selected?.result || "deny";
+  }
+
+  private isCwdApproved(cwd: string): boolean {
+    const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+    for (const approved of this.alwaysApprovedCwds) {
+      const normalizedApproved = approved.replace(/\\/g, "/").replace(/\/+$/, "");
+      if (normalized === normalizedApproved || normalized.startsWith(normalizedApproved + "/")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async handleSystemRun(params: any): Promise<any> {
     const cmdStr = this.resolveCommand(params);
     const cwd = this.resolveCwd(params.cwd);
     const timeoutMs = params.timeoutMs || params.timeout || 120000;
@@ -829,6 +862,26 @@ export class NodeHost extends EventEmitter {
 
     this.log(`EXEC input: command=${JSON.stringify(params.command)} rawCommand=${JSON.stringify(params.rawCommand)} cwd=${JSON.stringify(params.cwd)} type=${typeof params.command}`);
     this.log(`EXEC: ${cmdStr} (cwd=${cwd}, timeout=${timeoutMs})`);
+
+    // 检查 cwd 是否已 Always Allow（含子目录）
+    if (!this.isCwdApproved(cwd)) {
+      const decision = await this.promptForApproval(cmdStr, cwd);
+      this.log(`EXEC approval: ${decision}`);
+      if (decision === "deny") {
+        return {
+          stdout: "",
+          stderr: "Command denied by user",
+          exitCode: 1,
+          success: false,
+          timedOut: false,
+          error: "Command denied by user"
+        };
+      }
+      if (decision === "alwaysAllow") {
+        this.alwaysApprovedCwds.add(cwd);
+        this.log(`EXEC: Always Allow registered for cwd=${cwd}`);
+      }
+    }
 
     return new Promise((resolve, reject) => {
       const { exec } = require("child_process");
