@@ -53,6 +53,16 @@
       {
         "command": "openclaw.resetDevice",
         "title": "OpenClaw: Reset Device Identity"
+      },
+      {
+        "command": "openclaw.switchWorkdir",
+        "title": "切换工作目录到这里"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "openclaw.contextMenu",
+        "label": "OpenClaw VSCode"
       }
     ],
     "viewsContainers": {
@@ -70,6 +80,22 @@
           "type": "webview",
           "id": "openclaw.chatView",
           "name": "OpenClaw Chat"
+        }
+      ]
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "submenu": "openclaw.contextMenu",
+          "when": "explorerResourceIsFolder",
+          "group": "OpenClaw@1"
+        }
+      ],
+      "openclaw.contextMenu": [
+        {
+          "command": "openclaw.switchWorkdir",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation@1"
         }
       ]
     },

@@ -131,6 +131,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.registerWebviewViewProvider("openclaw.chatView", chatView, {
       webviewOptions: { retainContextWhenHidden: true }
+    }),
+    vscode.commands.registerCommand("openclaw.switchWorkdir", (uri: vscode.Uri) => {
+      const folderPath = uri.fsPath;
+      chatView.sendText(`Switch the working directory to ${folderPath}`);
+      chatView.show();
     })
   );
 

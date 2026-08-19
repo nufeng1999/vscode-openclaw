@@ -97,6 +97,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     });
   }
 
+  /**
+   * Public method to send text to the chat view
+   * @param text The text to send
+   */
+  public async sendText(text: string) {
+    await this.handleSendMessage(text);
+  }
+
   // Match Obsidian plugin's handleChatEvent
   public handleChatEvent(payload: any) {
     const sessionKey = this.resolveSession(payload?.sessionKey);
