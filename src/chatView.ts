@@ -1004,14 +1004,17 @@ body {
 .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
 
-.input-area { padding: 8px 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.input-area { padding: 8px 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; min-height: 80px; max-height: 50vh; position: relative; }
 .input-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .bar-chip { font-size: 11px; color: var(--text-muted); padding: 2px 6px; border-radius: 4px; cursor: pointer; }
 .bar-chip:hover { background: var(--hover); color: var(--text); }
 .bar-sep { color: var(--border); font-size: 10px; }
 .input-row { display: flex; align-items: flex-end; gap: 6px; }
-.input-box { flex: 1; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 13px; font-family: inherit; resize: none; outline: none; min-height: 40px; max-height: 150px; line-height: 1.4; }
+.input-box { flex: 1; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 13px; font-family: inherit; resize: none; outline: none; min-height: 40px; line-height: 1.4; }
 .input-box:focus { border-color: var(--accent); }
+.resize-handle { height: 4px; cursor: ns-resize; background: transparent; flex-shrink: 0; transition: background 0.15s; }
+.resize-handle:hover { background: var(--accent); opacity: 0.5; }
+.resize-handle.dragging { background: var(--accent); opacity: 0.7; }
 .send-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .send-btn:hover { opacity: 0.85; }
 .stop-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: #cc4444; color: #fff; cursor: pointer; display: none; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -1226,6 +1229,7 @@ body {
     <div class="typing-dots"><span></span><span></span><span></span></div>
     <span id="typingText">Thinking...</span>
   </div>
+  <div class="resize-handle" id="resizeHandle" title="Drag to resize"></div>
   <div class="input-area">
     <div class="input-meta">
       <span class="bar-chip" id="thinkingChip">think: default</span>
@@ -1344,9 +1348,65 @@ body {
     vscode.postMessage({ type: 'copyCommand', text: 'openclaw devices approve --latest' });
   });
 
+  // Resize handle logic
+  const resizeHandle = document.getElementById('resizeHandle');
+  const inputArea = document.querySelector('.input-area');
+  let isResizing = false;
+  let startY = 0;
+  let startHeight = 0;
+
+  // Load saved height from localStorage
+  const savedHeight = localStorage.getItem('openclaw.inputAreaHeight');
+  if (savedHeight) {
+    inputArea.style.height = savedHeight + 'px';
+    adjustInputBoxHeight();
+  }
+
+  function adjustInputBoxHeight() {
+    const inputMeta = document.querySelector('.input-meta');
+    const metaHeight = inputMeta ? inputMeta.offsetHeight + 6 : 0;
+    const inputRow = document.querySelector('.input-row');
+    const rowPadding = 20; // approximate padding
+    const availableHeight = inputArea.offsetHeight - metaHeight - rowPadding;
+    inputBox.style.height = Math.max(40, availableHeight) + 'px';
+  }
+
+  if (resizeHandle) {
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startY = e.clientY;
+      startHeight = inputArea.offsetHeight;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      const delta = startY - e.clientY;
+      let newHeight = startHeight + delta;
+      const minHeight = 80;
+      const maxHeight = window.innerHeight * 0.5;
+      newHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
+      inputArea.style.height = newHeight + 'px';
+      adjustInputBoxHeight();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('openclaw.inputAreaHeight', inputArea.offsetHeight.toString());
+      }
+    });
+  }
+
   inputBox.addEventListener('input', () => {
     inputBox.style.height = 'auto';
-    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+    inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
     checkAtTrigger();
     checkSlashTrigger();
   });
@@ -1424,7 +1484,7 @@ body {
         historyIndex++;
         inputBox.value = messageHistory[messageHistory.length - 1 - historyIndex];
         inputBox.style.height = 'auto';
-        inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+        inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
       }
     }
     if (e.ctrlKey && e.key === 'ArrowDown') {
@@ -1433,7 +1493,7 @@ body {
         historyIndex--;
         inputBox.value = messageHistory[messageHistory.length - 1 - historyIndex];
         inputBox.style.height = 'auto';
-        inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+        inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
       } else if (historyIndex === 0) {
         historyIndex = -1;
         inputBox.value = '';
@@ -1457,7 +1517,7 @@ body {
     inputBox.focus();
     hideSlashDropdown();
     inputBox.style.height = 'auto';
-    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+    inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
   });
   slashDropdown.addEventListener('mousemove', (e) => {
     const item = e.target.closest('.at-item');
@@ -1702,7 +1762,7 @@ body {
     if (!atFileRefs.includes(file.path)) atFileRefs.push(file.path);
     hideAtDropdown();
     inputBox.style.height = 'auto';
-    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+    inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
   }
 
   // ─── / Command Dropdown ───
@@ -1772,7 +1832,7 @@ body {
     inputBox.focus();
     hideSlashDropdown();
     inputBox.style.height = 'auto';
-    inputBox.style.height = Math.min(inputBox.scrollHeight, 150) + 'px';
+    inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
   }
 
   function appendMessage(msg) {
