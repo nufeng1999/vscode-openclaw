@@ -46,9 +46,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private autoContinueCount = 0;
   private static readonly AUTO_CONTINUE_MAX = 3;
   private static readonly ERROR_PATTERNS = [
-    "The agent run failed before producing a reply",
-    "Error: Agent run ended before producing a complete result",
-    "Error: Agent run failed"
+    "The agent run failed before producing a reply", // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
+    "Agent run ended before producing a complete result", // ✅ formatAbandonedLivenessError 产出
+    "Agent run blocked before producing a usable result", // ✅ formatBlockedLivenessError 产出
+    "Agent failed before reply", // ✅ AGENT_FAILED_BEFORE_REPLY_TEXT
+    "Agent run failed", // ✅ 通用后备文本
+    "ACP turn failed before completion" // ✅ ACP 轮次失败
   ];
 
   get agentPrefix(): string {
