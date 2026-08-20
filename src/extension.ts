@@ -153,6 +153,12 @@ export async function activate(context: vscode.ExtensionContext) {
   gateway.on("event", (msg: any) => {
     const event = msg.event;
     const payload = msg.payload || {};
+
+    // Skip heartbeat/tick/health events from logging
+    if (event === "heartbeat" || event === "tick" || event === "health") {
+      return;
+    }
+
     outputChannel.appendLine(`Event: ${event} state=${payload.state || "-"} session=${payload.sessionKey || "-"}`);
 
     if (event === "chat") {

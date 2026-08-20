@@ -167,6 +167,15 @@ export class OpenClawGateway extends EventEmitter {
       return;
     }
 
+    // Skip heartbeat/tick/health events from logging
+    if (msg.type === "event" && (msg.event === "heartbeat" || msg.event === "tick" || msg.event === "health")) {
+      this.emit("event", msg);
+      if (msg.event) {
+        this.emit(msg.event, { payload: msg.payload, seq: msg.seq });
+      }
+      return;
+    }
+
     const summary = raw.length > 300 ? raw.substring(0, 300) + "..." : raw;
     this.log(`← ${summary}`);
 
@@ -582,6 +591,15 @@ export class NodeHost extends EventEmitter {
   private handleRawMessage(raw: string) {
     let msg: GatewayMessage;
     try { msg = JSON.parse(raw); } catch { return; }
+
+    // Skip heartbeat/tick/health events from logging
+    if (msg.type === "event" && (msg.event === "heartbeat" || msg.event === "tick" || msg.event === "health")) {
+      this.emit("event", msg);
+      if (msg.event) {
+        this.emit(msg.event, { payload: msg.payload, seq: msg.seq });
+      }
+      return;
+    }
 
     const summary = raw.length > 300 ? raw.substring(0, 300) + "..." : raw;
     this.log(`← ${summary}`);
