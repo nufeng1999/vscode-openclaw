@@ -456,6 +456,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "searchFiles":
           await this.handleSearchFiles(msg.query, msg.requestId);
           break;
+        case "openWorkdir":
+          await this.handleOpenWorkdir();
+          break;
       }
     });
   }
@@ -761,6 +764,75 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.postToWebview({ type: "verboseChanged", level: this.verboseLevel });
   }
 
+  private async handleOpenWorkdir() {
+    try {
+      const agentListRes = await this.gateway.request("agents.list", {});
+      const agents = agentListRes?.agents || [];
+      const agent = agents.find((a: any) => a.id === this.activeAgent.id);
+      let workspace = agent?.workspace || "";
+      
+      if (!workspace) {
+        const configRes = await this.gateway.request("config.get", {});
+        const config = configRes?.config || configRes || {};
+        workspace = config?.agents?.defaults?.workspace || config?.workspace || "";
+      }
+      
+      if (!workspace) {
+        vscode.window.showWarningMessage("Could not determine working directory");
+        return;
+      }
+      
+      // Normalize path: uppercase drive letter for Windows (e.g. l:\ → L:\)
+      const normalizedPath = workspace.replace(/^[a-z]:/i, (match) => match.toUpperCase());
+      const workspaceUri = vscode.Uri.file(normalizedPath);
+      const folders = vscode.workspace.workspaceFolders;
+      
+      // Check if the folder is already in the workspace
+      let alreadyExists = false;
+      if (folders) {
+        for (const folder of folders) {
+          if (folder.uri.fsPath.toLowerCase() === workspaceUri.fsPath.toLowerCase()) {
+            alreadyExists = true;
+            break;
+          }
+        }
+      }
+      
+      if (alreadyExists) {
+        // 文件夹已存在，聚焦并在 Explorer 中展开该文件夹
+        await vscode.commands.executeCommand('workbench.view.explorer');
+        await vscode.commands.executeCommand('revealInExplorer', workspaceUri);
+        // 展开当前选中的树节点（显示子内容）
+        await vscode.commands.executeCommand('list.expand');
+        vscode.window.showInformationMessage(`已展开工作区文件夹: ${workspaceUri.fsPath}`);
+        return;
+      }
+      
+      // 统一逻辑：无论单根、多根还是无工作区，都以友好方式添加 agent 工作目录
+      const currentFolders = vscode.workspace.workspaceFolders;
+      const replaceFolders = currentFolders ? currentFolders.map(f => ({ uri: f.uri })) : [];
+      replaceFolders.push({ uri: workspaceUri });
+
+      const success = vscode.workspace.updateWorkspaceFolders(
+        0,
+        currentFolders ? currentFolders.length : 0,
+        ...replaceFolders
+      );
+      
+      if (success) {
+        vscode.window.showInformationMessage(`Added folder to workspace: ${workspaceUri.fsPath}`);
+      } else {
+        vscode.window.showErrorMessage(
+          `Failed to add folder to workspace: ${workspaceUri.fsPath}. ` +
+          `You may need to open a workspace (.code-workspace) file first.`
+        );
+      }
+    } catch (err: any) {
+      this.log(`openWorkdir error: ${err.message}`);
+      vscode.window.showErrorMessage(`Failed to open working directory: ${err.message}`);
+    }
+  }
+
   private async handleLoadMessages(sessionKey: string) {
     try {
       const res = await this.gateway.request("chat.history", {
@@ -915,9 +987,17 @@ body {
 .hud-section-toggle:disabled { cursor: default; }
 .hud-section-toggle:not(:disabled):hover { background: rgba(128, 128, 128, 0.1); color: var(--text); }
 .hud-section-label { color: var(--text-muted); flex: 0 0 auto; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
-.hud-section-value { flex: 1; min-width: 0; text-align: right; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.hud-section-value { flex: 1; min-width: 0; text-align: right; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .hud-section-chevron { color: var(--text-muted); opacity: 0.35; font-size: 13px; flex: 0 0 auto; }
 .hud-section-toggle:disabled .hud-section-chevron { visibility: hidden; }
+.open-workdir-btn {
+  width: 24px; height: 24px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+}
+.open-workdir-btn:hover { background: var(--hover); color: var(--text); }
+.open-workdir-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .device-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid rgba(128, 128, 128, 0.08); }
 .device-item:last-child { border-bottom: none; }
@@ -1235,6 +1315,7 @@ body {
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">·</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
+      <button class="open-workdir-btn" id="openWorkdirBtn" title="Open the current agent workspace" style="display:none;">📁</button>
     </div>
     <div class="input-row" style="position:relative;">
       <button class="stop-btn" id="stopBtn" title="Stop">
@@ -1274,6 +1355,7 @@ body {
   const pairingBanner = $('#pairingBanner');
   const thinkingChip = $('#thinkingChip');
   const verboseChip = $('#verboseChip');
+  const openWorkdirBtn = $('#openWorkdirBtn');
 
   let connected = false;
   let streaming = false;
@@ -1506,6 +1588,13 @@ body {
   thinkingChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleThinking' }));
   verboseChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleVerbose' }));
 
+  // Open workdir button: send message to extension host
+  if (openWorkdirBtn) {
+    openWorkdirBtn.addEventListener('click', () => {
+      vscode.postMessage({ type: 'openWorkdir' });
+    });
+  }
+
   // Slash dropdown: event delegation (set up once, survives re-renders)
   slashDropdown.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -1546,6 +1635,10 @@ body {
         updateChips();
         serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : 'not configured';
         if (msg.sessionKey) currentSession = msg.sessionKey;
+        // Show open-workdir button on init if connected
+        if (openWorkdirBtn) {
+          openWorkdirBtn.style.display = connected ? '' : 'none';
+        }
 // Update default tab with resolved agent/session from init message
       if (tabs.length > 0) {
         tabs[0].agentId = msg.agent.id;
@@ -1563,6 +1656,10 @@ body {
         connected = msg.connected;
         agent = msg.agent || agent;
         updateAgentCard();
+        // Show open-workdir button only when connected (local gateway)
+        if (openWorkdirBtn) {
+          openWorkdirBtn.style.display = connected ? '' : 'none';
+        }
         if (connected) {
           vscode.postMessage({ type: 'requestModels' });
           vscode.postMessage({ type: 'requestSessions' });

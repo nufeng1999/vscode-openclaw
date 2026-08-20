@@ -145,6 +145,10 @@ When the agent tries to run a command, a VSCode QuickPick dialog appears:
 
 Approval is based on the working directory (cwd), not the specific command. Subdirectories inherit approval from their parent.
 
+### Open Agent Workspace
+
+Clicking the **Open current agent workspace** button adds the agent's workspace folder to the VS Code Explorer sidebar as a multi-root entry. If the folder is already present in the workspace, the button focuses and expands it in the Explorer instead. No dialogs are shown. This works regardless of whether VS Code is in single-root, multi-root, or no-workspace mode.
+
 ### Commands
 
 | Command                          | Description                            |
