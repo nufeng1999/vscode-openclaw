@@ -1,142 +1,178 @@
 {
-  "name": "nufeng1999-OpenClaw-vscode",
-  "displayName": "nufeng1999 - OpenClaw Client",
-  "description": "AI chat sidebar for OpenClaw gateway & vscode node",
-  "version": "0.0.12",
-  "publisher": "CQCBIT-nufeng1999",
-  "icon": "plugin.png",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/nufeng/openclaw-vscode"
-  },
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": [
-    "Chat",
-    "Other"
-  ],
-  "keywords": [
-    "openclaw",
-    "ai",
-    "chat",
-    "llm",
-    "agent"
-  ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "openclaw.openChat",
-        "title": "OpenClaw: Open Chat"
-      },
-      {
-        "command": "openclaw.reconnect",
-        "title": "OpenClaw: Reconnect"
-      },
-      {
-        "command": "openclaw.approvePairing",
-        "title": "OpenClaw: Approve Node Pairing"
-      },
-      {
-        "command": "openclaw.newChat",
-        "title": "OpenClaw: New Chat"
-      },
-      {
-        "command": "openclaw.settings",
-        "title": "OpenClaw: Settings"
-      },
-      {
-        "command": "openclaw.resetDevice",
-        "title": "OpenClaw: Reset Device Identity"
-      },
-      {
-        "command": "openclaw.switchWorkdir",
-        "title": "切换工作目录到这里"
-      }
-    ],
-    "submenus": [
-      {
-        "id": "openclaw.contextMenu",
-        "label": "OpenClaw VSCode"
-      }
-    ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "openclaw-sidebar",
-          "title": "OpenClaw",
-          "icon": "$(comment-discussion)"
-        }
-      ]
-    },
-    "views": {
-      "openclaw-sidebar": [
-        {
-          "type": "webview",
-          "id": "openclaw.chatView",
-          "name": "OpenClaw Chat"
-        }
-      ]
-    },
-    "menus": {
-      "explorer/context": [
-        {
-          "submenu": "openclaw.contextMenu",
-          "when": "explorerResourceIsFolder",
-          "group": "OpenClaw@1"
-        }
-      ],
-      "openclaw.contextMenu": [
-        {
-          "command": "openclaw.switchWorkdir",
-          "when": "explorerResourceIsFolder",
-          "group": "navigation@1"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "OpenClaw",
-      "properties": {
-        "openclaw.gatewayUrl": {
-          "type": "string",
-          "default": "ws://127.0.0.1:18789",
-          "description": "WebSocket URL of the OpenClaw gateway"
-        },
-        "openclaw.token": {
-          "type": "string",
-          "default": "",
-          "description": "Auth token for the gateway"
-        },
-        "openclaw.sessionKey": {
-          "type": "string",
-          "default": "OpenClaw VSCode",
-          "description": "Session key"
-        },
-        "openclaw.agentId": {
-          "type": "string",
-          "default": "OpenClaw VSCode",
-          "description": "Agent ID"
-        }
-      }
-    }
-  },
-  "scripts": {
-    "build": "node esbuild.mjs",
-    "watch": "node esbuild.mjs --watch"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/ws": "^8.5.10",
-    "@types/vscode": "^1.80.0",
-    "esbuild": "^0.20.0",
-    "typescript": "^5.3.0"
-  },
-  "dependencies": {
-    "ws": "^8.16.0"
-  }
+	"name": "nufeng-OpenClaw-vscode",
+	"displayName": "nufeng-OpenClaw Client",
+	"description": "AI chat sidebar for OpenClaw gateway & vscode node",
+	"version": "0.0.14",
+	"publisher": "CQCBIT",
+	"icon": "plugin.png",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/nufeng/openclaw-vscode"
+	},
+	"engines": {
+		"vscode": "^1.80.0"
+	},
+	"categories": [
+		"Chat",
+		"Other"
+	],
+	"keywords": [
+		"openclaw",
+		"ai",
+		"chat",
+		"llm",
+		"agent"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "openclaw.openChat",
+				"title": "OpenClaw: Open Chat"
+			},
+			{
+				"command": "openclaw.reconnect",
+				"title": "OpenClaw: Reconnect"
+			},
+			{
+				"command": "openclaw.approvePairing",
+				"title": "OpenClaw: Approve Node Pairing"
+			},
+			{
+				"command": "openclaw.newChat",
+				"title": "OpenClaw: New Chat"
+			},
+			{
+				"command": "openclaw.settings",
+				"title": "OpenClaw: Settings"
+			},
+			{
+				"command": "openclaw.resetDevice",
+				"title": "OpenClaw: Reset Device Identity"
+			},
+			{
+				"command": "openclaw.switchWorkdir",
+				"title": "切换工作目录到这里"
+			}
+		],
+		"submenus": [
+			{
+				"id": "openclaw.contextMenu",
+				"label": "OpenClaw VSCode"
+			}
+		],
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "openclaw-sidebar",
+					"title": "OpenClaw",
+					"icon": "$(comment-discussion)"
+				}
+			]
+		},
+		"views": {
+			"openclaw-sidebar": [
+				{
+					"type": "webview",
+					"id": "openclaw.chatView",
+					"name": "OpenClaw Chat"
+				}
+			]
+		},
+		"menus": {
+			"explorer/context": [
+				{
+					"submenu": "openclaw.contextMenu",
+					"when": "explorerResourceIsFolder",
+					"group": "OpenClaw@1"
+				}
+			],
+			"openclaw.contextMenu": [
+				{
+					"command": "openclaw.switchWorkdir",
+					"when": "explorerResourceIsFolder",
+					"group": "navigation@1"
+				}
+			]
+		},
+		"configuration": {
+			"title": "OpenClaw",
+			"properties": {
+				"openclaw.gatewayUrl": {
+					"type": "string",
+					"default": "ws://127.0.0.1:18789",
+					"description": "WebSocket URL of the OpenClaw gateway"
+				},
+				"openclaw.token": {
+					"type": "string",
+					"default": "",
+					"description": "Auth token for the gateway"
+				},
+				"openclaw.sessionKey": {
+					"type": "string",
+					"default": "OpenClaw VSCode",
+					"description": "Session key"
+				},
+				"openclaw.agentId": {
+					"type": "string",
+					"default": "OpenClaw VSCode",
+					"description": "Agent ID"
+				},
+				"openclaw.supervisor.intervalMinutes": {
+					"type": "number",
+					"default": 5,
+					"minimum": 0,
+					"description": "How often (minutes) to check the current agent output. Set to 0 to disable supervision."
+				},
+				"openclaw.supervisor.stopSignalContent": {
+					"type": "string",
+					"default": "",
+					"description": "Stop signal content — pipe-separated list (e.g. done|finished|completed). When the agent output contains any of these, supervision stops."
+				},
+				"openclaw.supervisor.reminderMessage": {
+					"type": "string",
+					"default": "",
+					"description": "Reminder message sent to the current agent when its output is unchanged (empty = no reminder)."
+				},
+				"openclaw.supervisor.agentId": {
+					"type": "string",
+					"default": "",
+					"description": "Supervisor agent ID to perform periodic checks (e.g. manager, main)."
+				},
+				"openclaw.supervisor.stopInquiryMethod": {
+					"type": "string",
+					"default": "",
+					"description": "Prompt method prefix for supervisor inquiry (e.g. 请判断, Judge, Evaluate)."
+				},
+				"openclaw.supervisor.stopSignalReply": {
+					"type": "string",
+					"default": "yes",
+					"description": "Reply text from the supervisor agent that triggers stop (case-insensitive match)."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"build": "node esbuild.mjs",
+		"watch": "node esbuild.mjs --watch"
+	},
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"@types/ws": "^8.5.10",
+		"@types/vscode": "^1.80.0",
+		"esbuild": "^0.20.0",
+		"typescript": "^5.3.0"
+	},
+	"dependencies": {
+		"ws": "^8.16.0"
+	},
+	"__metadata": {
+		"installedTimestamp": 1787300215281,
+		"targetPlatform": "undefined",
+		"size": 2156299
+	}
 }

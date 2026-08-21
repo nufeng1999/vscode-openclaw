@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 		<Metadata>
-			<Identity Language="en-US" Id="nufeng1999-OpenClaw-vscode" Version="0.0.7" Publisher="CQCBIT-nufeng1999" />
-			<DisplayName>nufeng1999 - OpenClaw Client</DisplayName>
+			<Identity Language="en-US" Id="nufeng-OpenClaw-vscode" Version="0.0.14" Publisher="CQCBIT" />
+			<DisplayName>nufeng-OpenClaw Client</DisplayName>
 			<Description xml:space="preserve">AI chat sidebar for OpenClaw gateway &amp; vscode node</Description>
 			<Tags>openclaw,ai,chat,llm,agent,javascript,node</Tags>
 			<Categories>Chat,Other</Categories>
@@ -14,9 +14,6 @@
 				<Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
 				<Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace" />
 				<Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value="" />
-				<Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value="" />
-				
-				<Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
 				
 				<Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/nufeng/openclaw-vscode.git" />
 				<Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="https://github.com/nufeng/openclaw-vscode.git" />
@@ -26,8 +23,6 @@
 				
 				
 				<Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
-				<Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free"/>
-
 				
 				
 			</Properties>
@@ -40,7 +35,7 @@
 		<Dependencies/>
 		<Assets>
 			<Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
-			<Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/readme.md" Addressable="true" />
+			<Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
 <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/plugin.png" Addressable="true" />
 		</Assets>
 	</PackageManifest>
