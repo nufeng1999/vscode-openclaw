@@ -44,6 +44,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private gatewayUrl = "";
   private messageHistory: string[] = [];
   private autoContinueCount = 0;
+  private supervisionEnabled = false;
+  private supervisionTimer: NodeJS.Timeout | null = null;
+  private lastSupervisedContent: string = "";
+  private supervisorBusy: boolean = false;
+  private supervisorPendingSessionKey: string | null = null;
+  private supervisorResponseResolver: ((text: string | null) => void) | null = null;
+  private supervisorTimeout: NodeJS.Timeout | null = null;
+  private supervisorAccumulated: string = "";
   private static readonly AUTO_CONTINUE_MAX = 3;
   private static readonly ERROR_PATTERNS = [
     "The agent run failed before producing a reply", // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
@@ -111,7 +119,62 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   // Match Obsidian plugin's handleChatEvent
   public handleChatEvent(payload: any) {
     const sessionKey = this.resolveSession(payload?.sessionKey);
+    const rawSessionKey = payload?.sessionKey || "";
     const state = typeof payload?.state === "string" ? payload.state : "";
+    
+    // Intercept supervisor agent responses
+    if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
+      if (state === "delta") {
+        const text = this.extractDeltaText(payload?.message);
+        if (text) {
+          this.supervisorAccumulated += text;
+          this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
+        }
+      } else if (state === "final") {
+        const finalText = this.extractDeltaText(payload?.message);
+        const fullReply = finalText || this.supervisorAccumulated;
+        
+        this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
+        
+        // Clean up
+        if (this.supervisorTimeout) {
+          clearTimeout(this.supervisorTimeout);
+          this.supervisorTimeout = null;
+        }
+        this.supervisorPendingSessionKey = null;
+        const resolver = this.supervisorResponseResolver;
+        this.supervisorResponseResolver = null;
+        this.supervisorAccumulated = "";
+        
+        if (resolver) {
+          resolver(fullReply);
+        }
+        // Don't forward supervisor events to webview
+        return;
+      } else if (state === "error") {
+        if (this.supervisorTimeout) {
+          clearTimeout(this.supervisorTimeout);
+          this.supervisorTimeout = null;
+        }
+        this.supervisorPendingSessionKey = null;
+        const resolver = this.supervisorResponseResolver;
+        this.supervisorResponseResolver = null;
+        this.supervisorAccumulated = "";
+        if (resolver) {
+          resolver(null);
+        }
+        return;
+      }
+    }
+
+    // Only forward events for the current active agent
+    if (rawSessionKey) {
+      const m = rawSessionKey.match(/^agent:([^:]+):/);
+      if (m && m[1] !== this.activeAgent.id) {
+        this.log(`chatEvent discarded: agent=${m[1]} != current=${this.activeAgent.id}`);
+        return;
+      }
+    }
 
     this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
 
@@ -165,8 +228,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
       }
       this.postToWebview({ type: "streamDone", sessionKey });
-      // Also reload history to sync with server
-      this.handleLoadMessages(sessionKey);
     } else if (state === "aborted") {
       this.log(`stream aborted`);
       this.postToWebview({ type: "streamDone", sessionKey });
@@ -391,7 +452,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             gatewayUrl: this.gatewayUrl,
             thinkingLevel: this.thinkingLevel,
             verboseLevel: this.verboseLevel,
-            messageHistory: this.messageHistory
+            messageHistory: this.messageHistory,
+            supervisionEnabled: this.supervisionEnabled
           });
           break;
         case "sendMessage":
@@ -458,6 +520,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           break;
         case "openWorkdir":
           await this.handleOpenWorkdir();
+          break;
+        case "toggleSupervision":
+          await this.handleToggleSupervision(msg.enabled);
           break;
       }
     });
@@ -831,6 +896,263 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.log(`openWorkdir error: ${err.message}`);
       vscode.window.showErrorMessage(`Failed to open working directory: ${err.message}`);
     }
+  }
+
+  private async handleToggleSupervision(enabled: boolean) {
+    this.log(`handleToggleSupervision called with enabled=${enabled}`);
+    this.supervisionEnabled = enabled;
+    this.log(`Supervision ${enabled ? 'enabled' : 'disabled'}`);
+    // Notify webview of the new state
+    this.postToWebview({ type: 'supervisionState', enabled });
+    
+    if (enabled) {
+      this.log("About to call startSupervision()");
+      await this.startSupervision();
+      this.log("startSupervision() returned");
+    } else {
+      this.log("About to call stopSupervision()");
+      this.stopSupervision();
+      this.log("stopSupervision() returned");
+    }
+  }
+
+  private async startSupervision() {
+    this.log(`startSupervision called, supervisionEnabled=${this.supervisionEnabled}, timer=${this.supervisionTimer !== null}`);
+    if (this.supervisionTimer) {
+      this.log("Timer already running, skipping start");
+      return;
+    }
+    
+    const config = vscode.workspace.getConfiguration("openclaw");
+    const intervalMinutes = config.get<number>("supervisor.intervalMinutes", 5) || 5;
+    const reminderMessage = config.get<string>("supervisor.reminderMessage", "") || "";
+    const agentId = config.get<string>("supervisor.agentId", "") || "";
+    const stopInquiryMethod = config.get<string>("supervisor.stopInquiryMethod", "") || "";
+    const stopSignalReply = config.get<string>("supervisor.stopSignalReply", "yes") || "yes";
+    const stopSignalContent = config.get<string>("supervisor.stopSignalContent", "") || "";
+    
+    this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
+    
+    if (!agentId) {
+      this.log("ERROR: agentId is empty! Cannot start supervision.");
+      vscode.window.showWarningMessage("OpenClaw: Supervisor agent ID not configured");
+      this.supervisionEnabled = false;
+      return;
+    }
+    
+    this.log(`Starting supervision with interval ${intervalMinutes}min, agent=${agentId}`);
+    
+    // --- Hello handshake: connect the supervisor agent (one-time) ---
+    const supervisorSessionKey = `agent:${agentId}:main`;
+    const HELLO_MESSAGE = "hello， Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
+    this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
+    try {
+      const runId = this.genId();
+      await this.gateway.request("chat.send", {
+        sessionKey: supervisorSessionKey,
+        message: HELLO_MESSAGE,
+        deliver: false,
+        idempotencyKey: runId
+      });
+      const handshakeReply = await this.waitForSupervisorResponse(supervisorSessionKey, 30000);
+      this.log(`Supervisor handshake completed. Supervisor agent reply: ${handshakeReply ? handshakeReply : "(no reply within timeout)"}`);
+    } catch (err: any) {
+      this.log(`Supervisor handshake failed: ${err?.message || err}`);
+    }
+    
+    // Run immediately, then on interval
+    this.supervisionTimer = setInterval(async () => {
+      this.log("Interval timer fired, calling runSupervisionCheck...");
+      await this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent);
+      this.log("runSupervisionCheck completed");
+    }, intervalMinutes * 60 * 1000);
+    
+    // Also run once immediately
+    this.log("Running immediate supervision check...");
+    this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent).then(() => {
+      this.log("Immediate supervision check completed");
+    }).catch((err) => {
+      this.log(`Immediate supervision check error: ${err.message}`);
+    });
+  }
+
+  private stopSupervision() {
+    this.log(`stopSupervision called, timer=${this.supervisionTimer !== null}`);
+    if (this.supervisionTimer) {
+      clearInterval(this.supervisionTimer);
+      this.supervisionTimer = null;
+      this.log("Supervision timer cleared");
+    }
+    if (this.supervisorBusy) {
+      this.log("WARNING: supervisorBusy is still true, clearing it");
+      this.supervisorBusy = false;
+    }
+    // Always clear the pending request timeout to prevent stale resolves
+    if (this.supervisorTimeout) {
+      clearTimeout(this.supervisorTimeout);
+      this.supervisorTimeout = null;
+      this.log("Supervisor request timeout cleared");
+    }
+    this.supervisorPendingSessionKey = null;
+    this.supervisorResponseResolver = null;
+    this.supervisorAccumulated = "";
+    this.log("Supervision stopped");
+  }
+
+  private async runSupervisionCheck(intervalMinutes: number, reminderMessage: string, agentId: string, stopInquiryMethod: string, stopSignalReply: string, stopSignalContent: string) {
+    this.log(`runSupervisionCheck called: supervisionEnabled=${this.supervisionEnabled}, supervisorBusy=${this.supervisorBusy}`);
+    if (!this.supervisionEnabled) {
+      this.log("Supervision not enabled, returning");
+      return;
+    }
+    
+    try {
+      this.log(`Fetching chat history for session: ${this.gwSessionKey()}`);
+      // Get the last assistant message from the current session
+      const res = await this.gateway.request("chat.history", {
+        sessionKey: this.gwSessionKey(),
+        limit: 10
+      });
+      const msgs = res?.messages || [];
+      this.log(`chat.history returned ${msgs.length} messages`);
+      
+      // Find the last assistant message
+      let lastContent = "";
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
+        if (m.role === "assistant") {
+          const text = this.extractHistoryContent(m.content);
+          this.log(`  Assistant message text length: ${text?.length || 0}`);
+          if (text && !text.startsWith("HEARTBEAT")) {
+            lastContent = text;
+            this.log(`  Found last assistant content (length=${lastContent.length}), breaking`);
+            break;
+          }
+        }
+      }
+      
+      this.log(`Supervision check: last content length=${lastContent.length}, previous=${this.lastSupervisedContent.length}`);
+      
+      const isFirstCheck = this.lastSupervisedContent.length === 0;
+      
+      // --- Every check performs supervisor inquiry ---
+      // Guard against concurrent inquiries
+      if (this.supervisorBusy) {
+        this.log(`Supervisor inquiry skipped: already busy`);
+        return;
+      }
+      
+      this.supervisorBusy = true;
+      this.log(`Inquiring supervisor every check: ${agentId}`);
+      const inquiry = `${stopInquiryMethod}：${lastContent}`;
+      const supervisorSessionKey = `agent:${agentId}:main`;
+      this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
+      
+      const runId = this.genId();
+      try {
+        // Send inquiry to supervisor agent via chat.send to its session
+        await this.gateway.request("chat.send", {
+          sessionKey: supervisorSessionKey,
+          message: inquiry,
+          deliver: false,
+          idempotencyKey: runId
+        });
+        
+        // Wait for supervisor response via chat event listener
+        this.log(`Waiting for supervisor response (timeout 120s)...`);
+        const reply = await this.waitForSupervisorResponse(supervisorSessionKey);
+        
+        if (reply && reply.toLowerCase().trim() === stopSignalReply.toLowerCase().trim()) {
+          this.log(`Supervisor replied with stop signal: "${reply}"`);
+          this.supervisionEnabled = false;
+          this.stopSupervision();
+          this.postToWebview({ type: 'supervisionState', enabled: false });
+          vscode.window.showInformationMessage(`Supervision stopped by supervisor agent`);
+          this.supervisorBusy = false;
+          return;
+        } else {
+          this.log(`Supervisor replied: ${reply?.substring(0, 50)}... (not stop signal, continuing)`);
+        }
+        this.supervisorBusy = false;
+      } catch (err: any) {
+        this.log(`Supervisor inquiry failed: ${err.message}`);
+        this.supervisorBusy = false;
+      }
+      
+      // First check: store baseline, skip comparison (no previous content)
+      if (isFirstCheck) {
+        this.log(`First check, storing content baseline (length=${lastContent.length})`);
+        this.lastSupervisedContent = lastContent;
+        return;
+      }
+      
+      // --- Content comparison ---
+      if (lastContent === this.lastSupervisedContent && lastContent.length > 0) {
+        // Content unchanged, send reminder
+        this.log(`Content SAME (length=${lastContent.length}) → sending reminder`);
+        if (reminderMessage) {
+          this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
+          const runId = this.genId();
+          try {
+            await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: reminderMessage,
+              deliver: false,
+              idempotencyKey: runId
+            });
+            this.log(`Reminder sent successfully`);
+          } catch (err: any) {
+            this.log(`Reminder send failed: ${err.message}`);
+          }
+        } else {
+          this.log(`WARNING: reminderMessage is empty, skip sending`);
+        }
+      } else if (lastContent !== this.lastSupervisedContent && lastContent.length > 0) {
+        // Content changed, check for stop signal content
+        this.log(`Content DIFFERENT: previous=${this.lastSupervisedContent.length}, current=${lastContent.length}`);
+        if (stopSignalContent) {
+          const stopSignals = stopSignalContent.split("|").map(s => s.trim()).filter(s => s.length > 0);
+          if (stopSignals.some(signal => lastContent.includes(signal))) {
+            this.log(`stopSignalContent matched in changed content: "${stopSignalContent.substring(0, 30)}"`);
+            this.supervisionEnabled = false;
+            this.stopSupervision();
+            this.postToWebview({ type: 'supervisionState', enabled: false });
+            vscode.window.showInformationMessage(`Supervision stopped: stop signal content detected`);
+            return;
+          } else {
+            this.log(`stopSignalContent not matched (or empty), continuing`);
+          }
+        }
+      } else {
+        // Empty content, just update
+        this.log(`Last content is empty, updating baseline`);
+      }
+      
+      // Update last supervised content
+      this.lastSupervisedContent = lastContent;
+    } catch (err: any) {
+      this.log(`Supervision check error: ${err.message}`);
+    }
+  }
+
+  private waitForSupervisorResponse(supervisorSessionKey: string, timeoutMs = 120000): Promise<string | null> {
+    return new Promise((resolve) => {
+      // Set up state for intercepting the supervisor's reply
+      this.supervisorPendingSessionKey = supervisorSessionKey;
+      this.supervisorResponseResolver = resolve;
+      this.supervisorAccumulated = "";
+      
+      const timeout = setTimeout(() => {
+        this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
+        this.supervisorTimeout = null;
+        this.supervisorPendingSessionKey = null;
+        this.supervisorResponseResolver = null;
+        resolve(this.supervisorAccumulated || null);
+      }, timeoutMs);
+      
+      this.supervisorTimeout = timeout;
+    });
   }
 
   private async handleLoadMessages(sessionKey: string) {
@@ -1315,6 +1637,10 @@ body {
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">·</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
+      <label class="supervision-check" title="Automatic supervision agent.\nAutomatically disable after task execution is completed" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="supervisionCheck" title="Supervision">
+        <span>supervision</span>
+      </label>
       <button class="open-workdir-btn" id="openWorkdirBtn" title="Open the current agent workspace" style="display:none;">📁</button>
     </div>
     <div class="input-row" style="position:relative;">
@@ -1356,6 +1682,7 @@ body {
   const thinkingChip = $('#thinkingChip');
   const verboseChip = $('#verboseChip');
   const openWorkdirBtn = $('#openWorkdirBtn');
+  const supervisionCheck = $('#supervisionCheck');
 
   let connected = false;
   let streaming = false;
@@ -1588,6 +1915,16 @@ body {
   thinkingChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleThinking' }));
   verboseChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleVerbose' }));
 
+  // Supervision checkbox: toggle and notify extension host
+  if (supervisionCheck) {
+    supervisionCheck.addEventListener('change', () => {
+      vscode.postMessage({ 
+        type: 'toggleSupervision', 
+        enabled: supervisionCheck.checked 
+      });
+    });
+  }
+
   // Open workdir button: send message to extension host
   if (openWorkdirBtn) {
     openWorkdirBtn.addEventListener('click', () => {
@@ -1639,6 +1976,10 @@ body {
         if (openWorkdirBtn) {
           openWorkdirBtn.style.display = connected ? '' : 'none';
         }
+        // Set supervision checkbox state
+        if (supervisionCheck) {
+          supervisionCheck.checked = !!msg.supervisionEnabled;
+        }
 // Update default tab with resolved agent/session from init message
       if (tabs.length > 0) {
         tabs[0].agentId = msg.agent.id;
@@ -1660,11 +2001,20 @@ body {
         if (openWorkdirBtn) {
           openWorkdirBtn.style.display = connected ? '' : 'none';
         }
+        // Set supervision checkbox state
+        if (supervisionCheck) {
+          supervisionCheck.checked = !!msg.supervisionEnabled;
+        }
         if (connected) {
           vscode.postMessage({ type: 'requestModels' });
           vscode.postMessage({ type: 'requestSessions' });
           vscode.postMessage({ type: 'requestAgents' });
           pairingBanner.style.display = 'none';
+        }
+        break;
+      case 'supervisionState':
+        if (supervisionCheck) {
+          supervisionCheck.checked = !!msg.enabled;
         }
         break;
       case 'modelsList': renderModels(msg.models); break;
@@ -1710,6 +2060,11 @@ body {
         if (ct) ct.messages = [];
         break;
       case 'streamStart':
+        // Clean up any leftover streamEl (fix for residual content interfering with new stream)
+        if (streamEl) {
+          streamEl.remove();
+          streamEl = null;
+        }
         streaming = true;
         showTyping(true, 'Thinking');
         sendBtn.style.display = 'none';
@@ -1724,22 +2079,33 @@ body {
         break;
       case 'streamDone':
         streaming = false;
-        updateStream('', true);
+        // Capture bubble content BEFORE clearing streamEl
+        let finalText = '';
+        if (streamEl) {
+          const bubble = streamEl.querySelector('.msg-bubble');
+          if (bubble) finalText = bubble.textContent || '';
+        }
+        // Do NOT call updateStream('', true) as it clears the content
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
-        // Store the final assistant message in activeTabMessages
-        const lastMsgEl = messagesEl.querySelector('.msg.msg-assistant:last-child');
-        if (lastMsgEl) {
-          const bubble = lastMsgEl.querySelector('.msg-bubble');
-          if (bubble && bubble.textContent.trim()) {
-            activeTabMessages.push({
-              role: 'assistant',
-              text: bubble.textContent,
-              timestamp: Date.now()
-            });
+        // Handle empty response
+        if (!finalText.trim()) {
+          // Empty response: remove the streamEl to avoid empty bubble
+          if (streamEl) {
+            streamEl.remove();
           }
+        } else {
+          // Non-empty response: content is already in DOM, just add to history
+          activeTabMessages.push({
+            role: 'assistant',
+            text: finalText,
+            timestamp: Date.now()
+          });
+          // streamEl remains in DOM with correct content
         }
+        // Clear the streamEl reference (but not the DOM content)
+        streamEl = null;
         break;
       case 'streamError':
         streaming = false;

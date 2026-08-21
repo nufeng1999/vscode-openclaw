@@ -7,19 +7,21 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 ## Features
 
 - **Agent HUD** — Connection status, model settings, session management
-- **Multi-Agent** — Switch between agents with one click, each agent gets its own chat tab
+- **Multi-Agent Support** — Switch between agents (main, clerk, coder2, designer, manager, etc.) with one click; each agent gets its own chat tab and independent session pool
+- **Session Management** — Each agent maintains multiple sessions; create, switch, and delete sessions independently per agent
+- **Supervisor Mode** — Configure a supervisor agent to periodically check your current agent's output with customizable intervals, reminder messages, and stop signals
 - **Streaming Responses** — Real-time markdown rendering of AI responses
 - **Image & Video Support** — Automatically display images and videos embedded in gateway replies (base64-encoded data URLs)
 - **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation. Resets when a normal response is received or the user sends a new message.
 - **Slash Commands** — Type `/` to see available commands (`/stop`, `/new`, `/models`, `/help`, etc.), sent to gateway and response displayed in chat
 - **Context Meter** — Visual indicator of token usage per session
-- **Session Management** — Create, switch, and delete chat sessions
 - **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
 - **Message History** — Persistent input history, cycle with `Ctrl+Up` / `Ctrl+Down`
 - **@path File Context** — Type `@` to search and attach workspace files as context to your message
 - **Node Capabilities** — Runs as a paired node, enabling `exec`, `read`, `write`, `edit` tool calls from the agent
 - **Exec Approval** — Commands are executed locally with a cwd-based approval dialog (Allow Once / Always Allow / Deny)
 - **Configurable Agent/Session** — Set `agentId` and `sessionKey` in VSCode settings to control which agent and session the extension connects to
+- **Open Agent Workspace** — Add the agent's workspace folder to VS Code Explorer with one click
 
 ## Requirements
 
@@ -48,12 +50,25 @@ Then copy the folder to `~/.vscode/extensions/`.
 
 Open VSCode Settings and search for `openclaw`:
 
+### General Settings
+
 | Setting               | Default                | Description                          |
 | --------------------- | ---------------------- | ------------------------------------ |
 | `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the gateway         |
 | `openclaw.token`      | _(empty)_              | Auth token for the gateway           |
 | `openclaw.sessionKey` | `OpenClaw VSCode`      | Default session key                  |
 | `openclaw.agentId`    | `OpenClaw VSCode`      | Default agent ID or node display name |
+
+### Supervisor Settings
+
+| Setting                              | Default  | Description                                                                  |
+| ------------------------------------ | -------- | ---------------------------------------------------------------------------- |
+| `openclaw.supervisor.intervalMinutes` | `5`     | How often (minutes) to check the current agent's output                      |
+| `openclaw.supervisor.stopSignalContent` | `""`  | Stop signal content — pipe-separated list (e.g. `done|finished|completed`)  |
+| `openclaw.supervisor.reminderMessage` | `""`    | Reminder message sent when output is unchanged                               |
+| `openclaw.supervisor.agentId`        | `""`     | Supervisor agent ID (e.g. `manager`, `main`)                                |
+| `openclaw.supervisor.stopInquiryMethod` | `""`  | Prompt method prefix for supervisor inquiry (e.g. `请判断`, `Judge`)          |
+| `openclaw.supervisor.stopSignalReply` | `"yes"` | Reply text that triggers stop (case-insensitive)                             |
 
 ## Usage
 
@@ -78,6 +93,76 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 - **Messages** — Markdown-rendered assistant responses
 - **Input** — Type and press Enter to send, Shift+Enter for newline
 - **Stop** — Abort a running response
+
+### Multi-Agent Support
+
+The extension supports multiple agents, each with its own chat tab and independent session pool:
+
+| Feature           | Description                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| Agent Switching   | Click agent buttons in the HUD to switch between agents                            |
+| Independent Tabs  | Each agent gets its own chat tab; conversations are isolated                       |
+| Independent Sessions | Each agent maintains its own set of sessions; session state does not cross agents |
+| Configurable Default | Set `openclaw.agentId` in VSCode settings to control the default agent           |
+
+**Common Agent IDs:**
+
+- `main` — General-purpose agent
+- `clerk` — Administrative and coordination tasks
+- `coder2` — Code-focused coding agent
+- `designer` — Design and UI tasks
+- `manager` — Project management and oversight
+
+### Session Management
+
+Each agent has its own session pool. Manage sessions in the **Sessions** panel:
+
+- **New Session** — Create a fresh session for the current agent
+- **Switch Session** — Click any session to switch to it
+- **Delete Session** — Remove unwanted sessions
+
+Session state (message history, context) is preserved per agent.
+
+### Supervisor Feature
+
+Configure a supervisor agent to periodically check your current agent's output and intervene if needed.
+
+#### Enabling Supervision
+
+Enable supervision via the checkbox in the chat HUD panel, or use the `toggleSupervision` command. When active, the extension periodically checks whether the current agent's output has changed, sends reminders if it hasn't, and asks the supervisor agent for a stop decision.
+
+#### Configuration Example
+
+```json
+{
+  "openclaw.supervisor.agentId": "manager",
+  "openclaw.supervisor.intervalMinutes": 5,
+  "openclaw.supervisor.stopInquiryMethod": "请判断",
+  "openclaw.supervisor.reminderMessage": "Please continue your work.",
+  "openclaw.supervisor.stopSignalContent": "done|finished|completed",
+  "openclaw.supervisor.stopSignalReply": "yes"
+}
+```
+
+#### Parameters
+
+| Parameter              | Type   | Description                                                                              |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `agentId`              | string | Supervisor agent ID to perform periodic checks (e.g. `manager`, `main`)                 |
+| `intervalMinutes`      | number | Check interval in minutes. Set to `0` to disable.                                        |
+| `stopInquiryMethod`    | string | Prompt method prefix for supervisor inquiry (e.g. `请判断`, `Judge`, `Evaluate`)         |
+| `reminderMessage`      | string | Custom reminder message sent to the current agent when output is unchanged (empty = no reminder) |
+| `stopSignalContent`    | string | Stop signal content. Use `\|` to separate multiple signals (e.g. `done|finished|completed`) |
+| `stopSignalReply`      | string | Reply text that triggers stop — case-insensitive match (default: `yes`)                  |
+
+#### How It Works
+
+1. On enable, the extension sends a hello handshake to the supervisor agent (30s timeout)
+2. Every `intervalMinutes`, the extension fetches the current agent's last output via `chat.history`
+3. If output is unchanged, the extension sends `reminderMessage` to the current agent
+4. The extension sends an inquiry to the supervisor agent and waits for a reply
+5. If the supervisor replies with `stopSignalReply` (or output matches `stopSignalContent`), supervision stops
+6. Otherwise, supervision continues until the user disables it or the output changes
 
 ### Message History
 
