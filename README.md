@@ -18,6 +18,8 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
 - **Message History** — Persistent input history, cycle with `Ctrl+Up` / `Ctrl+Down`
 - **@path File Context** — Type `@` to search and attach workspace files as context to your message
+- **Directory Navigation** — Type `@folder/` to browse directory contents; selecting a directory auto-expands its children
+- **Line Number References** — Attach file context with line numbers using `@path#L123` (single line) or `@path#L100-#L200` (line range)
 - **Node Capabilities** — Runs as a paired node, enabling `exec`, `read`, `write`, `edit` tool calls from the agent
 - **Exec Approval** — Commands are executed locally with a cwd-based approval dialog (Allow Once / Always Allow / Deny)
 - **Configurable Agent/Session** — Set `agentId` and `sessionKey` in VSCode settings to control which agent and session the extension connects to
@@ -203,6 +205,25 @@ Type `@` in the input box to trigger file search. A dropdown shows workspace fil
 | `Enter`     | Select and insert `@filepath` |
 | `Escape`    | Close the dropdown            |
 
+#### Directory Navigation
+
+When you type `@folder/` (with a trailing slash), the dropdown lists the contents of that directory — subdirectories and files. Selecting a **directory** from the list inserts `@folder/subdir/` and automatically expands it, letting you drill down without re-typing. Selecting a **file** inserts `@filepath ` (with a trailing space) and closes the dropdown.
+
+In **multi-root workspaces** (multiple folders in the workspace), file paths are prefixed with the workspace folder name to avoid ambiguity, e.g. `cqcbit.nufeng-openclaw-vscode-0.0.14/src/chatView.ts`.
+
+#### Line Number References
+
+You can attach file context with specific line numbers:
+
+| Format | Example | Description |
+| ------ | ------- | ----------- |
+| `@path#L行号` | `@src/chatView.ts#L123` | Reference a single line |
+| `@path#L起始-#L结束` | `@src/chatView.ts#L100-#L200` | Reference a line range |
+
+When the message is sent, line number information is passed as structured data (`{path, line}` or `{path, startLine, endLine}`) to the OpenClaw gateway, allowing the AI to pinpoint exact code locations.
+
+#### File Content Attachment
+
 When you send a message containing `@path`, the referenced file's content is automatically read and attached as context to the AI. The `@path` text remains visible in the message so the AI knows which files you referenced.
 
 - Text files: content sent as UTF-8
@@ -243,6 +264,8 @@ Clicking the **Open current agent workspace** button adds the agent's workspace 
 | `OpenClaw: New Chat`             | Start a new chat session               |
 | `OpenClaw: Settings`             | Open extension settings                |
 | `OpenClaw: Approve Node Pairing` | Manually trigger node pairing approval |
+| `OpenClaw: Reset Device Identity` | Reset the device identity and re-pair |
+| `切换工作目录到这里` | Switch working directory to the selected folder (Explorer context menu) |
 
 ## How It Works
 

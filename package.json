@@ -2,7 +2,7 @@
 	"name": "nufeng-OpenClaw-vscode",
 	"displayName": "nufeng-OpenClaw Client",
 	"description": "AI chat sidebar for OpenClaw gateway & vscode node",
-	"version": "0.0.15",
+	"version": "0.0.16",
 	"publisher": "CQCBIT",
 	"icon": "plugin.png",
 	"license": "MIT",

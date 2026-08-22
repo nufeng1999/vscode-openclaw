@@ -705,48 +705,162 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         return;
       }
 
-      const pattern = query
-        ? `**/*${query.replace(/[/\\]/g, "*")}*`
-        : "**/*";
-      const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
-
-      const files: { path: string; isDir: boolean }[] = [];
-      const seen = new Set<string>();
-
-      for (const uri of uris) {
-        const relPath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
-        if (seen.has(relPath)) continue;
-        seen.add(relPath);
-
-        const parts = relPath.split("/");
-        const isDir = false;
-
-        if (query) {
-          const q = query.toLowerCase();
-          const name = parts[parts.length - 1].toLowerCase();
-          const full = relPath.toLowerCase();
-          if (!name.includes(q) && !full.includes(q)) continue;
+      let pattern: string;
+      // 清理 query：去掉末尾的路径分隔符，用于过滤匹配
+      const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
+      
+      // isRootFolder 提升到外层作用域，供二次过滤使用
+      let isRootFolder = false;
+      
+      if (!query) {
+        pattern = "**/*";
+      } else {
+        // Check if query contains path separator (directory prefix)
+        const lastSlashIndex = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
+        if (lastSlashIndex > 0) {
+          // Query has directory prefix: split into dirPrefix and fileKeyword
+          let dirPrefix = query.substring(0, lastSlashIndex).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+          const fileKeyword = query.substring(lastSlashIndex + 1);
+          
+          // 检查 dirPrefix 是否是工作区根目录名
+          const rootFolderNames = folders.map(f => f.name.toLowerCase());
+          isRootFolder = rootFolderNames.includes(dirPrefix.toLowerCase());
+          
+          if (isRootFolder) {
+            // dirPrefix 是工作区根目录名：只搜索该工作区文件夹下的文件
+            // 使用 RelativePattern 限制搜索范围到指定工作区
+            const targetFolder = folders.find(f => f.name.toLowerCase() === dirPrefix.toLowerCase());
+            const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
+            const relativePattern = new vscode.RelativePattern(targetFolder, basePattern);
+            const uris = await vscode.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
+            
+            // 直接处理结果并返回
+            return this.processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder);
+          } else if (fileKeyword) {
+            // Search for files matching keyword under the specified directory
+            pattern = `${dirPrefix}/**/*${fileKeyword}*`;
+          } else if (lastSlashIndex === query.length - 1) {
+            // Query ends with '/' (e.g., "src/components/"): list all files in that directory
+            pattern = `${dirPrefix}/**/*`;
+          }
+        } else {
+          // No directory prefix: global fuzzy search (original behavior)
+          pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
         }
-
-        files.push({ path: relPath, isDir });
-        if (files.length >= 30) break;
       }
-
-      const folders2: { path: string; isDir: boolean }[] = [];
-      for (const folder of folders) {
-        const folderName = folder.name;
-        if (query && !folderName.toLowerCase().includes(query.toLowerCase())) continue;
-        folders2.push({ path: folderName, isDir: true });
-      }
-
-      this.postToWebview({
-        type: "fileResults",
-        requestId,
-        files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
-      });
+      const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
+      return this.processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder);
     } catch {
       this.postToWebview({ type: "fileResults", requestId, files: [] });
     }
+  }
+
+  private async processSearchResults(uris: vscode.Uri[], folders: vscode.WorkspaceFolder[], cleanQuery: string, requestId: string, isRootFolder: boolean): Promise<void> {
+    const files: { path: string; isDir: boolean }[] = [];
+    const seen = new Set<string>();
+
+    // 读取当前浏览目录的直接子目录和文件（用于目录导航）
+    if (cleanQuery) {
+      let browseUri: vscode.Uri | undefined;
+      let displayPrefix: string;
+      if (folders.length === 1) {
+        const folder = folders[0];
+        if (isRootFolder) {
+          browseUri = folder.uri;
+          displayPrefix = '';
+        } else {
+          browseUri = vscode.Uri.joinPath(folder.uri, cleanQuery);
+          displayPrefix = cleanQuery;
+        }
+      } else {
+        const sep = cleanQuery.indexOf('/');
+        if (sep > 0) {
+          const folderName = cleanQuery.substring(0, sep);
+          const folder = folders.find(f => f.name.toLowerCase() === folderName.toLowerCase());
+          if (folder) {
+            const relPath = cleanQuery.substring(sep + 1);
+            browseUri = vscode.Uri.joinPath(folder.uri, relPath);
+            displayPrefix = cleanQuery; // 已包含 folderName/relPath
+          }
+        } else if (isRootFolder) {
+          const folder = folders.find(f => f.name.toLowerCase() === cleanQuery.toLowerCase());
+          if (folder) {
+            browseUri = folder.uri;
+            displayPrefix = folder.name;
+          }
+        }
+      }
+      if (browseUri) {
+        try {
+          const entries = await vscode.workspace.fs.readDirectory(browseUri);
+          for (const [name, type] of entries) {
+            if (name.startsWith('.')) continue; // 跳过隐藏目录
+            const isDir = (type & vscode.FileType.Directory) !== 0;
+            const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
+            if (!seen.has(fullPath)) {
+              seen.add(fullPath);
+              files.push({ path: fullPath, isDir });
+            }
+          }
+        } catch {
+          // 忽略读取目录错误
+        }
+      }
+    }
+
+    for (const uri of uris) {
+      // Get workspace folder to support multi-root workspaces
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+      const relativePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+      
+      // In multi-root workspaces, prepend workspace folder name for uniqueness
+      let fullPath: string;
+      if (folders.length > 1 && workspaceFolder) {
+        fullPath = `${workspaceFolder.name}/${relativePath}`;
+      } else {
+        fullPath = relativePath;
+      }
+      
+      if (seen.has(fullPath)) continue;
+      seen.add(fullPath);
+
+      const parts = fullPath.split("/");
+      let isDir = false;
+      try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        isDir = (stat.type & vscode.FileType.Directory) !== 0;
+      } catch {
+        // Ignore stat errors (e.g., file deleted during search)
+        isDir = false;
+      }
+
+      // 当查询是工作区根目录名时，跳过二次过滤（显示所有文件）
+      if (cleanQuery && !isRootFolder) {
+        const q = cleanQuery.toLowerCase();
+        const name = parts[parts.length - 1].toLowerCase();
+        const full = fullPath.toLowerCase();
+        if (!name.includes(q) && !full.includes(q)) continue;
+      }
+
+      files.push({ path: fullPath, isDir });
+      if (files.length >= 30) break;
+    }
+
+    // 当 isRootFolder 时，不显示工作区文件夹名本身（它不是自己的子目录）
+    const folders2: { path: string; isDir: boolean }[] = [];
+    if (!isRootFolder) {
+      for (const folder of folders) {
+        const folderName = folder.name;
+        if (cleanQuery && !folderName.toLowerCase().includes(cleanQuery.toLowerCase())) continue;
+        folders2.push({ path: folderName, isDir: true });
+      }
+    }
+
+    this.postToWebview({
+      type: "fileResults",
+      requestId,
+      files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
+    });
   }
 
   private async handleRequestModels() {
@@ -2144,7 +2258,14 @@ body {
   function sendMessage() {
     const text = inputBox.value.trim();
     if (!text || !connected) return;
-    const refs = atFileRefs.slice();
+    // 解析 fileRefs 中的 #L行号 或 #L行号-#K行号 格式
+    const refs = atFileRefs.map(ref => {
+      const rangeMatch = ref.match(/^(.+?)#L(\d+)-#L?(\d+)$/);
+      if (rangeMatch) return { path: rangeMatch[1], startLine: parseInt(rangeMatch[2]), endLine: parseInt(rangeMatch[3]) };
+      const singleMatch = ref.match(/^(.+?)#L(\d+)$/);
+      if (singleMatch) return { path: singleMatch[1], line: parseInt(singleMatch[2]) };
+      return { path: ref };
+    });
     inputBox.value = '';
     inputBox.style.height = 'auto';
     historyIndex = -1;
@@ -2160,7 +2281,10 @@ body {
     const before = val.substring(0, pos);
     const atIndex = before.lastIndexOf('@');
     if (atIndex >= 0) {
-      const query = before.slice(atIndex + 1);
+      const rawQuery = before.slice(atIndex + 1);
+      // 去掉 #L行号 或 #L行号-#K行号 后缀用于搜索
+      const hashIndex = rawQuery.indexOf('#L');
+      const query = hashIndex > 0 ? rawQuery.substring(0, hashIndex) : rawQuery;
       if (query.indexOf(' ') === -1 && query.indexOf('\t') === -1) {
         atTriggerPos = atIndex;
         atQuery = query;
@@ -2217,15 +2341,38 @@ body {
     const pos = inputBox.selectionStart;
     const before = val.substring(0, atTriggerPos);
     const after = val.substring(pos);
-    const insert = '@' + file.path + ' ';
+    // 检查用户是否已输入 #L行号 或 #L行号-#K行号
+    const currentQuery = val.substring(atTriggerPos + 1, pos);
+    const hashMatch = currentQuery.match(/#L(\d+)(?:-#L?(\d+))?$/);
+    let lineSuffix = '';
+    if (hashMatch) {
+      lineSuffix = '#L' + hashMatch[1];
+      if (hashMatch[2]) {
+        lineSuffix += '-#L' + hashMatch[2];
+      }
+    }
+    const basePath = file.isDir ? file.path + '/' : file.path + ' ';
+    const insert = '@' + basePath + lineSuffix;
     inputBox.value = before + insert + after;
     const newPos = before.length + insert.length;
     inputBox.setSelectionRange(newPos, newPos);
     inputBox.focus();
-    if (!atFileRefs.includes(file.path)) atFileRefs.push(file.path);
-    hideAtDropdown();
-    inputBox.style.height = 'auto';
-    inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
+    
+    // 目录选择后不隐藏下拉框，而是触发 checkAtTrigger 显示子目录内容
+    // 隐藏逻辑移到 checkAtTrigger 中处理
+    if (!file.isDir) {
+      const refPath = lineSuffix ? file.path + lineSuffix : file.path;
+      if (!atFileRefs.includes(refPath)) atFileRefs.push(refPath);
+      hideAtDropdown();
+      inputBox.style.height = 'auto';
+      inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
+    } else {
+      // 目录：手动触发 checkAtTrigger 以搜索子目录内容
+      // JS 设置 value 不会自动触发 input 事件
+      atVisible = false;
+      atDropdown.classList.remove('visible');
+      checkAtTrigger();
+    }
   }
 
   // ─── / Command Dropdown ───
