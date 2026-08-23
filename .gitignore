@@ -1,6 +1,7 @@
 /out
 /node_modules
 test*.*
+_*.*
 .vscodeignore
 *.vsix
 OpenClaw-VSCode-分析报告.md
@@ -8,3 +9,4 @@ OpenClaw_VSCode_扩展分析报告.md
 package-lock.json
 
 *lock.json
+outputs/task_complete.md

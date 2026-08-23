@@ -101,11 +101,31 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   public updateConnectionStatus(connected: boolean) {
+    // 发送完整的 init 消息，确保 webview 拿到权威状态
+    this.postToWebview({
+      type: "init",
+      sessionKey: this.currentSessionKey,
+      model: this.currentModel,
+      connected,
+      agent: this.activeAgent,
+      gatewayUrl: this.gatewayUrl,
+      thinkingLevel: this.thinkingLevel,
+      verboseLevel: this.verboseLevel,
+      messageHistory: this.messageHistory,
+      supervisionEnabled: this.supervisionEnabled
+    });
+    // 同时发送 connectionStatus（保持向后兼容）
     this.postToWebview({
       type: "connectionStatus",
       connected,
       agent: this.activeAgent
     });
+    // 如果连上了，主动拉取最新数据
+    if (connected) {
+      this.handleRequestModels().catch(() => {});
+      this.handleRequestSessions().catch(() => {});
+      this.handleRequestAgents().catch(() => {});
+    }
   }
 
   /**
@@ -457,7 +477,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           });
           break;
         case "sendMessage":
-          await this.handleSendMessage(msg.text, msg.fileRefs);
+          await this.handleSendMessage(msg.text, msg.fileRefs, msg.attachments);
           break;
         case "stopStream":
           await this.handleStopStream();
@@ -509,6 +529,48 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await vscode.env.clipboard.writeText(msg.text);
           vscode.window.showInformationMessage("Copied to clipboard");
           break;
+        case "copyImage": {
+          const dataUrl = msg.dataUrl;
+          if (dataUrl && typeof dataUrl === "string") {
+            try {
+              const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+              const os = require("os");
+              const tmpB64 = path.join(os.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+              fs.writeFileSync(tmpB64, base64Data, "utf8");
+              // base64 经临时文件传入 PowerShell（规避命令行 32KB 限制），
+              // 内存流解码后写入剪贴板；单引号字符串内使用原始单反斜杠路径
+              const psScript =
+                "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); " +
+                "Add-Type -AssemblyName System.Drawing; " +
+                "Add-Type -AssemblyName System.Windows.Forms; " +
+                "$bytes = [Convert]::FromBase64String($b64); " +
+                "$ms = New-Object System.IO.MemoryStream(,$bytes); " +
+                "$img = [System.Drawing.Image]::FromStream($ms); " +
+                "[System.Windows.Forms.Clipboard]::SetImage($img); " +
+                "$img.Dispose(); $ms.Dispose(); " +
+                "Write-Output 'CLIP_SET_OK';";
+              const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+              const child_process = require("child_process");
+              child_process.exec(
+                "powershell -NoProfile -STA -EncodedCommand " + encoded,
+                { timeout: 15000 },
+                (pErr, pStdout) => {
+                  try { fs.unlinkSync(tmpB64); } catch (e) { /* ignore */ }
+                  if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
+                    console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
+                    vscode.window.showErrorMessage("复制图片失败，请查看输出日志");
+                  } else {
+                    console.log("[copyImage] clipboard write OK");
+                  }
+                }
+              );
+            } catch (copyErr) {
+              console.error("copyImage failed:", copyErr);
+              vscode.window.showErrorMessage("复制图片失败: " + String(copyErr));
+            }
+          }
+          break;
+        }
         case "openSettings":
           vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
           break;
@@ -528,7 +590,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleSendMessage(text: string, fileRefs?: string[]) {
+  private async handleSendMessage(text: string, fileRefs?: string[], webviewAttachments?: any[]) {
     if (!text.trim()) return;
     if (!this.gateway.connected) {
       vscode.window.showWarningMessage("OpenClaw: Not connected to gateway");
@@ -546,19 +608,37 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       text,
       timestamp: Date.now()
     };
+    
+    // 先初始化 attachments
+    let attachments: any[] = [];
+    if (webviewAttachments && webviewAttachments.length > 0) {
+      // Convert webview format {name, size, mimeType, data} to OpenClaw format
+      attachments = webviewAttachments.map(a => ({
+        type: 'file',
+        mimeType: a.mimeType,
+        fileName: a.name,
+        content: a.data
+      }));
+    } else if (fileRefs) {
+      attachments = await this.buildAttachments(fileRefs);
+    }
+    
     this.messages.push(userMsg);
     this.messageHistory.push(text);
     if (this.messageHistory.length > 200) {
       this.messageHistory = this.messageHistory.slice(-200);
     }
     this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
-    this.postToWebview({ type: "userMessage", message: userMsg });
+    // Send user message with attachments for rendering
+    const msgWithAttachments = (webviewAttachments && webviewAttachments.length > 0) || attachments.length > 0 ? {
+      ...userMsg,
+      attachments: webviewAttachments || []
+    } : userMsg;
+    this.postToWebview({ type: "userMessage", message: msgWithAttachments });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
 
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
-
-    const attachments = await this.buildAttachments(fileRefs);
 
     try {
       const res = await this.gateway.request("chat.send", {
@@ -1333,7 +1413,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com; img-src data: https:; media-src data: https:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com https://unpkg.com; img-src data: https: blob:; media-src data: https:;">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
@@ -1509,6 +1589,9 @@ body {
 .msg-user .msg-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .msg-assistant .msg-bubble { background: var(--bg2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .msg-time { font-size: 10px; color: var(--text-muted); padding: 0 4px; }
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.msg-attachment-img { max-width: 200px; max-height: 200px; border-radius: 8px; border: 1px solid var(--border); object-fit: cover; }
+.msg-bubble a { color: inherit; text-decoration: underline; }
 
 .tool-call { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; background: rgba(128, 128, 128, 0.06); border: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
 
@@ -1587,6 +1670,95 @@ body {
 .msg-assistant .msg-bubble video { max-width: 100%; max-height: 400px; border-radius: 4px; display: block; margin: 4px 0; }
 .msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
 
+/* Mermaid diagram container */
+.msg-assistant .msg-bubble .mermaid-wrapper {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.msg-assistant .msg-bubble .mermaid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(128,128,128,0.08);
+  border-bottom: 1px solid var(--border);
+}
+.msg-assistant .msg-bubble .mermaid-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.msg-assistant .msg-bubble .mermaid-copy {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.msg-assistant .msg-bubble .mermaid-copy:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.msg-assistant .msg-bubble .mermaid-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.msg-assistant .msg-bubble .mermaid-copy-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.msg-assistant .msg-bubble .mermaid-copy-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.msg-assistant .msg-bubble .mermaid-copy-btn.copied {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.msg-assistant .msg-bubble .mermaid-container {
+  padding: 12px;
+  text-align: center;
+  overflow-x: auto;
+}
+.msg-assistant .msg-bubble .mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+.msg-assistant .msg-bubble .mermaid-source {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.msg-assistant .msg-bubble .mermaid-error {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 0.85em;
+  color: #cc4444;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
 /* HUD Toggle */
 .hud-toggle {
   background: none;
@@ -1633,6 +1805,67 @@ body {
 .agent-btn:hover { background: rgba(128,128,128,0.14); color: var(--text); }
 .agent-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .agent-btn-emoji { font-size: 13px; }
+
+/* Attachment Preview */
+.attachment-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.attachment-preview::-webkit-scrollbar { width: 4px; }
+.attachment-preview::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.attachment-preview:empty { display: none; }
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text);
+  max-width: 200px;
+}
+.attachment-chip-icon { flex-shrink: 0; font-size: 14px; }
+.attachment-chip-info { min-width: 0; flex: 1; overflow: hidden; }
+.attachment-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.attachment-chip-size { color: var(--text-muted); font-size: 10px; }
+.attachment-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.attachment-chip-remove:hover { color: #cc4444; background: rgba(204,68,68,0.1); }
+.attach-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+.attach-btn:hover { background: var(--hover); color: var(--text); }
 
 /* @ Mention Dropdown */
 .at-dropdown {
@@ -1757,10 +1990,13 @@ body {
       </label>
       <button class="open-workdir-btn" id="openWorkdirBtn" title="Open the current agent workspace" style="display:none;">📁</button>
     </div>
+    <div class="attachment-preview" id="attachmentPreview"></div>
     <div class="input-row" style="position:relative;">
       <button class="stop-btn" id="stopBtn" title="Stop">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
+      <button class="attach-btn" id="attachBtn" title="Attach files">📎</button>
+      <input type="file" id="attachInput" multiple style="display:none;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
@@ -1774,6 +2010,7 @@ body {
 </div>
 
 <script nonce="${nonce}" src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+<script nonce="${nonce}" src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script nonce="${nonce}">
 (function() {
   const vscode = acquireVsCodeApi();
@@ -1812,6 +2049,11 @@ body {
   let messageHistory = [];
   let historyIndex = -1;
 
+  // Initialize mermaid
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', flowchart: { htmlLabels: false }, htmlLabels: false });
+  }
+
   // @ mention state
   let atVisible = false;
   let atQuery = '';
@@ -1843,6 +2085,78 @@ body {
   let activeTabId = 'tab-main';
   let streamEl = null;
   let activeTabMessages = [];
+
+  // Attachment state (independent from fileRefs/@mention)
+  const MAX_ATTACH_SIZE = 10 * 1024 * 1024; // 10MB per file
+  let attachments = []; // [{name, size, mimeType, data(base64)}]
+  const attachmentPreview = document.getElementById('attachmentPreview');
+  const attachBtnEl = document.getElementById('attachBtn');
+  const attachInputEl = document.getElementById('attachInput');
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function getFileIcon(mimeType) {
+    if (!mimeType) return '📄';
+    if (mimeType.startsWith('image/')) return '🖼️';
+    if (mimeType.startsWith('video/')) return '🎬';
+    if (mimeType.startsWith('audio/')) return '🎵';
+    if (mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('yaml') || mimeType.includes('javascript') || mimeType.includes('typescript')) return '📝';
+    if (mimeType === 'application/pdf') return '📕';
+    if (mimeType.startsWith('application/zip') || mimeType.startsWith('application/gzip') || mimeType.startsWith('application/x-')) return '📦';
+    return '📎';
+  }
+
+  function renderAttachments() {
+    if (!attachmentPreview) return;
+    if (attachments.length === 0) {
+      attachmentPreview.innerHTML = '';
+      return;
+    }
+    attachmentPreview.innerHTML = '';
+    for (let i = 0; i < attachments.length; i++) {
+      const a = attachments[i];
+      const chip = document.createElement('div');
+      chip.className = 'attachment-chip';
+      chip.innerHTML = '<span class="attachment-chip-icon">' + getFileIcon(a.mimeType) + '</span>' +
+        '<div class="attachment-chip-info"><div class="attachment-chip-name">' + a.name + '</div>' +
+        '<div class="attachment-chip-size">' + formatFileSize(a.size) + '</div></div>' +
+        '<button class="attachment-chip-remove" data-index="' + i + '" title="Remove">×</button>';
+      attachmentPreview.appendChild(chip);
+    }
+  }
+
+  function addAttachments(files) {
+    for (const file of files) {
+      if (file.size > MAX_ATTACH_SIZE) {
+        alert('"' + file.name + '" exceeds 10MB limit and was skipped.');
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const data = reader.result;
+        if (typeof data === 'string') {
+          const base64Part = data.split(',')[1] || '';
+          attachments.push({
+            name: file.name,
+            size: file.size,
+            mimeType: file.type || 'application/octet-stream',
+            data: base64Part
+          });
+          renderAttachments();
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function removeAttachment(index) {
+    attachments.splice(index, 1);
+    renderAttachments();
+  }
 
   function getActiveTab() { return tabs.find(t => t.id === activeTabId) || tabs[0]; }
 
@@ -2026,6 +2340,65 @@ body {
   });
   sendBtn.addEventListener('click', sendMessage);
   stopBtn.addEventListener('click', () => vscode.postMessage({ type: 'stopStream' }));
+
+  // Attachment button: trigger hidden file input
+  if (attachBtnEl) {
+    attachBtnEl.addEventListener('click', () => {
+      if (attachInputEl) attachInputEl.click();
+    });
+  }
+  // File input change: add selected files as attachments
+  if (attachInputEl) {
+    attachInputEl.addEventListener('change', () => {
+      if (attachInputEl.files && attachInputEl.files.length > 0) {
+        addAttachments(attachInputEl.files);
+        attachInputEl.value = ''; // reset for next selection
+      }
+    });
+  }
+  // Attachment preview: handle remove button clicks (event delegation)
+  if (attachmentPreview) {
+    attachmentPreview.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target && target.classList && target.classList.contains('attachment-chip-remove')) {
+        const idx = parseInt(target.getAttribute('data-index') || '0', 10);
+        removeAttachment(idx);
+      }
+    });
+  }
+  // Paste: capture pasted files (e.g. screenshots)
+  inputBox.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const files = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      addAttachments(files);
+    }
+  });
+  // Drag & drop: capture dropped files onto the input area
+  const inputAreaEl = document.querySelector('.input-area');
+  if (inputAreaEl) {
+    inputAreaEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+    inputAreaEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        addAttachments(e.dataTransfer.files);
+      }
+    });
+  }
   thinkingChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleThinking' }));
   verboseChip.addEventListener('click', () => vscode.postMessage({ type: 'cycleVerbose' }));
 
@@ -2271,7 +2644,9 @@ body {
     historyIndex = -1;
     atFileRefs = [];
     hideAtDropdown();
-    vscode.postMessage({ type: 'sendMessage', text, fileRefs: refs });
+    vscode.postMessage({ type: 'sendMessage', text, fileRefs: refs, attachments: attachments.slice() });
+    attachments = [];
+    renderAttachments();
   }
 
   function checkAtTrigger() {
@@ -2457,6 +2832,31 @@ body {
       bubble.textContent = msg.text;
     }
     div.appendChild(bubble);
+    
+    // Render attachments (for user-sent images)
+    if (msg.attachments && msg.attachments.length > 0) {
+      const attachDiv = document.createElement('div');
+      attachDiv.className = 'msg-attachments';
+      for (const att of msg.attachments) {
+        if (att.data && att.mimeType && att.mimeType.startsWith('image/')) {
+          const img = document.createElement('img');
+          img.src = 'data:' + att.mimeType + ';base64,' + att.data;
+          img.className = 'msg-attachment-img';
+          img.alt = att.name || 'attachment';
+          attachDiv.appendChild(img);
+        } else if (att.data) {
+          const link = document.createElement('a');
+          link.href = 'data:' + att.mimeType + ';base64,' + att.data;
+          link.textContent = att.name || 'attachment';
+          link.download = att.name || 'download';
+          attachDiv.appendChild(link);
+        }
+      }
+      if (attachDiv.children.length > 0) {
+        div.appendChild(attachDiv);
+      }
+    }
+    
     if (msg.timestamp) {
       const time = document.createElement('div');
       time.className = 'msg-time';
@@ -2464,6 +2864,7 @@ body {
       div.appendChild(time);
     }
     messagesEl.appendChild(div);
+    if (msg.role === 'assistant') renderMermaidBlocks();
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
@@ -2471,6 +2872,228 @@ body {
     messagesEl.innerHTML = '';
     messagesEl.appendChild(emptyState);
     emptyState.style.display = '';
+  }
+
+  // 复制纯文本到剪贴板（带“已复制”反馈）
+  async function copyTextToClipboard(text, btnEl) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showCopied(btnEl);
+    } catch (err) {
+      console.error('Copy source failed:', err);
+    }
+  }
+
+  // 将渲染后的 SVG 转为 PNG，经扩展宿主写入系统剪贴板（webview 无法直接写图片剪贴板）
+  async function copySvgToClipboard(svgContainer, btnEl) {
+    const svgEl = svgContainer ? svgContainer.querySelector('svg') : null;
+    console.log('[Mermaid Copy] start, svgEl=', !!svgEl);
+    if (!svgEl) {
+      console.error('[Mermaid] No SVG found for copy');
+      return;
+    }
+    try {
+      // 诊断：检测 SVG 是否含会导致 canvas 污染的节点
+      const hasForeign = svgEl.querySelector('foreignObject') !== null;
+      const hasImage = svgEl.querySelector('image') !== null;
+      const styleCount = svgEl.querySelectorAll('style').length;
+      console.log('[Mermaid Copy] svg diagnostics:', JSON.stringify({ hasForeign, hasImage, styleCount, childNodes: svgEl.childNodes.length }));
+      const xml = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
+      let dataUrl;
+      try {
+        const rect = svgEl.getBoundingClientRect();
+        const w = Math.max(1, Math.round(rect.width));
+        const h = Math.max(1, Math.round(rect.height));
+        console.log('[Mermaid Copy] rect=', JSON.stringify({w, h}));
+        
+        // 方案A：尝试 createImageBitmap（绕过 CSP blob: 限制）
+        try {
+          const bitmap = await createImageBitmap(svgBlob);
+          const canvas = document.createElement('canvas');
+          canvas.width = w * 2;
+          canvas.height = h * 2;
+          const ctx = canvas.getContext('2d');
+          ctx.scale(2, 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(bitmap, 0, 0, w, h);
+          bitmap.close();
+          dataUrl = canvas.toDataURL('image/png');
+          console.log('[Mermaid Copy] dataUrl len (bitmap)=', dataUrl.length);
+        } catch (bmpErr) {
+          console.log('[Mermaid Copy] createImageBitmap failed:', bmpErr.message);
+          
+          // 方案B：DOMParser 解析 SVG → foreignObject 转 g 组渲染
+          const parser = new DOMParser();
+          const svgDoc = parser.parseFromString(xml, 'image/svg+xml');
+          const foNodes = svgDoc.querySelectorAll('foreignObject');
+          foNodes.forEach(fo => {
+            const textContent = fo.textContent || '';
+            if (textContent) {
+              const g = svgDoc.createElement('g');
+              const tspan = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'text');
+              tspan.setAttribute('x', fo.getAttribute('x') || '0');
+              tspan.setAttribute('y', fo.getAttribute('y') || '1em');
+              tspan.textContent = textContent;
+              g.appendChild(tspan);
+              fo.parentNode.replaceChild(g, fo);
+            }
+          });
+          
+          const sanitizedXml = new XMLSerializer().serializeToString(svgDoc.documentElement);
+          const cleanBlob = new Blob([sanitizedXml], { type: 'image/svg+xml;charset=utf-8' });
+          const cleanUrl = URL.createObjectURL(cleanBlob);
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('SVG image load timeout')), 5000);
+            img.onload = () => { clearTimeout(timer); resolve(null); };
+            img.onerror = (e) => { clearTimeout(timer); reject(new Error('SVG image load failed: ' + (e.message || ''))); };
+            img.src = cleanUrl;
+          });
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = w * 2;
+          canvas.height = h * 2;
+          const ctx = canvas.getContext('2d');
+          ctx.scale(2, 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          dataUrl = canvas.toDataURL('image/png');
+          console.log('[Mermaid Copy] dataUrl len (domparser)=', dataUrl.length);
+          URL.revokeObjectURL(cleanUrl);
+        }
+      } catch (err) {
+        console.error('[Mermaid Copy] inner try/catch failed:', err);
+        throw err;
+      }
+      vscode.postMessage({ type: 'copyImage', dataUrl: dataUrl });
+      console.log('[Mermaid Copy] postMessage sent');
+      showCopied(btnEl);
+    } catch (err) {
+      console.error('[Mermaid Copy] catch:', err);
+      if (btnEl) {
+        const orig = btnEl.dataset.originalText || btnEl.textContent;
+        btnEl.dataset.originalText = orig;
+        btnEl.textContent = '复制失败';
+        btnEl.classList.add('copied');
+        setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
+      }
+    }
+  }
+
+  function showCopied(btnEl) {
+    if (!btnEl) return;
+    const originalText = btnEl.dataset.originalText || btnEl.textContent;
+    btnEl.dataset.originalText = originalText;
+    btnEl.textContent = '已复制';
+    btnEl.classList.add('copied');
+    setTimeout(() => {
+      btnEl.textContent = originalText;
+      btnEl.classList.remove('copied');
+    }, 1000);
+  }
+
+  function renderMermaidBlocks() {
+    if (typeof mermaid === 'undefined') return;
+    // 使用 requestAnimationFrame 确保 DOM 已渲染
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        // 匹配所有 code 块（包括 user 和 assistant 消息）
+        const allBlocks = document.querySelectorAll('pre code');
+        allBlocks.forEach((block) => {
+          const codeText = (block.textContent || '').trim();
+          console.log('[Mermaid] Block content preview:', JSON.stringify(codeText.substring(0, 80)));
+          // 检测 mermaid 语法关键字
+          if (!codeText.match(/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|C4|requirements|gitGraph|mindmap|quadrantChart)/m)) return;
+          const pre = block.parentElement;
+          // 防止重复渲染：渲染过的 pre 会加 mermaid-source 类
+          if (!pre || pre.classList.contains('mermaid-source')) return;
+          const svgId = 'mermaid-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
+          mermaid.render(svgId, codeText)
+          .then(svgResult => {
+            // v11.4.1: render 返回 {id, svg} 对象，用 svgResult.svg 获取 SVG 字符串
+            const svgCode = svgResult.svg;
+            // 保留原始代码块，并在其上方插入渲染结果 + 复制按钮
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mermaid-wrapper';
+            
+            const header = document.createElement('div');
+            header.className = 'mermaid-header';
+            const label = document.createElement('span');
+            label.className = 'mermaid-label';
+            label.textContent = 'Mermaid';
+            
+            const svgContainer = document.createElement('div');
+            svgContainer.className = 'mermaid-container';
+            svgContainer.innerHTML = svgCode;
+            
+            // 视图切换按钮组
+            const viewToggle = document.createElement('div');
+            viewToggle.className = 'mermaid-view-toggle';
+            const btnGraphic = document.createElement('button');
+            btnGraphic.className = 'mermaid-btn-graphic active';
+            btnGraphic.textContent = '图';
+            btnGraphic.type = 'button';
+            const btnSource = document.createElement('button');
+            btnSource.className = 'mermaid-btn-source';
+            btnSource.textContent = '源码';
+            btnSource.type = 'button';
+            
+            // 切换显示逻辑
+            function toggleView(showGraphic) {
+              svgContainer.style.display = showGraphic ? '' : 'none';
+              pre.style.display = showGraphic ? 'none' : '';
+              btnGraphic.classList.toggle('active', showGraphic);
+              btnSource.classList.toggle('active', !showGraphic);
+            }
+            
+            btnGraphic.addEventListener('click', () => toggleView(true));
+            btnSource.addEventListener('click', () => toggleView(false));
+            
+            // 复制按钮（根据当前激活视图复制对应内容）
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'mermaid-copy-btn';
+            copyBtn.textContent = '复制';
+            copyBtn.type = 'button';
+            copyBtn.addEventListener('click', () => {
+              if (btnGraphic.classList.contains('active')) {
+                copySvgToClipboard(svgContainer, copyBtn);
+              } else {
+                copyTextToClipboard(codeText, copyBtn);
+              }
+            });
+            
+            header.appendChild(label);
+            viewToggle.appendChild(btnGraphic);
+            viewToggle.appendChild(btnSource);
+            header.appendChild(viewToggle);
+            
+            // 复制按钮组
+            const btnGroup = document.createElement('div');
+            btnGroup.className = 'mermaid-btn-group';
+            btnGroup.appendChild(copyBtn);
+            header.appendChild(btnGroup);
+            
+            wrapper.appendChild(header);
+            wrapper.appendChild(svgContainer);
+            
+            // 用 wrapper 包裹，保留原 pre 在下方（默认显示图，源码可通过按钮切换）
+            pre.parentNode.insertBefore(wrapper, pre);
+            pre.classList.add('mermaid-source');
+            pre.style.display = 'none';
+          })
+          .catch(err => {
+            console.error('Mermaid render error:', err);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'mermaid-error';
+            errorDiv.textContent = 'Mermaid diagram render failed: ' + err.message;
+            pre.parentNode.insertBefore(errorDiv, pre);
+          });
+      });
+    }, 100);  // 增加延迟，确保 DOM 完全渲染
+    });
   }
 
   function updateStream(text, done) {
@@ -2494,7 +3117,10 @@ body {
       }
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-    if (done) streamEl = null;
+    if (done) {
+      renderMermaidBlocks();
+      streamEl = null;
+    }
   }
 
   function showTyping(show, text) {
@@ -2729,3 +3355,4 @@ function getNonce(): string {
   }
   return result;
 }
+
