@@ -57,6 +57,10 @@
 			{
 				"command": "openclaw.switchWorkdir",
 				"title": "切换工作目录到这里"
+			},
+			{
+				"command": "openclaw.setInputText",
+				"title": "OpenClaw: Set Input Text"
 			}
 		],
 		"submenus": [
