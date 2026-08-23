@@ -571,6 +571,39 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case "exportImage": {
+          const dataUrl = msg.dataUrl;
+          if (!dataUrl || typeof dataUrl !== "string") {
+            vscode.window.showErrorMessage("导出失败：未收到图片数据");
+            break;
+          }
+          try {
+            const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+            const ts = Date.now();
+            const defaultName = "mermaid-" + ts + ".png";
+            const saveUri = await vscode.window.showSaveDialog({
+              title: "导出 Mermaid 图为 PNG",
+              defaultUri: vscode.Uri.file(path.join(require("os").homedir(), "Downloads", defaultName)),
+              filters: { "PNG 图片 (*.png)": ["png"] }
+            });
+            if (!saveUri) {
+              console.log("[exportImage] user cancelled save dialog");
+              break;
+            }
+            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
+            console.log("[exportImage] file written:", saveUri.fsPath);
+            vscode.window.showInformationMessage("已导出: " + saveUri.fsPath);
+          } catch (exportErr) {
+            console.error("exportImage failed:", exportErr);
+            vscode.window.showErrorMessage("导出失败: " + String(exportErr));
+          }
+          break;
+        }
+        case "notify":
+          if (msg && typeof msg.text === "string" && msg.text) {
+            vscode.window.showInformationMessage(msg.text);
+          }
+          break;
         case "openSettings":
           vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
           break;
@@ -1710,6 +1743,8 @@ body {
   align-items: center;
   gap: 4px;
 }
+/* 通用 Mermaid 按钮样式（图像/源码/复制/导出 统一） */
+.msg-assistant .msg-bubble .mermaid-btn,
 .msg-assistant .msg-bubble .mermaid-copy-btn {
   font-size: 11px;
   padding: 2px 8px;
@@ -1720,11 +1755,13 @@ body {
   cursor: pointer;
   transition: all 0.2s;
 }
+.msg-assistant .msg-bubble .mermaid-btn:hover,
 .msg-assistant .msg-bubble .mermaid-copy-btn:hover {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
+.msg-assistant .msg-bubble .mermaid-btn.active,
 .msg-assistant .msg-bubble .mermaid-copy-btn.copied {
   background: var(--accent);
   border-color: var(--accent);
@@ -1735,9 +1772,16 @@ body {
   text-align: center;
   overflow-x: auto;
 }
-.msg-assistant .msg-bubble .mermaid-container svg {
+/* 让含 Mermaid 的 bubble 不受 msg-bubble 全局 max-width 限制，自动撑满 */
+.msg-assistant .msg-bubble:has(.mermaid-full-width) {
   max-width: 100%;
+}
+.msg-assistant .msg-bubble .mermaid-container svg {
+  width: 100%;
   height: auto;
+}
+.msg-assistant .msg-bubble .mermaid-wrapper {
+  width: 100%;
 }
 .msg-assistant .msg-bubble .mermaid-source {
   margin: 0 !important;
@@ -2593,6 +2637,8 @@ body {
         }
         // Clear the streamEl reference (but not the DOM content)
         streamEl = null;
+        // 流式输出完成后渲染 Mermaid 图表（否则需要刷新才能渲染）
+        renderMermaidBlocks();
         break;
       case 'streamError':
         streaming = false;
@@ -2884,6 +2930,95 @@ body {
     }
   }
 
+  // 将渲染后的 SVG 转为 PNG dataUrl，交给宿主弹出保存对话框写入本地文件
+  async function exportSvgToPng(svgContainer, btnEl) {
+    const svgEl = svgContainer ? svgContainer.querySelector('svg') : null;
+    console.log('[Mermaid Export] start, svgEl=', !!svgEl);
+    if (!svgEl) {
+      console.error('[Mermaid Export] No SVG found');
+      vscode.postMessage({ type: 'notify', text: '未找到 SVG，无法导出' });
+      return;
+    }
+    try {
+      const xml = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
+      let dataUrl;
+      // 复用与复制相同的 createImageBitmap 优先 + DOMParser 兜底逻辑
+      const rect = svgEl.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      try {
+        const bitmap = await createImageBitmap(svgBlob);
+        const canvas = document.createElement('canvas');
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        bitmap.close();
+        dataUrl = canvas.toDataURL('image/png');
+        console.log('[Mermaid Export] dataUrl len (bitmap)=', dataUrl.length);
+      } catch (bmpErr) {
+        console.log('[Mermaid Export] createImageBitmap failed:', bmpErr.message);
+        const parser = new DOMParser();
+        const svgDoc = parser.parseFromString(xml, 'image/svg+xml');
+        svgDoc.querySelectorAll('foreignObject').forEach(fo => {
+          const text = fo.textContent || '';
+          if (text) {
+            const g = svgDoc.createElement('g');
+            const t = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('x', fo.getAttribute('x') || '0');
+            t.setAttribute('y', fo.getAttribute('y') || '1em');
+            t.textContent = text;
+            g.appendChild(t);
+            fo.parentNode.replaceChild(g, fo);
+          }
+        });
+        const cleanBlob = new Blob([new XMLSerializer().serializeToString(svgDoc.documentElement)], { type: 'image/svg+xml;charset=utf-8' });
+        const cleanUrl = URL.createObjectURL(cleanBlob);
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('SVG image load timeout')), 5000);
+          img.onload = () => { clearTimeout(timer); resolve(null); };
+          img.onerror = () => { clearTimeout(timer); reject(new Error('SVG image load failed')); };
+          img.src = cleanUrl;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        dataUrl = canvas.toDataURL('image/png');
+        console.log('[Mermaid Export] dataUrl len (domparser)=', dataUrl.length);
+        URL.revokeObjectURL(cleanUrl);
+      }
+      vscode.postMessage({ type: 'exportImage', dataUrl: dataUrl });
+      console.log('[Mermaid Export] postMessage sent');
+      if (btnEl) {
+        const orig = btnEl.dataset.originalText || btnEl.textContent;
+        btnEl.dataset.originalText = orig;
+        btnEl.textContent = '已导出';
+        btnEl.classList.add('copied');
+        setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
+      }
+    } catch (err) {
+      console.error('[Mermaid Export] catch:', err);
+      if (btnEl) {
+        const orig = btnEl.dataset.originalText || btnEl.textContent;
+        btnEl.dataset.originalText = orig;
+        btnEl.textContent = '导出失败';
+        btnEl.classList.add('copied');
+        setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
+      }
+      vscode.postMessage({ type: 'notify', text: '导出失败: ' + (err && err.message ? err.message : String(err)) });
+    }
+  }
+
   // 将渲染后的 SVG 转为 PNG，经扩展宿主写入系统剪贴板（webview 无法直接写图片剪贴板）
   async function copySvgToClipboard(svgContainer, btnEl) {
     const svgEl = svgContainer ? svgContainer.querySelector('svg') : null;
@@ -3017,7 +3152,7 @@ body {
             const svgCode = svgResult.svg;
             // 保留原始代码块，并在其上方插入渲染结果 + 复制按钮
             const wrapper = document.createElement('div');
-            wrapper.className = 'mermaid-wrapper';
+            wrapper.className = 'mermaid-wrapper mermaid-full-width';
             
             const header = document.createElement('div');
             header.className = 'mermaid-header';
@@ -3033,11 +3168,11 @@ body {
             const viewToggle = document.createElement('div');
             viewToggle.className = 'mermaid-view-toggle';
             const btnGraphic = document.createElement('button');
-            btnGraphic.className = 'mermaid-btn-graphic active';
-            btnGraphic.textContent = '图';
+            btnGraphic.className = 'mermaid-btn mermaid-btn-graphic active';
+            btnGraphic.textContent = '图像';
             btnGraphic.type = 'button';
             const btnSource = document.createElement('button');
-            btnSource.className = 'mermaid-btn-source';
+            btnSource.className = 'mermaid-btn mermaid-btn-source';
             btnSource.textContent = '源码';
             btnSource.type = 'button';
             
@@ -3065,15 +3200,30 @@ body {
               }
             });
             
+            // 导出按钮（图模式 → PNG 导出为本地文件；源码模式禁用）
+            const exportBtn = document.createElement('button');
+            exportBtn.className = 'mermaid-btn mermaid-export-btn';
+            exportBtn.textContent = '导出';
+            exportBtn.type = 'button';
+            exportBtn.title = '导出当前 Mermaid 图为 PNG 文件';
+            exportBtn.addEventListener('click', () => {
+              if (!btnGraphic.classList.contains('active')) {
+                vscode.postMessage({ type: 'notify', text: '请切换到图模式后再导出' });
+                return;
+              }
+              exportSvgToPng(svgContainer, exportBtn);
+            });
+            
             header.appendChild(label);
             viewToggle.appendChild(btnGraphic);
             viewToggle.appendChild(btnSource);
             header.appendChild(viewToggle);
             
-            // 复制按钮组
+            // 按钮组（复制 + 导出）
             const btnGroup = document.createElement('div');
             btnGroup.className = 'mermaid-btn-group';
             btnGroup.appendChild(copyBtn);
+            btnGroup.appendChild(exportBtn);
             header.appendChild(btnGroup);
             
             wrapper.appendChild(header);
