@@ -1,0 +1,28 @@
+name: Publish VSCode Extension
+on:
+  push:
+    tags:
+      - 'v*' # 匹配v1.0.0、v2.1.5这类版本tag
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build compile（如果你的插件需要编译ts）
+        run: npm run compile
+
+      - name: Publish to VS Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx @vscode/vsce publish
