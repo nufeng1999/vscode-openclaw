@@ -2387,7 +2387,10 @@ body {
     }
   });
   sendBtn.addEventListener('click', sendMessage);
-  stopBtn.addEventListener('click', () => vscode.postMessage({ type: 'stopStream' }));
+  stopBtn.addEventListener('click', () => {
+    inputBox.value = '/stop';
+    sendMessage();
+  });
 
   // Attachment button: trigger hidden file input
   if (attachBtnEl) {
@@ -2604,6 +2607,7 @@ body {
         showTyping(true, 'Thinking');
         sendBtn.style.display = 'none';
         stopBtn.classList.add('active');
+        attachBtnEl.style.display = 'none';
         emptyState.style.display = 'none';
         break;
       case 'streamDelta':
@@ -2624,6 +2628,7 @@ body {
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
+        attachBtnEl.style.display = '';
         // Handle empty response
         if (!finalText.trim()) {
           // Empty response: remove the streamEl to avoid empty bubble
@@ -2650,6 +2655,7 @@ body {
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
+        attachBtnEl.style.display = '';
         // Store error message in activeTabMessages
         activeTabMessages.push({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         break;
@@ -2673,6 +2679,7 @@ body {
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
+        attachBtnEl.style.display = '';
         activeTabMessages.push({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
         break;
       case 'setInputText':

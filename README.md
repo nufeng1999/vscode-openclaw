@@ -237,7 +237,7 @@ Type `@` in the input box to trigger file search. A dropdown shows workspace fil
 
 When you type `@folder/` (with a trailing slash), the dropdown lists the contents of that directory — subdirectories and files. Selecting a **directory** from the list inserts `@folder/subdir/` and automatically expands it, letting you drill down without re-typing. Selecting a **file** inserts `@filepath ` (with a trailing space) and closes the dropdown.
 
-In **multi-root workspaces** (multiple folders in the workspace), file paths are prefixed with the workspace folder name to avoid ambiguity, e.g. `cqcbit.nufeng-openclaw-vscode-0.0.14/src/chatView.ts`.
+In **multi-root workspaces** (multiple folders in the workspace), file paths are prefixed with the workspace folder name to avoid ambiguity, e.g. `cqcbit.nufeng-openclaw-vscode-0.0.19/src/chatView.ts`.
 
 #### Line Number References
 
