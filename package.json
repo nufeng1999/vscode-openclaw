@@ -2,7 +2,7 @@
 	"name": "nufeng-OpenClaw-vscode",
 	"displayName": "nufeng-OpenClaw Client",
 	"description": "%extension.description%",
-	"version": "0.0.18",
+	"version": "0.0.19",
 	"publisher": "CQCBIT",
 	"icon": "plugin.png",
 	"license": "MIT",
