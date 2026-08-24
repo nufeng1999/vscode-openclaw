@@ -859,13 +859,13 @@ export class NodeHost extends EventEmitter {
   private async promptForApproval(command: string, cwd: string): Promise<"allowOnce" | "alwaysAllow" | "deny"> {
     const vscode = require("vscode") as typeof import("vscode");
     const items = [
-      { label: "$(check) Allow Once", description: "Allow this command to run one time", result: "allowOnce" as const },
-      { label: "$(shield) Always Allow", description: "Remember this command and always allow", result: "alwaysAllow" as const },
-      { label: "$(close) Deny", description: "Block this command from running", result: "deny" as const }
+      { label: `$(check) ${vscode.l10n.t("Allow Once")}`, description: vscode.l10n.t("Allow this command to run one time"), result: "allowOnce" as const },
+      { label: `$(shield) ${vscode.l10n.t("Always Allow")}`, description: vscode.l10n.t("Remember this command and always allow"), result: "alwaysAllow" as const },
+      { label: `$(close) ${vscode.l10n.t("Deny")}`, description: vscode.l10n.t("Block this command from running"), result: "deny" as const }
     ];
     const selected = await vscode.window.showQuickPick(items, {
       placeHolder: `Command: ${command}\nDirectory: ${cwd}`,
-      title: `OpenClaw Node: Command Approval`
+      title: vscode.l10n.t("OpenClaw Node: Command Approval")
     } as any);
     return (selected as any)?.result || "deny";
   }

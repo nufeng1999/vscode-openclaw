@@ -1,7 +1,7 @@
 {
 	"name": "nufeng-OpenClaw-vscode",
 	"displayName": "nufeng-OpenClaw Client",
-	"description": "AI chat sidebar for OpenClaw gateway & vscode node",
+	"description": "%extension.description%",
 	"version": "0.0.16",
 	"publisher": "CQCBIT",
 	"icon": "plugin.png",
@@ -28,6 +28,7 @@
 		"onStartupFinished"
 	],
 	"main": "./out/extension.js",
+	"l10n": "./l10n",
 	"contributes": {
 		"commands": [
 			{
@@ -56,11 +57,15 @@
 			},
 			{
 				"command": "openclaw.switchWorkdir",
-				"title": "切换工作目录到这里"
+				"title": "%switchWorkdir.title%"
 			},
 			{
 				"command": "openclaw.setInputText",
 				"title": "OpenClaw: Set Input Text"
+			},
+			{
+				"command": "openclaw.analyzeProject",
+				"title": "%analyzeProject.title%"
 			}
 		],
 		"submenus": [
@@ -100,6 +105,11 @@
 					"command": "openclaw.switchWorkdir",
 					"when": "explorerResourceIsFolder",
 					"group": "navigation@1"
+				},
+				{
+					"command": "openclaw.analyzeProject",
+					"when": "explorerResourceIsFolder",
+					"group": "navigation@2"
 				}
 			]
 		},
@@ -109,53 +119,53 @@
 				"openclaw.gatewayUrl": {
 					"type": "string",
 					"default": "ws://127.0.0.1:18789",
-					"description": "WebSocket URL of the OpenClaw gateway"
+					"description": "%config.gatewayUrl.description%"
 				},
 				"openclaw.token": {
 					"type": "string",
 					"default": "",
-					"description": "Auth token for the gateway"
+					"description": "%config.token.description%"
 				},
 				"openclaw.sessionKey": {
 					"type": "string",
 					"default": "OpenClaw VSCode",
-					"description": "Session key"
+					"description": "%config.sessionKey.description%"
 				},
 				"openclaw.agentId": {
 					"type": "string",
 					"default": "OpenClaw VSCode",
-					"description": "Agent ID"
+					"description": "%config.agentId.description%"
 				},
 				"openclaw.supervisor.intervalMinutes": {
 					"type": "number",
 					"default": 5,
 					"minimum": 0,
-					"description": "How often (minutes) to check the current agent output. Set to 0 to disable supervision."
+					"description": "%config.supervisor.intervalMinutes.description%"
 				},
 				"openclaw.supervisor.stopSignalContent": {
 					"type": "string",
 					"default": "",
-					"description": "Stop signal content — pipe-separated list (e.g. done|finished|completed). When the agent output contains any of these, supervision stops."
+					"description": "%config.supervisor.stopSignalContent.description%"
 				},
 				"openclaw.supervisor.reminderMessage": {
 					"type": "string",
 					"default": "",
-					"description": "Reminder message sent to the current agent when its output is unchanged (empty = no reminder)."
+					"description": "%config.supervisor.reminderMessage.description%"
 				},
 				"openclaw.supervisor.agentId": {
 					"type": "string",
 					"default": "",
-					"description": "Supervisor agent ID to perform periodic checks (e.g. manager, main)."
+					"description": "%config.supervisor.agentId.description%"
 				},
 				"openclaw.supervisor.stopInquiryMethod": {
 					"type": "string",
 					"default": "",
-					"description": "Prompt method prefix for supervisor inquiry (e.g. 请判断, Judge, Evaluate)."
+					"description": "%config.supervisor.stopInquiryMethod.description%"
 				},
 				"openclaw.supervisor.stopSignalReply": {
 					"type": "string",
 					"default": "yes",
-					"description": "Reply text from the supervisor agent that triggers stop (case-insensitive match)."
+					"description": "%config.supervisor.stopSignalReply.description%"
 				}
 			}
 		}

@@ -527,7 +527,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           break;
         case "copyCommand":
           await vscode.env.clipboard.writeText(msg.text);
-          vscode.window.showInformationMessage("Copied to clipboard");
+          vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
           break;
         case "copyImage": {
           const dataUrl = msg.dataUrl;
@@ -558,7 +558,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
                   try { fs.unlinkSync(tmpB64); } catch (e) { /* ignore */ }
                   if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
                     console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
-                    vscode.window.showErrorMessage("复制图片失败，请查看输出日志");
+                    vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
                   } else {
                     console.log("[copyImage] clipboard write OK");
                   }
@@ -566,7 +566,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               );
             } catch (copyErr) {
               console.error("copyImage failed:", copyErr);
-              vscode.window.showErrorMessage("复制图片失败: " + String(copyErr));
+              vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
             }
           }
           break;
@@ -574,7 +574,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "exportImage": {
           const dataUrl = msg.dataUrl;
           if (!dataUrl || typeof dataUrl !== "string") {
-            vscode.window.showErrorMessage("导出失败：未收到图片数据");
+            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
             break;
           }
           try {
@@ -582,9 +582,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             const ts = Date.now();
             const defaultName = "mermaid-" + ts + ".png";
             const saveUri = await vscode.window.showSaveDialog({
-              title: "导出 Mermaid 图为 PNG",
+              title: vscode.l10n.t("Export Mermaid diagram as PNG"),
               defaultUri: vscode.Uri.file(path.join(require("os").homedir(), "Downloads", defaultName)),
-              filters: { "PNG 图片 (*.png)": ["png"] }
+              filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
             });
             if (!saveUri) {
               console.log("[exportImage] user cancelled save dialog");
@@ -592,10 +592,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             }
             await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
             console.log("[exportImage] file written:", saveUri.fsPath);
-            vscode.window.showInformationMessage("已导出: " + saveUri.fsPath);
+            vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
           } catch (exportErr) {
             console.error("exportImage failed:", exportErr);
-            vscode.window.showErrorMessage("导出失败: " + String(exportErr));
+            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
           }
           break;
         }
@@ -626,7 +626,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private async handleSendMessage(text: string, fileRefs?: string[], webviewAttachments?: any[]) {
     if (!text.trim()) return;
     if (!this.gateway.connected) {
-      vscode.window.showWarningMessage("OpenClaw: Not connected to gateway");
+      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Not connected to gateway"));
       return;
     }
     
@@ -1070,7 +1070,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
       
       if (!workspace) {
-        vscode.window.showWarningMessage("Could not determine working directory");
+        vscode.window.showWarningMessage(vscode.l10n.t("Could not determine working directory"));
         return;
       }
       
@@ -1096,7 +1096,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('revealInExplorer', workspaceUri);
         // 展开当前选中的树节点（显示子内容）
         await vscode.commands.executeCommand('list.expand');
-        vscode.window.showInformationMessage(`已展开工作区文件夹: ${workspaceUri.fsPath}`);
+        vscode.window.showInformationMessage(vscode.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
         return;
       }
       
@@ -1112,7 +1112,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       );
       
       if (success) {
-        vscode.window.showInformationMessage(`Added folder to workspace: ${workspaceUri.fsPath}`);
+        vscode.window.showInformationMessage(vscode.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
       } else {
         vscode.window.showErrorMessage(
           `Failed to add folder to workspace: ${workspaceUri.fsPath}. ` +
@@ -1121,7 +1121,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
     } catch (err: any) {
       this.log(`openWorkdir error: ${err.message}`);
-      vscode.window.showErrorMessage(`Failed to open working directory: ${err.message}`);
+      vscode.window.showErrorMessage(vscode.l10n.t("Failed to open working directory: {0}", err.message));
     }
   }
 
@@ -1162,7 +1162,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     
     if (!agentId) {
       this.log("ERROR: agentId is empty! Cannot start supervision.");
-      vscode.window.showWarningMessage("OpenClaw: Supervisor agent ID not configured");
+      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Supervisor agent ID not configured"));
       this.supervisionEnabled = false;
       return;
     }
@@ -1295,7 +1295,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           this.supervisionEnabled = false;
           this.stopSupervision();
           this.postToWebview({ type: 'supervisionState', enabled: false });
-          vscode.window.showInformationMessage(`Supervision stopped by supervisor agent`);
+          vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped by supervisor agent"));
           this.supervisorBusy = false;
           return;
         } else {
@@ -1345,7 +1345,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             this.supervisionEnabled = false;
             this.stopSupervision();
             this.postToWebview({ type: 'supervisionState', enabled: false });
-            vscode.window.showInformationMessage(`Supervision stopped: stop signal content detected`);
+            vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped: stop signal content detected"));
             return;
           } else {
             this.log(`stopSignalContent not matched (or empty), continuing`);
@@ -2044,7 +2044,7 @@ body {
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
-        <textarea class="input-box" id="inputBox" placeholder="Message OpenClaw..." rows="1" style="width:100%;"></textarea>
+        <textarea class="input-box" id="inputBox" placeholder="${vscode.l10n.t('Message OpenClaw...')}" rows="1" style="width:100%;"></textarea>
       </div>
       <button class="send-btn" id="sendBtn" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -2936,7 +2936,7 @@ body {
     console.log('[Mermaid Export] start, svgEl=', !!svgEl);
     if (!svgEl) {
       console.error('[Mermaid Export] No SVG found');
-      vscode.postMessage({ type: 'notify', text: '未找到 SVG，无法导出' });
+      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('SVG not found, cannot export')}' });
       return;
     }
     try {
@@ -3002,7 +3002,7 @@ body {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '已导出';
+        btnEl.textContent = '${vscode.l10n.t('Exported')}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -3011,11 +3011,11 @@ body {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '导出失败';
+        btnEl.textContent = '${vscode.l10n.t('Export failed')}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
-      vscode.postMessage({ type: 'notify', text: '导出失败: ' + (err && err.message ? err.message : String(err)) });
+      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('Export failed')}: ' + (err && err.message ? err.message : String(err)) });
     }
   }
 
@@ -3111,7 +3111,7 @@ body {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '复制失败';
+        btnEl.textContent = '${vscode.l10n.t('Copy failed')}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -3122,7 +3122,7 @@ body {
     if (!btnEl) return;
     const originalText = btnEl.dataset.originalText || btnEl.textContent;
     btnEl.dataset.originalText = originalText;
-    btnEl.textContent = '已复制';
+    btnEl.textContent = '${vscode.l10n.t('Copied')}';
     btnEl.classList.add('copied');
     setTimeout(() => {
       btnEl.textContent = originalText;
@@ -3169,11 +3169,11 @@ body {
             viewToggle.className = 'mermaid-view-toggle';
             const btnGraphic = document.createElement('button');
             btnGraphic.className = 'mermaid-btn mermaid-btn-graphic active';
-            btnGraphic.textContent = '图像';
+            btnGraphic.textContent = '${vscode.l10n.t('Image')}';
             btnGraphic.type = 'button';
             const btnSource = document.createElement('button');
             btnSource.className = 'mermaid-btn mermaid-btn-source';
-            btnSource.textContent = '源码';
+            btnSource.textContent = '${vscode.l10n.t('Source')}';
             btnSource.type = 'button';
             
             // 切换显示逻辑
@@ -3190,7 +3190,7 @@ body {
             // 复制按钮（根据当前激活视图复制对应内容）
             const copyBtn = document.createElement('button');
             copyBtn.className = 'mermaid-btn mermaid-copy-btn';
-            copyBtn.textContent = '复制';
+            copyBtn.textContent = '${vscode.l10n.t('Copy')}';
             copyBtn.type = 'button';
             copyBtn.addEventListener('click', () => {
               if (btnGraphic.classList.contains('active')) {
@@ -3203,12 +3203,12 @@ body {
             // 导出按钮（图模式 → PNG 导出为本地文件；源码模式禁用）
             const exportBtn = document.createElement('button');
             exportBtn.className = 'mermaid-btn mermaid-export-btn';
-            exportBtn.textContent = '导出';
+            exportBtn.textContent = '${vscode.l10n.t('Export')}';
             exportBtn.type = 'button';
-            exportBtn.title = '导出当前 Mermaid 图为 PNG 文件';
+            exportBtn.title = '${vscode.l10n.t('Export current Mermaid diagram as PNG file')}';
             exportBtn.addEventListener('click', () => {
               if (!btnGraphic.classList.contains('active')) {
-                vscode.postMessage({ type: 'notify', text: '请切换到图模式后再导出' });
+                vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('Please switch to diagram mode before exporting')}' });
                 return;
               }
               exportSvgToPng(svgContainer, exportBtn);

@@ -1,0 +1,15 @@
+{
+	"extension.description": "AI chat sidebar for OpenClaw gateway & vscode node",
+	"switchWorkdir.title": "Switch working directory to this folder",
+	"analyzeProject.title": "Analyze this project",
+	"config.gatewayUrl.description": "WebSocket URL of the OpenClaw gateway",
+	"config.token.description": "Auth token for the gateway",
+	"config.sessionKey.description": "Session key",
+	"config.agentId.description": "Agent ID",
+	"config.supervisor.intervalMinutes.description": "How often (minutes) to check the current agent output. Set to 0 to disable supervision.",
+	"config.supervisor.stopSignalContent.description": "Stop signal content — pipe-separated list (e.g. done|finished|completed). When the agent output contains any of these, supervision stops.",
+	"config.supervisor.reminderMessage.description": "Reminder message sent to the current agent when its output is unchanged (empty = no reminder).",
+	"config.supervisor.agentId.description": "Supervisor agent ID to perform periodic checks (e.g. manager, main).",
+	"config.supervisor.stopInquiryMethod.description": "Prompt method prefix for supervisor inquiry (e.g. 请判断, Judge, Evaluate).",
+	"config.supervisor.stopSignalReply.description": "Reply text from the supervisor agent that triggers stop (case-insensitive match)."
+}

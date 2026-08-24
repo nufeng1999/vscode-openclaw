@@ -125,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext) {
       context.globalState.update("nodeDeviceIdentityV2", undefined);
       gateway.disconnect();
       nodeHost.disconnect();
-      vscode.window.showInformationMessage("Device identities cleared. Reconnecting...");
+      vscode.window.showInformationMessage(vscode.l10n.t("Device identities cleared. Reconnecting..."));
       gateway.connect();
       nodeHost.connect();
     }),
@@ -135,6 +135,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("openclaw.switchWorkdir", (uri: vscode.Uri) => {
       const folderPath = uri.fsPath;
       chatView.sendText(`Switch the working directory to ${folderPath}`);
+      chatView.show();
+    }),
+    vscode.commands.registerCommand("openclaw.analyzeProject", (uri: vscode.Uri) => {
+      const folderPath = uri.fsPath;
+      chatView.sendText(vscode.l10n.t('Analyze the code structure, file organization and tech stack of the project at {0}', folderPath));
       chatView.show();
     })
   );
