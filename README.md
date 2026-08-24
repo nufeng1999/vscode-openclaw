@@ -12,6 +12,12 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Supervisor Mode** — Configure a supervisor agent to periodically check your current agent's output with customizable intervals, reminder messages, and stop signals
 - **Streaming Responses** — Real-time markdown rendering of AI responses
 - **Image & Video Support** — Automatically display images and videos embedded in gateway replies (base64-encoded data URLs)
+- **Mermaid Diagram Support** — AI replies containing Mermaid code blocks are automatically rendered as SVG diagrams; supports flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, and more
+- **Mermaid View Toggle** — Switch between rendered **Image** view and **Source** view with a dedicated toggle button on each diagram
+- **Mermaid Copy & Export** — Copy a diagram's source code or image (PNG to clipboard), and export it as a local PNG file via a save dialog
+- **Full-Width Diagrams** — Mermaid charts automatically expand to the full chat panel width (92% constraint removed)
+- **Streaming Mermaid Rendering** — Diagrams are automatically rendered once a streaming response completes; no manual history refresh needed
+- **Robust Image Copy** — Uses `createImageBitmap` with a `DOMParser`/`foreignObject` CSP fallback to reliably copy diagram images despite `blob:` restrictions
 - **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation. Resets when a normal response is received or the user sends a new message.
 - **Slash Commands** — Type `/` to see available commands (`/stop`, `/new`, `/models`, `/help`, etc.), sent to gateway and response displayed in chat
 - **Context Meter** — Visual indicator of token usage per session
@@ -95,6 +101,28 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 - **Messages** — Markdown-rendered assistant responses
 - **Input** — Type and press Enter to send, Shift+Enter for newline
 - **Stop** — Abort a running response
+
+### Mermaid Diagram Support
+
+When the AI returns a fenced Mermaid code block (e.g. ```` ```mermaid ````), the extension renders it as a live SVG diagram inside the chat instead of plain source text.
+
+**Supported diagram types:** `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, and other Mermaid-supported syntax.
+
+**Controls (per diagram):**
+
+| Button            | Action                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| **Image / Source** | Toggle between the rendered SVG diagram and the raw Mermaid source code                  |
+| **Copy**           | Copy the source code, or copy the diagram as a PNG image to the clipboard                |
+| **Export**         | Open a save dialog and export the diagram as a local PNG file                            |
+
+The four buttons share a unified visual style for a consistent experience.
+
+**Notes:**
+
+- Diagrams auto-expand to the full chat panel width.
+- After a streaming response finishes, any Mermaid blocks are rendered automatically — no need to refresh the chat history.
+- Image copy uses `createImageBitmap` with a `DOMParser`/`foreignObject` fallback to work around CSP `blob:` restrictions.
 
 ### Multi-Agent Support
 

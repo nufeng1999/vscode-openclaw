@@ -3189,7 +3189,7 @@ body {
             
             // 复制按钮（根据当前激活视图复制对应内容）
             const copyBtn = document.createElement('button');
-            copyBtn.className = 'mermaid-copy-btn';
+            copyBtn.className = 'mermaid-btn mermaid-copy-btn';
             copyBtn.textContent = '复制';
             copyBtn.type = 'button';
             copyBtn.addEventListener('click', () => {
