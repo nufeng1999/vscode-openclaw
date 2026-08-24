@@ -141,6 +141,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const folderPath = uri.fsPath;
       chatView.sendText(vscode.l10n.t('Analyze the code structure, file organization and tech stack of the project at {0}', folderPath));
       chatView.show();
+    }),
+    vscode.commands.registerCommand("openclaw.setInputText", (text: string) => {
+      chatView.setInputText(text);
     })
   );
 

@@ -94,6 +94,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "show" });
   }
 
+  public setInputText(text: string) {
+    this.postToWebview({ type: "setInputText", text });
+  }
+
   public newChat() {
     this.messages = [];
     this.currentSessionKey = "main";
@@ -2670,6 +2674,13 @@ body {
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
         activeTabMessages.push({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
+        break;
+      case 'setInputText':
+        if (inputBox && msg.text) {
+          inputBox.value = msg.text;
+          inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+          inputBox.focus();
+        }
         break;
     }
   });
