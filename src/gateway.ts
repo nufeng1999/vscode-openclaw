@@ -864,7 +864,7 @@ export class NodeHost extends EventEmitter {
       { label: `$(close) ${vscode.l10n.t("Deny")}`, description: vscode.l10n.t("Block this command from running"), result: "deny" as const }
     ];
     const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: `Command: ${command}\nDirectory: ${cwd}`,
+      placeHolder: vscode.l10n.t('Command: {0}\nDirectory: {1}', command, cwd),
       title: vscode.l10n.t("OpenClaw Node: Command Approval")
     } as any);
     return (selected as any)?.result || "deny";

@@ -2006,16 +2006,16 @@ body {
 <div id="chat-panel">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
-    <button class="hud-toggle" id="hudToggle" title="Toggle HUD Panel">
+    <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t('Toggle HUD Panel')}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
     <div class="tab-item active" data-session="main">Chat</div>
-    <button class="tab-add" id="btnAddTab" title="New chat">+</button>
+    <button class="tab-add" id="btnAddTab" title="${vscode.l10n.t('New chat')}">+</button>
   </div>
   <div class="messages" id="messages">
     <div class="empty-state" id="emptyState">
       <div class="empty-icon">💬</div>
-      <div class="empty-text">Start a conversation with your AI agent</div>
+      <div class="empty-text">${vscode.l10n.t('Start a conversation with your AI agent')}</div>
     </div>
   </div>
   <div class="typing" id="typing">
@@ -2028,25 +2028,25 @@ body {
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">·</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
-      <label class="supervision-check" title="Automatic supervision agent.\nAutomatically disable after task execution is completed" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" id="supervisionCheck" title="Supervision">
-        <span>supervision</span>
+      <label class="supervision-check" title="${vscode.l10n.t('Automatic supervision agent.\nAutomatically disable after task execution is completed')}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="supervisionCheck" title="${vscode.l10n.t('Supervision')}">
+        <span>${vscode.l10n.t('Supervision')}</span>
       </label>
-      <button class="open-workdir-btn" id="openWorkdirBtn" title="Open the current agent workspace" style="display:none;">📁</button>
+      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode.l10n.t('Open the current agent workspace')}" style="display:none;">📁</button>
     </div>
     <div class="attachment-preview" id="attachmentPreview"></div>
     <div class="input-row" style="position:relative;">
-      <button class="stop-btn" id="stopBtn" title="Stop">
+      <button class="stop-btn" id="stopBtn" title="${vscode.l10n.t('Stop')}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="attach-btn" id="attachBtn" title="Attach files">📎</button>
+      <button class="attach-btn" id="attachBtn" title="${vscode.l10n.t('Attach files')}">📎</button>
       <input type="file" id="attachInput" multiple style="display:none;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
         <textarea class="input-box" id="inputBox" placeholder="${vscode.l10n.t('Message OpenClaw...')}" rows="1" style="width:100%;"></textarea>
       </div>
-      <button class="send-btn" id="sendBtn" title="Send">
+      <button class="send-btn" id="sendBtn" title="${vscode.l10n.t('Send')}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
     </div>
@@ -2168,7 +2168,7 @@ body {
       chip.innerHTML = '<span class="attachment-chip-icon">' + getFileIcon(a.mimeType) + '</span>' +
         '<div class="attachment-chip-info"><div class="attachment-chip-name">' + a.name + '</div>' +
         '<div class="attachment-chip-size">' + formatFileSize(a.size) + '</div></div>' +
-        '<button class="attachment-chip-remove" data-index="' + i + '" title="Remove">×</button>';
+        '<button class="attachment-chip-remove" data-index="' + i + '" title="' + vscode.l10n.t('Remove') + '">×</button>';
       attachmentPreview.appendChild(chip);
     }
   }
@@ -2501,7 +2501,7 @@ body {
         historyIndex = -1;
         updateAgentCard();
         updateChips();
-        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : 'not configured';
+        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t('not configured')}';
         if (msg.sessionKey) currentSession = msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
@@ -2731,7 +2731,7 @@ body {
   function renderAtDropdown() {
     if (!atVisible) return;
     if (atFiles.length === 0) {
-      atDropdown.innerHTML = '<div class="at-empty">No matching files</div>';
+      atDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t('No matching files')}</div>';
       return;
     }
     atDropdown.innerHTML = '';
@@ -2835,7 +2835,7 @@ body {
     if (!slashVisible) return;
     const filtered = getFilteredSlashCommands();
     if (filtered.length === 0) {
-      slashDropdown.innerHTML = '<div class="at-empty">No matching commands</div>';
+      slashDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t('No matching commands')}</div>';
       return;
     }
     slashDropdown.innerHTML = '';
@@ -2888,12 +2888,12 @@ body {
           const img = document.createElement('img');
           img.src = 'data:' + att.mimeType + ';base64,' + att.data;
           img.className = 'msg-attachment-img';
-          img.alt = att.name || 'attachment';
+          img.alt = att.name || '${vscode.l10n.t('attachment')}';
           attachDiv.appendChild(img);
         } else if (att.data) {
           const link = document.createElement('a');
           link.href = 'data:' + att.mimeType + ';base64,' + att.data;
-          link.textContent = att.name || 'attachment';
+          link.textContent = att.name || '${vscode.l10n.t('attachment')}';
           link.download = att.name || 'download';
           attachDiv.appendChild(link);
         }
@@ -3158,7 +3158,7 @@ body {
             header.className = 'mermaid-header';
             const label = document.createElement('span');
             label.className = 'mermaid-label';
-            label.textContent = 'Mermaid';
+            label.textContent = '${vscode.l10n.t('Mermaid')}';
             
             const svgContainer = document.createElement('div');
             svgContainer.className = 'mermaid-container';
@@ -3238,7 +3238,7 @@ body {
             console.error('Mermaid render error:', err);
             const errorDiv = document.createElement('div');
             errorDiv.className = 'mermaid-error';
-            errorDiv.textContent = 'Mermaid diagram render failed: ' + err.message;
+            errorDiv.textContent = '${vscode.l10n.t('Mermaid diagram render failed: ')}' + err.message;
             pre.parentNode.insertBefore(errorDiv, pre);
           });
       });
@@ -3283,25 +3283,25 @@ body {
   function updateAgentCard() {
     agentOrb.textContent = agent.emoji || '🤖';
     agentOrb.className = 'agent-orb' + (connected ? ' online' : '');
-    agentNameEl.textContent = agent.name || agent.id || 'Agent';
-    agentStatusEl.textContent = connected ? 'online' : 'disconnected';
+    agentNameEl.textContent = agent.name || agent.id || '${vscode.l10n.t('Agent')}';
+    agentStatusEl.textContent = connected ? '${vscode.l10n.t('online')}' : '${vscode.l10n.t('disconnected')}';
     agentStatusEl.className = 'agent-status' + (connected ? ' online' : '');
   }
 
   function updateChips() {
-    thinkingChip.textContent = 'think: ' + (thinkingLevel || 'default');
-    verboseChip.textContent = 'steps: ' + (verboseLevel || 'default');
-    reliabilityValue.textContent = (thinkingLevel || 'default') + ' · ' + (verboseLevel || 'default');
+    thinkingChip.textContent = '${vscode.l10n.t('think: ')}' + (thinkingLevel || '${vscode.l10n.t('default')}');
+    verboseChip.textContent = '${vscode.l10n.t('steps: ')}' + (verboseLevel || '${vscode.l10n.t('default')}');
+    reliabilityValue.textContent = (thinkingLevel || '${vscode.l10n.t('default')}') + ' · ' + (verboseLevel || '${vscode.l10n.t('default')}');
   }
 
   function renderModels(models) {
-    modelValue.textContent = currentModel ? currentModel.split('/').pop() : 'default';
+    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode.l10n.t('default')}';
   }
 
   function renderSessions() {
     sessionsList.innerHTML = '';
     if (sessions.length === 0) {
-      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">No sessions</div>';
+      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">${vscode.l10n.t('No sessions')}</div>';
       return;
     }
     for (const s of sessions) {
