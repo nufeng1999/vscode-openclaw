@@ -138,6 +138,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.handleRequestModels().catch(() => {});
       this.handleRequestSessions().catch(() => {});
       this.handleRequestAgents().catch(() => {});
+      this.handleLoadMessages(this.currentSessionKey).catch(() => {});
     }
   }
 
@@ -500,6 +501,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             await this.handleRequestModels();
             await this.handleRequestSessions();
             await this.handleLoadDefaults();
+            await this.handleLoadMessages(this.currentSessionKey);
           }
           // Now send init with the resolved agent and session key
           this.postToWebview({
