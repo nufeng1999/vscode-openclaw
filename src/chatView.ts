@@ -1948,6 +1948,16 @@ body {
 .at-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 13px; color: var(--text-muted); }
 .at-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-empty { padding: 10px 12px; font-size: 12px; color: var(--text-muted); text-align: center; }
+.slash-separator {
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(128,128,128,0.08);
+  cursor: default;
+}
 </style>
 </head>
 <body>
@@ -2117,13 +2127,16 @@ body {
   let slashFilter = '';
   let slashSelectedIndex = 0;
   const SLASH_COMMANDS = [
+    { separator: true, label: 'SESSION' },
     { cmd: '/new', desc: 'Start a new chat session' },
     { cmd: '/stop', desc: 'Stop the current response' },
     { cmd: '/reset', desc: 'Reset session context' },
     { cmd: '/compact', desc: 'Compact session messages' },
+    { separator: true, label: 'MODEL & STATUS' },
     { cmd: '/status', desc: 'Show session status' },
     { cmd: '/models', desc: 'List available models' },
     { cmd: '/model', desc: 'Switch active model' },
+    { separator: true, label: 'HELP' },
     { cmd: '/commands', desc: 'List available commands' },
     { cmd: '/help', desc: 'Show help information' },
   ];
@@ -2328,26 +2341,27 @@ body {
     }
     if (slashVisible) {
       const filtered = getFilteredSlashCommands();
+      const commandsOnly = filtered.filter((c) => !c.separator);
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        if (filtered.length > 0) {
-          slashSelectedIndex = (slashSelectedIndex + 1) % filtered.length;
+        if (commandsOnly.length > 0) {
+          slashSelectedIndex = (slashSelectedIndex + 1) % commandsOnly.length;
           updateSlashActive();
         }
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        if (filtered.length > 0) {
-          slashSelectedIndex = (slashSelectedIndex - 1 + filtered.length) % filtered.length;
+        if (commandsOnly.length > 0) {
+          slashSelectedIndex = (slashSelectedIndex - 1 + commandsOnly.length) % commandsOnly.length;
           updateSlashActive();
         }
         return;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          if (filtered.length > 0) {
-            selectSlashCommand(filtered[slashSelectedIndex]);
+          if (commandsOnly.length > 0) {
+            selectSlashCommand(commandsOnly[slashSelectedIndex]);
           } else {
             // No matching commands - send as message to gateway for processing
             hideSlashDropdown();
@@ -2818,7 +2832,18 @@ body {
   function getFilteredSlashCommands() {
     if (!slashFilter) return SLASH_COMMANDS;
     const q = slashFilter.toLowerCase();
-    return SLASH_COMMANDS.filter(c => c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q));
+    // Filter commands; keep separators only if they have matching commands after them
+    const result = [];
+    let pendingSep = null;
+    for (const c of SLASH_COMMANDS) {
+      if (c.separator) { pendingSep = c; continue; }
+      const hit = c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q);
+      if (hit) {
+        if (pendingSep) { result.push(pendingSep); pendingSep = null; }
+        result.push(c);
+      }
+    }
+    return result;
   }
 
   function checkSlashTrigger() {
@@ -2857,22 +2882,35 @@ body {
       return;
     }
     slashDropdown.innerHTML = '';
-    const maxShow = Math.min(filtered.length, 10);
-    for (let i = 0; i < maxShow; i++) {
+    // Only count command items for max show and navigation
+    const commandsOnly = filtered.filter((c) => !c.separator);
+    const maxShow = Math.min(commandsOnly.length, 10);
+    let cmdIdx = 0;
+    for (let i = 0; i < filtered.length && cmdIdx < maxShow; i++) {
       const c = filtered[i];
+      if (c.separator) {
+        const sepDiv = document.createElement('div');
+        sepDiv.className = 'slash-separator';
+        sepDiv.textContent = c.label || '';
+        slashDropdown.appendChild(sepDiv);
+        continue;
+      }
       const div = document.createElement('div');
-      div.className = 'at-item' + (i === slashSelectedIndex ? ' active' : '');
+      div.className = 'at-item' + (cmdIdx === slashSelectedIndex ? ' active' : '');
       div.dataset.cmd = c.cmd;
       div.innerHTML = '<span class="at-icon">⚡</span><span class="at-label">' + c.cmd + '</span><span style="font-size:11px;color:var(--text-muted);margin-left:8px;white-space:nowrap;">' + c.desc + '</span>';
       slashDropdown.appendChild(div);
+      cmdIdx++;
     }
     const activeItem = slashDropdown.querySelector('.at-item.active');
-    if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+    if (activeItem) activeItem.scrollIntoView({ block: 'center' });
   }
 
   function updateSlashActive() {
     const items = slashDropdown.querySelectorAll('.at-item');
     items.forEach((el, i) => el.classList.toggle('active', i === slashSelectedIndex));
+    const activeItem = slashDropdown.querySelector('.at-item.active');
+    if (activeItem) activeItem.scrollIntoView({ block: 'center' });
   }
 
   function selectSlashCommand(cmd) {
