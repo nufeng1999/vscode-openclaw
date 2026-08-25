@@ -52,6 +52,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private supervisorResponseResolver: ((text: string | null) => void) | null = null;
   private supervisorTimeout: NodeJS.Timeout | null = null;
   private supervisorAccumulated: string = "";
+  private busyCount = 0;
   private static readonly AUTO_CONTINUE_MAX = 3;
   private static readonly ERROR_PATTERNS = [
     "The agent run failed before producing a reply", // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
@@ -252,9 +253,11 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
       }
       this.postToWebview({ type: "streamDone", sessionKey });
+      this.setBusy(false);
     } else if (state === "aborted") {
       this.log(`stream aborted`);
       this.postToWebview({ type: "streamDone", sessionKey });
+      this.setBusy(false);
     } else if (state === "error") {
       const errorMsg = payload?.errorMessage || "unknown error";
       this.log(`stream error: ${errorMsg}`);
@@ -685,6 +688,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         idempotencyKey: runId,
         ...(attachments.length > 0 ? { attachments } : {})
       }) as any;
+      this.setBusy(true);
       // If gateway didn't start a stream (e.g. /stop returns aborted:false, runIds:[]),
       // clear the "Thinking" state and show the gateway's reply as assistant message
       if (res && typeof res === 'object' && 
@@ -700,6 +704,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         };
         this.messages.push(assistantMsg);
         this.postToWebview({ type: "userMessage", message: assistantMsg });
+        this.setBusy(false);  // fix: close busy state for slash commands that don't produce streaming runs
       }
     } catch (err: any) {
       this.messages.push({
@@ -718,6 +723,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (!this.gateway.connected) return;
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
+    this.setBusy(true);
     try {
       await this.gateway.request("chat.send", {
         sessionKey: this.gwSessionKey(),
@@ -1439,6 +1445,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage(msg);
   }
 
+  private setBusy(active: boolean) {
+    if (active) this.busyCount = Math.max(1, this.busyCount + 1);
+    else this.busyCount = Math.max(0, this.busyCount - 1);
+    const n = this.busyCount;
+    this.postToWebview({
+      type: "busyState",
+      busy: n > 0,
+      label: n > 1
+        ? vscode.l10n.t("Processing ({0} queued)", n)
+        : vscode.l10n.t("Processing...")
+    });
+  }
+
   private genId(): string {
     return Math.random().toString(36).substring(2, 12);
   }
@@ -1577,6 +1596,31 @@ body {
 .pairing-wait { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
 .pairing-spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.busy-indicator {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.06);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.busy-indicator::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.busy-indicator.hidden { display: none; }
 
 .hud-footer { padding: 4px 10px 8px; display: flex; align-items: center; }
 .hud-footer-badge { display: inline-flex; font-size: 11px; color: var(--text-muted); border: 1px solid rgba(128, 128, 128, 0.18); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.02em; }
@@ -2034,9 +2078,10 @@ body {
   </div>
   <div class="typing" id="typing">
     <div class="typing-dots"><span></span><span></span><span></span></div>
-    <span id="typingText">Thinking...</span>
+    <span id="typingText">${vscode.l10n.t('Thinking...')}</span>
   </div>
-  <div class="resize-handle" id="resizeHandle" title="Drag to resize"></div>
+  <div id="busyIndicator" class="busy-indicator hidden"></div>
+  <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
   <div class="input-area">
     <div class="input-meta">
       <span class="bar-chip" id="thinkingChip">think: default</span>
@@ -2618,7 +2663,7 @@ body {
           streamEl = null;
         }
         streaming = true;
-        showTyping(true, 'Thinking');
+        showTyping(true, '${vscode.l10n.t('Thinking...')}');
         sendBtn.style.display = 'none';
         stopBtn.classList.add('active');
         attachBtnEl.style.display = 'none';
@@ -2675,7 +2720,7 @@ body {
         break;
       case 'toolCall':
         emptyState.style.display = 'none';
-        showTyping(true, msg.phase === 'start' ? msg.label : 'Thinking');
+        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t('Thinking...')}');
         break;
       case 'historyUpdated':
         messageHistory = msg.messageHistory || [];
@@ -2689,13 +2734,22 @@ body {
         break;
       case 'autoContinueFailed':
         streaming = false;
-        appendMessage({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
+        appendMessage({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
         attachBtnEl.style.display = '';
-        activeTabMessages.push({ role: 'assistant', text: 'Auto-continue failed after ' + msg.count + ' attempts', timestamp: Date.now() });
+        activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
+        this.setBusy(false);
         break;
+      case 'busyState': {
+        const busyEl = document.getElementById('busyIndicator');
+        if (busyEl) {
+          busyEl.textContent = msg.label || '';
+          busyEl.classList.toggle('hidden', !msg.busy);
+        }
+        break;
+      }
       case 'setInputText':
         if (inputBox && msg.text) {
           inputBox.value = msg.text;

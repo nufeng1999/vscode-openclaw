@@ -59,5 +59,10 @@
 	"Attach files": "Attach files",
 	"Send": "Send",
 	"Remove": "Remove",
-	"Agent": "Agent"
+	"Agent": "Agent",
+	"Processing...": "Processing...",
+	"Processing ({0} queued)": "Processing ({0} queued)",
+	"Thinking...": "Thinking...",
+	"Drag to resize": "Drag to resize",
+	"Auto-continue failed after {0} attempts": "Auto-continue failed after {0} attempts"
 }

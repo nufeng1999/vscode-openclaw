@@ -59,5 +59,10 @@
 	"Attach files": "附加文件",
 	"Send": "发送",
 	"Remove": "移除",
-	"Agent": "智能体"
+	"Agent": "智能体",
+	"Processing...": "处理中...",
+	"Processing ({0} queued)": "处理中 ({0} 条排队)",
+	"Thinking...": "思考中...",
+	"Drag to resize": "拖动调整大小",
+	"Auto-continue failed after {0} attempts": "自动继续失败，已尝试 {0} 次"
 }

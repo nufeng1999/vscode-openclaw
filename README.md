@@ -19,7 +19,8 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Streaming Mermaid Rendering** — Diagrams are automatically rendered once a streaming response completes; no manual history refresh needed
 - **Robust Image Copy** — Uses `createImageBitmap` with a `DOMParser`/`foreignObject` CSP fallback to reliably copy diagram images despite `blob:` restrictions
 - **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation. Resets when a normal response is received or the user sends a new message.
-- **Slash Commands** — Type `/` to see available commands (`/stop`, `/new`, `/models`, `/help`, etc.), sent to gateway and response displayed in chat
+- **Busy Status Indicator** — UI shows "处理中..." or "处理中 (N 条排队)" while messages are being processed or queued by the gateway
+- **Slash Commands with Separator** — Type `/` to see categorized commands (`/stop`, `/new`, `/models`, `/help`, etc.); commands are grouped into SESSION / MODEL & STATUS / HELP sections with visual separators; keyboard navigation skips separators automatically
 - **Context Meter** — Visual indicator of token usage per session
 - **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
 - **Message History** — Persistent input history, cycle with `Ctrl+Up` / `Ctrl+Down`
@@ -72,7 +73,7 @@ Open VSCode Settings and search for `openclaw`:
 | Setting                              | Default  | Description                                                                  |
 | ------------------------------------ | -------- | ---------------------------------------------------------------------------- |
 | `openclaw.supervisor.intervalMinutes` | `5`     | How often (minutes) to check the current agent's output                      |
-| `openclaw.supervisor.stopSignalContent` | `""`  | Stop signal content — pipe-separated list (e.g. `done|finished|completed`)  |
+| `openclaw.supervisor.stopSignalContent` | `""`  | Stop signal content — pipe-separated list (e.g. `done\|finished\|completed`)  |
 | `openclaw.supervisor.reminderMessage` | `""`    | Reminder message sent when output is unchanged                               |
 | `openclaw.supervisor.agentId`        | `""`     | Supervisor agent ID (e.g. `manager`, `main`)                                |
 | `openclaw.supervisor.stopInquiryMethod` | `""`  | Prompt method prefix for supervisor inquiry (e.g. `请判断`, `Judge`)          |
@@ -101,6 +102,60 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 - **Messages** — Markdown-rendered assistant responses
 - **Input** — Type and press Enter to send, Shift+Enter for newline
 - **Stop** — Abort a running response
+- **Busy Indicator** — Shows "处理中..." during message processing; "处理中 (N 条排队)" when multiple messages are queued
+
+### Busy Status
+
+When you send a message, the UI displays "处理中..." to indicate the agent is working. If you send multiple messages while the first is still being processed, the counter increments (e.g. "处理中 (2 条排队)"). The indicator disappears automatically when a response completes (final, error, or aborted).
+
+### Slash Commands
+
+Type `/` in the chat input to trigger the slash command dropdown. Commands are grouped into sections:
+
+| Section | Commands |
+|---------|----------|
+| SESSION | `/stop`, `/new` |
+| MODEL & STATUS | `/models`, `/status` |
+| HELP | `/help`, `/reset`, `/compact` |
+
+Navigate with `↑` / `↓`, press `Enter` to select, or `Escape` to cancel. Selecting a separator row has no effect — only commands are actionable.
+
+### @path File Context
+
+Type `@` in the input box to trigger file search. A dropdown shows workspace files and folders matching your query.
+
+| Action      | Result                        |
+| ----------- | ----------------------------- |
+| Type `@`    | Show all workspace files      |
+| Type `@app` | Filter files containing "app" |
+| `↑` / `↓`   | Navigate the dropdown         |
+| `Enter`     | Select and insert `@filepath` |
+| `Escape`    | Close the dropdown            |
+
+#### Directory Navigation
+
+When you type `@folder/` (with a trailing slash), the dropdown lists the contents of that directory — subdirectories and files. Selecting a **directory** from the list inserts `@folder/subdir/` and automatically expands it, letting you drill down without re-typing. Selecting a **file** inserts `@filepath ` (with a trailing space) and closes the dropdown.
+
+In **multi-root workspaces** (multiple folders in the workspace), file paths are prefixed with the workspace folder name to avoid ambiguity, e.g. `cqcbit.nufeng-openclaw-vscode-0.0.19/src/chatView.ts`.
+
+#### Line Number References
+
+You can attach file context with specific line numbers:
+
+| Format | Example | Description |
+| ------ | ------- | ----------- |
+| `@path#L行号` | `@src/chatView.ts#L123` | Reference a single line |
+| `@path#L起始-#L结束` | `@src/chatView.ts#L100-#L200` | Reference a line range |
+
+When the message is sent, line number information is passed as structured data (`{path, line}` or `{path, startLine, endLine}`) to the OpenClaw gateway, allowing the AI to pinpoint exact code locations.
+
+#### File Content Attachment
+
+When you send a message containing `@path`, the referenced file's content is automatically read and attached as context to the AI. The `@path` text remains visible in the message so the AI knows which files you referenced.
+
+- Text files: content sent as UTF-8
+- Binary files (images, etc.): sent as base64 with correct MIME type
+- Size limit: 20 MB total per message
 
 ### Mermaid Diagram Support
 
@@ -205,59 +260,6 @@ Your sent messages are saved automatically (up to 200 entries, persisted across 
 
 History resets when you send a new message.
 
-### Slash Commands
-
-Type `/` in the chat input to trigger the slash command dropdown. Commands are sent to the gateway and the response is displayed as an assistant message.
-
-| Command     | Description                          |
-| ----------- | ------------------------------------ |
-| `/stop`     | Stop the current response stream     |
-| `/new`      | Start a new chat session             |
-| `/models`   | List available models                |
-| `/help`     | Show help information                |
-| `/reset`    | Reset session context                |
-| `/compact`  | Compact session messages             |
-| `/status`   | Show session status                  |
-
-Navigate with `↑` / `↓`, press `Enter` to select, or `Escape` to cancel.
-
-### @path File Context
-
-Type `@` in the input box to trigger file search. A dropdown shows workspace files and folders matching your query.
-
-| Action      | Result                        |
-| ----------- | ----------------------------- |
-| Type `@`    | Show all workspace files      |
-| Type `@app` | Filter files containing "app" |
-| `↑` / `↓`   | Navigate the dropdown         |
-| `Enter`     | Select and insert `@filepath` |
-| `Escape`    | Close the dropdown            |
-
-#### Directory Navigation
-
-When you type `@folder/` (with a trailing slash), the dropdown lists the contents of that directory — subdirectories and files. Selecting a **directory** from the list inserts `@folder/subdir/` and automatically expands it, letting you drill down without re-typing. Selecting a **file** inserts `@filepath ` (with a trailing space) and closes the dropdown.
-
-In **multi-root workspaces** (multiple folders in the workspace), file paths are prefixed with the workspace folder name to avoid ambiguity, e.g. `cqcbit.nufeng-openclaw-vscode-0.0.19/src/chatView.ts`.
-
-#### Line Number References
-
-You can attach file context with specific line numbers:
-
-| Format | Example | Description |
-| ------ | ------- | ----------- |
-| `@path#L行号` | `@src/chatView.ts#L123` | Reference a single line |
-| `@path#L起始-#L结束` | `@src/chatView.ts#L100-#L200` | Reference a line range |
-
-When the message is sent, line number information is passed as structured data (`{path, line}` or `{path, startLine, endLine}`) to the OpenClaw gateway, allowing the AI to pinpoint exact code locations.
-
-#### File Content Attachment
-
-When you send a message containing `@path`, the referenced file's content is automatically read and attached as context to the AI. The `@path` text remains visible in the message so the AI knows which files you referenced.
-
-- Text files: content sent as UTF-8
-- Binary files (images, etc.): sent as base64 with correct MIME type
-- Size limit: 20 MB total per message
-
 ### Node Capabilities
 
 On first connection, the extension registers as a **node** alongside its operator role. This enables the AI agent to call built-in tools:
@@ -329,6 +331,18 @@ npm run watch        # rebuild on change
 ```
 
 Reload VSCode after each build to test changes.
+
+## Changelog
+
+### v0.0.21
+- **新增** 忙状态指示器：发送消息后 UI 显示"处理中..."，多条消息排队时显示"处理中 (N 条排队)"
+- **修复** slash 命令（`/stop`、`/new` 等）导致 busyCount 泄漏的 bug
+- **新增** slash 命令下拉菜单分组显示（SESSION / MODEL & STATUS / HELP），键盘导航跳过分隔符
+
+### v0.0.20
+- 消息队列机制完善：Gateway 侧排队不丢消息
+- Session 失败通知：插件可感知 Gateway 推回的失败事件并自动重试
+- Separator SLASH_COMMANDS 功能重新实现
 
 ## License
 
