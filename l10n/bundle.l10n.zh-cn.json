@@ -64,5 +64,7 @@
 	"Processing ({0} queued)": "处理中 ({0} 条排队)",
 	"Thinking...": "思考中...",
 	"Drag to resize": "拖动调整大小",
-	"Auto-continue failed after {0} attempts": "自动继续失败，已尝试 {0} 次"
+	"Auto-continue failed after {0} attempts": "自动继续失败，已尝试 {0} 次",
+	"Subagent active: {0}": "子代理活跃: {0}",
+	"Waiting for subagent…": "等待子代理…"
 }

@@ -53,6 +53,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private supervisorTimeout: NodeJS.Timeout | null = null;
   private supervisorAccumulated: string = "";
   private busyCount = 0;
+  // Subagent activity tracking (Requirement A)
+  private lastSubagentEventMs = 0;
+  private activeSubagentCount = 0;
+  private subagentTimer: NodeJS.Timeout | null = null;
+  private static readonly SUBAGENT_ACTIVITY_TIMEOUT_MS = 60_000;
+  // sessions_yield tracking (Requirement B): set when busy + active subagent
+  private yieldState = false;
+  private yieldTimer: NodeJS.Timeout | null = null;
   private static readonly AUTO_CONTINUE_MAX = 3;
   private static readonly ERROR_PATTERNS = [
     "The agent run failed before producing a reply", // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
@@ -190,6 +198,30 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
         return;
       }
+    }
+
+    // ── Requirement A: detect subagent activity ──
+    // sessionKey patterns like agent:<parentAgentId>:subagent:<uuid>
+    if (rawSessionKey && rawSessionKey.includes('subagent')) {
+      // Only track subagent events belonging to the current agent (as parent)
+      const m = rawSessionKey.match(/^agent:([^:]+):/);
+      if (m && m[1] === this.activeAgent.id) {
+        this.lastSubagentEventMs = Date.now();
+        this.activeSubagentCount++;
+        this.startSubagentTimer();
+        // Extract a short label from the sessionKey tail
+        const tail = rawSessionKey.split(':').pop() || 'subagent';
+        const shortLabel = tail.length > 12 ? tail.substring(0, 8) + '…' : tail;
+        this.postToWebview({
+          type: 'subagentState',
+          active: true,
+          label: vscode.l10n.t('Subagent active: {0}', shortLabel),
+          state
+        });
+        this.updateYieldState();
+      }
+      // Subagent events are never forwarded to the main chat view
+      return;
     }
 
     // Only forward events for the current active agent
@@ -1456,6 +1488,44 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         ? vscode.l10n.t("Processing ({0} queued)", n)
         : vscode.l10n.t("Processing...")
     });
+    this.updateYieldState();
+  }
+
+  /**
+   * Start (or reset) the subagent activity timeout timer.
+   * When no subagent event arrives within SUBAGENT_ACTIVITY_TIMEOUT_MS,
+   * the indicator is hidden automatically.
+   */
+  private startSubagentTimer() {
+    if (this.subagentTimer) clearTimeout(this.subagentTimer);
+    this.subagentTimer = setTimeout(() => {
+      this.subagentTimer = null;
+      this.activeSubagentCount = 0;
+      this.postToWebview({
+        type: 'subagentState',
+        active: false,
+        label: '',
+        state: ''
+      });
+      this.updateYieldState();
+    }, OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS);
+  }
+
+  /**
+   * Requirement B: heuristic sessions_yield detection.
+   * Yield state = busyCount > 0 AND there is recent subagent activity.
+   */
+  private updateYieldState() {
+    const shouldYield = this.busyCount > 0 &&
+      (Date.now() - this.lastSubagentEventMs) < OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS &&
+      this.activeSubagentCount > 0;
+    if (shouldYield === this.yieldState) return;
+    this.yieldState = shouldYield;
+    this.postToWebview({
+      type: 'yieldState',
+      active: shouldYield,
+      label: shouldYield ? vscode.l10n.t('Waiting for subagent…') : ''
+    });
   }
 
   private genId(): string {
@@ -1621,6 +1691,87 @@ body {
   flex-shrink: 0;
 }
 .busy-indicator.hidden { display: none; }
+
+/* Subagent activity indicator (Requirement A) */
+.subagent-indicator {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(100, 160, 255, 0.06);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  transition: opacity 0.3s ease, max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+  opacity: 1;
+  max-height: 40px;
+  overflow: hidden;
+}
+.subagent-indicator::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: #6aa0ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.subagent-indicator.hidden {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-width: 0;
+}
+
+/* sessions_yield indicator (Requirement B) */
+.yield-indicator {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin: 0 10px;
+  border: 1px solid rgba(230, 190, 60, 0.35);
+  border-radius: 8px;
+  background: rgba(230, 190, 60, 0.08);
+  color: #e6be3c;
+  font-size: 11px;
+  font-weight: 500;
+  transition: opacity 0.3s ease, max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+  opacity: 1;
+  max-height: 40px;
+  overflow: hidden;
+}
+.yield-indicator::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e6be3c;
+  animation: yield-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes yield-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.yield-indicator.hidden {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-width: 0;
+}
 
 .hud-footer { padding: 4px 10px 8px; display: flex; align-items: center; }
 .hud-footer-badge { display: inline-flex; font-size: 11px; color: var(--text-muted); border: 1px solid rgba(128, 128, 128, 0.18); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.02em; }
@@ -2081,6 +2232,8 @@ body {
     <span id="typingText">${vscode.l10n.t('Thinking...')}</span>
   </div>
   <div id="busyIndicator" class="busy-indicator hidden"></div>
+  <div id="subagentIndicator" class="subagent-indicator hidden"></div>
+  <div id="yieldIndicator" class="yield-indicator hidden"></div>
   <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
   <div class="input-area">
     <div class="input-meta">
@@ -2747,6 +2900,22 @@ body {
         if (busyEl) {
           busyEl.textContent = msg.label || '';
           busyEl.classList.toggle('hidden', !msg.busy);
+        }
+        break;
+      }
+      case 'subagentState': {
+        const el = document.getElementById('subagentIndicator');
+        if (el) {
+          el.textContent = msg.label || '';
+          el.classList.toggle('hidden', !msg.active);
+        }
+        break;
+      }
+      case 'yieldState': {
+        const el = document.getElementById('yieldIndicator');
+        if (el) {
+          el.textContent = msg.label || '';
+          el.classList.toggle('hidden', !msg.active);
         }
         break;
       }

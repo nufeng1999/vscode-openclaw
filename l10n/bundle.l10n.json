@@ -64,5 +64,7 @@
 	"Processing ({0} queued)": "Processing ({0} queued)",
 	"Thinking...": "Thinking...",
 	"Drag to resize": "Drag to resize",
-	"Auto-continue failed after {0} attempts": "Auto-continue failed after {0} attempts"
+	"Auto-continue failed after {0} attempts": "Auto-continue failed after {0} attempts",
+	"Subagent active: {0}": "Subagent active: {0}",
+	"Waiting for subagent…": "Waiting for subagent…"
 }
