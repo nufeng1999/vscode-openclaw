@@ -42,7 +42,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 
 ### From VS Marketplace
 
-Search for **nufeng1999** in the VS Code Extensions panel, or visit the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT-nufeng1999.nufeng1999-OpenClaw-vscode).
+Search for **nufeng1999** in the VS Code Extensions panel, or visit the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT.nufeng-OpenClaw-vscode&ssr=false#overview).
 
 ### From Source
 
