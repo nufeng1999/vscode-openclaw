@@ -363,7 +363,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private convertMediaToMarkdown(mediaPath: string): string | null {
     try {
       if (!mediaPath) return null;
-      
+
+      // ── 远程 URL 支持：http:// 或 https:// 开头 ──
+      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://")) {
+        return this.buildRemoteMediaTag(mediaPath);
+      }
+
+      // 否则处理本地文件（现有 base64 逻辑）
       // Normalize path: handle both forward and backward slashes
       const normalizedPath = mediaPath.replace(/\\/g, "/");
       
@@ -383,61 +389,92 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       
       // Detect MIME type from extension
       const ext = path.extname(mediaPath).toLowerCase();
-      let mimeType = "application/octet-stream";
-      let tag = "img";
-      
-      switch (ext) {
-        case ".png":
-          mimeType = "image/png";
-          break;
-        case ".jpg":
-        case ".jpeg":
-          mimeType = "image/jpeg";
-          break;
-        case ".gif":
-          mimeType = "image/gif";
-          break;
-        case ".webp":
-          mimeType = "image/webp";
-          break;
-        case ".svg":
-          mimeType = "image/svg+xml";
-          break;
-        case ".mp4":
-          mimeType = "video/mp4";
-          tag = "video";
-          break;
-        case ".webm":
-          mimeType = "video/webm";
-          tag = "video";
-          break;
-        case ".ogg":
-          mimeType = "video/ogg";
-          tag = "video";
-          break;
-        case ".avi":
-          mimeType = "video/x-msvideo";
-          tag = "video";
-          break;
-        case ".mov":
-          mimeType = "video/quicktime";
-          tag = "video";
-          break;
-      }
+      const mediaInfo = this.getMediaInfo(ext);
+      let mimeType = mediaInfo.mimeType;
+      let tag = mediaInfo.tag;
       
       // Convert to base64
       const base64 = buffer.toString("base64");
       const dataUrl = `data:${mimeType};base64,${base64}`;
       
       // Generate markdown
-      if (tag === "video") {
-        return `<video src="${dataUrl}" controls style="max-width:100%;max-height:400px;"></video>`;
-      } else {
-        return `![media](${dataUrl})`;
-      }
+      return this.buildMediaTag(tag, dataUrl);
     } catch {
       // Return original path if conversion fails
       return null;
+    }
+  }
+
+  /**
+   * 根据扩展名解析媒体类型信息（MIME 类型与 HTML 标签名）。
+   * 统一用于本地文件与远程 URL 两种路径，保证行为一致。
+   */
+  private getMediaInfo(ext: string): { mimeType: string; tag: string } {
+    switch (ext) {
+      // 图片
+      case ".png":
+        return { mimeType: "image/png", tag: "img" };
+      case ".jpg":
+      case ".jpeg":
+        return { mimeType: "image/jpeg", tag: "img" };
+      case ".gif":
+        return { mimeType: "image/gif", tag: "img" };
+      case ".webp":
+        return { mimeType: "image/webp", tag: "img" };
+      case ".svg":
+        return { mimeType: "image/svg+xml", tag: "img" };
+      // 视频
+      case ".mp4":
+        return { mimeType: "video/mp4", tag: "video" };
+      case ".webm":
+        return { mimeType: "video/webm", tag: "video" };
+      case ".ogv":
+        return { mimeType: "video/ogg", tag: "video" };
+      case ".avi":
+        return { mimeType: "video/x-msvideo", tag: "video" };
+      case ".mov":
+        return { mimeType: "video/quicktime", tag: "video" };
+      // 音频
+      case ".mp3":
+        return { mimeType: "audio/mpeg", tag: "audio" };
+      case ".wav":
+        return { mimeType: "audio/wav", tag: "audio" };
+      case ".ogg":
+      case ".oga":
+        return { mimeType: "audio/ogg", tag: "audio" };
+      case ".m4a":
+        return { mimeType: "audio/mp4", tag: "audio" };
+      case ".flac":
+        return { mimeType: "audio/flac", tag: "audio" };
+      // 默认
+      default:
+        return { mimeType: "application/octet-stream", tag: "img" };
+    }
+  }
+
+  /**
+   * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
+   * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
+   */
+  private buildRemoteMediaTag(url: string): string {
+    // 去除 URL 中可能携带的查询参数后再取扩展名
+    const cleanUrl = url.split("#")[0].split("?")[0];
+    const ext = path.extname(cleanUrl).toLowerCase();
+    const { tag } = this.getMediaInfo(ext);
+    return this.buildMediaTag(tag, url);
+  }
+
+  /**
+   * 根据标签名与数据源生成最终 HTML 标签。
+   * video/audio 添加 controls 属性；img 添加样式限制大小。
+   */
+  private buildMediaTag(tag: string, src: string): string {
+    if (tag === "video") {
+      return `<video src="${src}" controls preload="metadata" style="max-width:100%;max-height:400px;border-radius:6px;"></video>`;
+    } else if (tag === "audio") {
+      return `<audio src="${src}" controls preload="metadata" style="max-width:100%;"></audio>`;
+    } else {
+      return `<img src="${src}" alt="media" style="max-width:100%;max-height:400px;border-radius:6px;" />`;
     }
   }
 
@@ -487,6 +524,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
+      enableResourceLoading: true,
       localResourceRoots: []
     };
 
