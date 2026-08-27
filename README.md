@@ -334,6 +334,16 @@ Reload VSCode after each build to test changes.
 
 ## Changelog
 
+### v0.0.23
+- **新增** 子代理状态指示器：显示 "Subagent active: <label>" 和 "Waiting for subagent…" yield 指示器
+- **新增** 国际化支持 (i18n)：UI 字符串本地化
+- **修复** 历史对话显示问题
+- **修复** 多媒体支持（图片/视频）
+- **修复** Mermaid 图表渲染 bug
+
+### v0.0.22
+- 维护性版本发布，无功能变更
+
 ### v0.0.21
 - **新增** 忙状态指示器：发送消息后 UI 显示"处理中..."，多条消息排队时显示"处理中 (N 条排队)"
 - **修复** slash 命令（`/stop`、`/new` 等）导致 busyCount 泄漏的 bug
