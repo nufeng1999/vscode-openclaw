@@ -9,3 +9,4 @@ OpenClaw_VSCode_扩展分析报告.md
 *.bak
 *lock.json
 outputs/
+backup/chatView.ts.bak.preMermaidFix

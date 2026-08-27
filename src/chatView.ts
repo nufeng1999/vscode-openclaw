@@ -3557,7 +3557,14 @@ body {
             console.error('Mermaid render error:', err);
             const errorDiv = document.createElement('div');
             errorDiv.className = 'mermaid-error';
-            errorDiv.textContent = '${vscode.l10n.t('Mermaid diagram render failed: ')}' + err.message;
+            // ⚠️ 重要：必须使用 createTextNode 而非字符串拼接，
+            // 因为 Mermaid v11.x 错误对象可能包含内嵌的 HTML/SVG 片段
+            // （如 <script>、<svg>、CSS 样式等），直接拼接到 textContent 虽不会
+            // 被浏览器解析为 HTML，但为了保险起见，显式使用文本节点确保零风险。
+            const prefix = document.createTextNode('${vscode.l10n.t('Mermaid diagram render failed: ')}');
+            const messageText = document.createTextNode(String(err && err.message ? err.message : (typeof err === 'string' ? err : JSON.stringify(err))));
+            errorDiv.appendChild(prefix);
+            errorDiv.appendChild(messageText);
             pre.parentNode.insertBefore(errorDiv, pre);
           });
       });
