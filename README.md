@@ -19,7 +19,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Streaming Mermaid Rendering** — Diagrams are automatically rendered once a streaming response completes; no manual history refresh needed
 - **Robust Image Copy** — Uses `createImageBitmap` with a `DOMParser`/`foreignObject` CSP fallback to reliably copy diagram images despite `blob:` restrictions
 - **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation. Resets when a normal response is received or the user sends a new message.
-- **Busy Status Indicator** — UI shows "处理中..." or "处理中 (N 条排队)" while messages are being processed or queued by the gateway
+- **Busy Status Indicator** — UI shows "Processing..." or "Processing (N queued)" while messages are being processed or queued by the gateway
 - **Slash Commands with Separator** — Type `/` to see categorized commands (`/stop`, `/new`, `/models`, `/help`, etc.); commands are grouped into SESSION / MODEL & STATUS / HELP sections with visual separators; keyboard navigation skips separators automatically
 - **Context Meter** — Visual indicator of token usage per session
 - **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
@@ -76,7 +76,7 @@ Open VSCode Settings and search for `openclaw`:
 | `openclaw.supervisor.stopSignalContent` | `""`  | Stop signal content — pipe-separated list (e.g. `done\|finished\|completed`)  |
 | `openclaw.supervisor.reminderMessage` | `""`    | Reminder message sent when output is unchanged                               |
 | `openclaw.supervisor.agentId`        | `""`     | Supervisor agent ID (e.g. `manager`, `main`)                                |
-| `openclaw.supervisor.stopInquiryMethod` | `""`  | Prompt method prefix for supervisor inquiry (e.g. `请判断`, `Judge`)          |
+| `openclaw.supervisor.stopInquiryMethod` | `""`  | Prompt method prefix for supervisor inquiry (e.g. `Judge`, `Evaluate`)         |
 | `openclaw.supervisor.stopSignalReply` | `"yes"` | Reply text that triggers stop (case-insensitive)                             |
 
 ## Usage
@@ -102,11 +102,11 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 - **Messages** — Markdown-rendered assistant responses
 - **Input** — Type and press Enter to send, Shift+Enter for newline
 - **Stop** — Abort a running response
-- **Busy Indicator** — Shows "处理中..." during message processing; "处理中 (N 条排队)" when multiple messages are queued
+- **Busy Indicator** — Shows "Processing..." during message processing; "Processing (N queued)" when multiple messages are queued
 
 ### Busy Status
 
-When you send a message, the UI displays "处理中..." to indicate the agent is working. If you send multiple messages while the first is still being processed, the counter increments (e.g. "处理中 (2 条排队)"). The indicator disappears automatically when a response completes (final, error, or aborted).
+When you send a message, the UI displays "Processing..." to indicate the agent is working. If you send multiple messages while the first is still being processed, the counter increments (e.g. "Processing (2 queued)"). The indicator disappears automatically when a response completes (final, error, or aborted).
 
 ### Slash Commands
 
@@ -144,8 +144,8 @@ You can attach file context with specific line numbers:
 
 | Format | Example | Description |
 | ------ | ------- | ----------- |
-| `@path#L行号` | `@src/chatView.ts#L123` | Reference a single line |
-| `@path#L起始-#L结束` | `@src/chatView.ts#L100-#L200` | Reference a line range |
+| `@path#L<line>` | `@src/chatView.ts#L123` | Reference a single line |
+| `@path#L<start>-#L<end>` | `@src/chatView.ts#L100-#L200` | Reference a line range |
 
 When the message is sent, line number information is passed as structured data (`{path, line}` or `{path, startLine, endLine}`) to the OpenClaw gateway, allowing the AI to pinpoint exact code locations.
 
@@ -222,7 +222,7 @@ Enable supervision via the checkbox in the chat HUD panel, or use the `toggleSup
 {
   "openclaw.supervisor.agentId": "manager",
   "openclaw.supervisor.intervalMinutes": 5,
-  "openclaw.supervisor.stopInquiryMethod": "请判断",
+  "openclaw.supervisor.stopInquiryMethod": "Judge",
   "openclaw.supervisor.reminderMessage": "Please continue your work.",
   "openclaw.supervisor.stopSignalContent": "done|finished|completed",
   "openclaw.supervisor.stopSignalReply": "yes"
@@ -235,7 +235,7 @@ Enable supervision via the checkbox in the chat HUD panel, or use the `toggleSup
 | ---------------------- | ------ | ---------------------------------------------------------------------------------------- |
 | `agentId`              | string | Supervisor agent ID to perform periodic checks (e.g. `manager`, `main`)                 |
 | `intervalMinutes`      | number | Check interval in minutes. Set to `0` to disable.                                        |
-| `stopInquiryMethod`    | string | Prompt method prefix for supervisor inquiry (e.g. `请判断`, `Judge`, `Evaluate`)         |
+| `stopInquiryMethod`    | string | Prompt method prefix for supervisor inquiry (e.g. `Judge`, `Evaluate`)         |
 | `reminderMessage`      | string | Custom reminder message sent to the current agent when output is unchanged (empty = no reminder) |
 | `stopSignalContent`    | string | Stop signal content. Use `\|` to separate multiple signals (e.g. `done|finished|completed`) |
 | `stopSignalReply`      | string | Reply text that triggers stop — case-insensitive match (default: `yes`)                  |
@@ -295,7 +295,7 @@ Clicking the **Open current agent workspace** button adds the agent's workspace 
 | `OpenClaw: Settings`             | Open extension settings                |
 | `OpenClaw: Approve Node Pairing` | Manually trigger node pairing approval |
 | `OpenClaw: Reset Device Identity` | Reset the device identity and re-pair |
-| `切换工作目录到这里` | Switch working directory to the selected folder (Explorer context menu) |
+| `Switch workspace here` | Switch working directory to the selected folder (Explorer context menu) |
 
 ## How It Works
 
@@ -334,25 +334,28 @@ Reload VSCode after each build to test changes.
 
 ## Changelog
 
+### v0.0.24
+- Release preparation (version bump to 0.0.24)
+
 ### v0.0.23
-- **新增** 子代理状态指示器：显示 "Subagent active: <label>" 和 "Waiting for subagent…" yield 指示器
-- **新增** 国际化支持 (i18n)：UI 字符串本地化
-- **修复** 历史对话显示问题
-- **修复** 多媒体支持（图片/视频）
-- **修复** Mermaid 图表渲染 bug
+- **Added** subagent status indicator: shows "Subagent active: <label>" and "Waiting for subagent…" yield indicator
+- **Added** internationalization support (i18n): UI string localization
+- **Fixed** chat history display issue
+- **Fixed** media support (images/video)
+- **Fixed** Mermaid diagram rendering bug
 
 ### v0.0.22
-- 维护性版本发布，无功能变更
+- Maintenance release with no feature changes
 
 ### v0.0.21
-- **新增** 忙状态指示器：发送消息后 UI 显示"处理中..."，多条消息排队时显示"处理中 (N 条排队)"
-- **修复** slash 命令（`/stop`、`/new` 等）导致 busyCount 泄漏的 bug
-- **新增** slash 命令下拉菜单分组显示（SESSION / MODEL & STATUS / HELP），键盘导航跳过分隔符
+- **Added** busy status indicator: UI shows "Processing..." after sending a message, and "Processing (N queued)" when multiple messages are queued
+- **Fixed** bug where slash commands (`/stop`, `/new`, etc.) caused busyCount leak
+- **Added** slash command dropdown grouping (SESSION / MODEL & STATUS / HELP), keyboard navigation skips separators
 
 ### v0.0.20
-- 消息队列机制完善：Gateway 侧排队不丢消息
-- Session 失败通知：插件可感知 Gateway 推回的失败事件并自动重试
-- Separator SLASH_COMMANDS 功能重新实现
+- Improved message queue mechanism: no message loss during Gateway-side queuing
+- Session failure notifications: extension can detect failure events pushed back by the Gateway and automatically retry
+- Separator SLASH_COMMANDS feature reimplementation
 
 ## License
 
