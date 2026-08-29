@@ -31,6 +31,7 @@ AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gatewa
 - **Exec Approval** — Commands are executed locally with a cwd-based approval dialog (Allow Once / Always Allow / Deny)
 - **Configurable Agent/Session** — Set `agentId` and `sessionKey` in VSCode settings to control which agent and session the extension connects to
 - **Open Agent Workspace** — Add the agent's workspace folder to VS Code Explorer with one click
+- **Attachment Support** — Paste (`Ctrl+V`), click 📎, or drag & drop files into the chat input as attachments; preview chips show type tag, name, size, and a `×` remove button; attachments (name/size/mimeType/base64) are sent with your message (10 MB per-file limit)
 
 ## Requirements
 
@@ -103,6 +104,26 @@ Toggle with the grid button (⊞) in the tabs bar. Contains:
 - **Input** — Type and press Enter to send, Shift+Enter for newline
 - **Stop** — Abort a running response
 - **Busy Indicator** — Shows "Processing..." during message processing; "Processing (N queued)" when multiple messages are queued
+
+### Attachments
+
+You can attach files to a chat message in three ways:
+
+| Method | How |
+| ------ | ---- |
+| **📎 Button** | Click the 📎 button above the input box (`attachBtn`) to open the system file picker; multiple files can be selected at once |
+| **Paste** | Press `Ctrl+V` in the input box to paste a file from the clipboard (e.g. a screenshot) as an attachment |
+| **Drag & Drop** | Drag files onto the input area (`.input-area`) to add them as attachments |
+
+**Preview chips:** Each attachment appears as a chip in the `#attachmentPreview` area above the input box, showing an ASCII type tag (`[IMG]` / `[VID]` / `[AUD]` / `[TXT]` / `[PDF]` / `[ZIP]` / `[FILE]`), the file name, and its size.
+
+**Remove:** Click the `×` on a chip to remove that attachment before sending.
+
+**Sending:** When you send the message, attachments (name, size, mimeType, base64) are posted to the agent together with the text as `{type:'sendMessage', text, fileRefs, attachments}`.
+
+**Limits & behavior:**
+- Maximum size per file is **10 MB** (`MAX_ATTACH_SIZE`); files larger than this trigger an alert and are skipped.
+- While a streaming response is in progress, the 📎 button is hidden and reappears when the response completes.
 
 ### Busy Status
 
@@ -335,6 +356,7 @@ Reload VSCode after each build to test changes.
 ## Changelog
 
 ### v0.0.24
+- **Added** attachment support for the chat input: paste (`Ctrl+V`), 📎 button, and drag & drop to add files; per-attachment preview chips with type tag, name, size, and `×` remove button; attachments (name/size/mimeType/base64) sent with the message (`{type:'sendMessage', text, fileRefs, attachments}`); 10 MB per-file limit; 📎 button hidden during streaming
 - Release preparation (version bump to 0.0.24)
 
 ### v0.0.23
