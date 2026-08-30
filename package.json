@@ -2,7 +2,7 @@
 	"name": "nufeng-OpenClaw-vscode",
 	"displayName": "nufeng-OpenClaw Client",
 	"description": "%extension.description%",
-	"version": "0.0.24",
+	"version": "0.0.25",
 	"publisher": "CQCBIT",
 	"icon": "plugin.png",
 	"license": "MIT",
@@ -185,8 +185,8 @@
 		"ws": "^8.16.0"
 	},
 	"__metadata": {
-		"installedTimestamp": 1787300215281,
+		"installedTimestamp": 1788073898205,
 		"targetPlatform": "undefined",
-		"size": 2156299
+		"size": 1751845
 	}
 }

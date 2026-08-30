@@ -2113,7 +2113,7 @@ body {
   color: var(--text);
   max-width: 200px;
 }
-.attachment-chip-icon { flex-shrink: 0; font-size: 14px; }
+.attachment-chip-icon { flex-shrink: 0; font-size: 10px; font-family: Consolas, monospace; font-weight: bold; color: var(--accent, #3794ff); }
 .attachment-chip-info { min-width: 0; flex: 1; overflow: hidden; }
 .attachment-chip-name {
   white-space: nowrap;
@@ -2292,7 +2292,7 @@ body {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
       <button class="attach-btn" id="attachBtn" title="${vscode.l10n.t('Attach files')}">📎</button>
-      <input type="file" id="attachInput" multiple style="display:none;" accept="*/*">
+      <input type="file" id="attachInput" multiple style="visibility:hidden;position:absolute;left:-9999px;top:-9999px;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
@@ -2399,14 +2399,15 @@ body {
   }
 
   function getFileIcon(mimeType) {
-    if (!mimeType) return '📄';
-    if (mimeType.startsWith('image/')) return '🖼️';
-    if (mimeType.startsWith('video/')) return '🎬';
-    if (mimeType.startsWith('audio/')) return '🎵';
-    if (mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('yaml') || mimeType.includes('javascript') || mimeType.includes('typescript')) return '📝';
-    if (mimeType === 'application/pdf') return '📕';
-    if (mimeType.startsWith('application/zip') || mimeType.startsWith('application/gzip') || mimeType.startsWith('application/x-')) return '📦';
-    return '📎';
+    // Use ASCII text tags instead of emoji for reliable rendering across all webview themes/fonts
+    if (!mimeType) return '[FILE]';
+    if (mimeType.startsWith('image/')) return '[IMG]';
+    if (mimeType.startsWith('video/')) return '[VID]';
+    if (mimeType.startsWith('audio/')) return '[AUD]';
+    if (mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('yaml') || mimeType.includes('javascript') || mimeType.includes('typescript')) return '[TXT]';
+    if (mimeType === 'application/pdf') return '[PDF]';
+    if (mimeType.startsWith('application/zip') || mimeType.startsWith('application/gzip') || mimeType.startsWith('application/x-')) return '[ZIP]';
+    return '[FILE]';
   }
 
   function renderAttachments() {
@@ -2423,20 +2424,32 @@ body {
       chip.innerHTML = '<span class="attachment-chip-icon">' + getFileIcon(a.mimeType) + '</span>' +
         '<div class="attachment-chip-info"><div class="attachment-chip-name">' + a.name + '</div>' +
         '<div class="attachment-chip-size">' + formatFileSize(a.size) + '</div></div>' +
-        '<button class="attachment-chip-remove" data-index="' + i + '" title="' + vscode.l10n.t('Remove') + '">×</button>';
+        '<button class="attachment-chip-remove" data-index="' + i + '" title="Remove">×</button>';
       attachmentPreview.appendChild(chip);
     }
   }
 
   function addAttachments(files) {
-    for (const file of files) {
+    console.log('[Attach] addAttachments called, files.count:', files.length);
+    if (!files || files.length === 0) {
+      console.warn('[Attach] No files provided');
+      return;
+    }
+    let pending = 0;
+    let loaded = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      console.log('[Attach] Processing file:', file.name, 'size:', file.size, 'type:', file.type);
       if (file.size > MAX_ATTACH_SIZE) {
+        console.warn('[Attach] File exceeds limit, skipping:', file.name);
         alert('"' + file.name + '" exceeds 10MB limit and was skipped.');
         continue;
       }
+      pending++;
       const reader = new FileReader();
       reader.onload = () => {
         const data = reader.result;
+        console.log('[Attach] FileReader.onload for:', file.name, 'data.length:', data ? String(data).length : 'null');
         if (typeof data === 'string') {
           const base64Part = data.split(',')[1] || '';
           attachments.push({
@@ -2445,6 +2458,19 @@ body {
             mimeType: file.type || 'application/octet-stream',
             data: base64Part
           });
+          loaded++;
+          console.log('[Attach] File loaded successfully:', file.name, 'loaded=', loaded, '/', pending);
+          if (loaded === pending) {
+            console.log('[Attach] All files loaded, calling renderAttachments');
+            renderAttachments();
+          }
+        }
+      };
+      reader.onerror = (err) => {
+        console.error('[Attach] FileReader.onerror for:', file.name, 'error:', err);
+        loaded++;
+        if (loaded === pending) {
+          console.log('[Attach] All files done (some may have failed), calling renderAttachments');
           renderAttachments();
         }
       };
@@ -2647,12 +2673,16 @@ body {
   // Attachment button: trigger hidden file input
   if (attachBtnEl) {
     attachBtnEl.addEventListener('click', () => {
-      if (attachInputEl) attachInputEl.click();
+      console.log('[Attach] attachBtn clicked, attachInputEl exists:', !!attachInputEl);
+      if (attachInputEl) {
+        attachInputEl.click();
+      }
     });
   }
   // File input change: add selected files as attachments
   if (attachInputEl) {
-    attachInputEl.addEventListener('change', () => {
+    attachInputEl.addEventListener('change', (e) => {
+      console.log('[Attach] change event fired, files.length:', e.target.files ? e.target.files.length : 0);
       if (attachInputEl.files && attachInputEl.files.length > 0) {
         addAttachments(attachInputEl.files);
         attachInputEl.value = ''; // reset for next selection
@@ -2671,6 +2701,7 @@ body {
   }
   // Paste: capture pasted files (e.g. screenshots)
   inputBox.addEventListener('paste', (e) => {
+    console.log('[Attach] paste event fired');
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
     const files = [];
@@ -2681,6 +2712,7 @@ body {
         if (file) files.push(file);
       }
     }
+    console.log('[Attach] paste: files found:', files.length);
     if (files.length > 0) {
       e.preventDefault();
       addAttachments(files);
@@ -2695,6 +2727,7 @@ body {
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     });
     inputAreaEl.addEventListener('drop', (e) => {
+      console.log('[Attach] drop event fired, files.count:', e.dataTransfer ? e.dataTransfer.files.length : 0);
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
