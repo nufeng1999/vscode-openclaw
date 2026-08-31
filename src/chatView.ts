@@ -295,6 +295,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       const errorMsg = payload?.errorMessage || "unknown error";
       this.log(`stream error: ${errorMsg}`);
       this.postToWebview({ type: "streamError", sessionKey, error: errorMsg });
+      this.setBusy(false);
     } else {
       this.log(`unknown chat state: ${state}`);
     }
@@ -785,17 +786,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         timestamp: Date.now()
       });
       this.postToWebview({ type: "streamDone", runId });
+      this.setBusy(false);
     }
   }
 
   /**
    * Send a message without adding it to local history (used for auto-continue).
+   * Note: do NOT call setBusy(true) here -- the parent send is already busy.
+   * The parent busyCount will be decremented when the final/aborted/error state arrives.
    */
   private async sendContinueMessage() {
     if (!this.gateway.connected) return;
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
-    this.setBusy(true);
     try {
       await this.gateway.request("chat.send", {
         sessionKey: this.gwSessionKey(),
@@ -806,6 +809,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     } catch {
       // If sending fails, don't add anything to history
       this.postToWebview({ type: "streamDone", runId });
+      this.setBusy(false);
     }
   }
 
