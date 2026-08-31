@@ -699,6 +699,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "toggleSupervision":
           await this.handleToggleSupervision(msg.enabled);
           break;
+        case "reconnect":
+          vscode.commands.executeCommand('openclaw.reconnect');
+          break;
       }
     });
   }
@@ -1649,6 +1652,23 @@ body {
 .agent-status { font-size: 12px; color: var(--text-muted); line-height: 1.3; }
 .agent-status.online { color: #4ade80; }
 
+/* Reconnect 按钮样式：位于 agent-status 右侧，离线时显示 */
+.btn-reconnect {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-left: 8px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.btn-reconnect:hover {
+  background: rgba(128, 128, 128, 0.2);
+}
+
 .hud-group-label {
   font-weight: 600; letter-spacing: 0.06em;
   color: var(--text-muted); text-transform: uppercase;
@@ -2208,7 +2228,10 @@ body {
       <div class="agent-orb" id="agentOrb">🤖</div>
       <div class="agent-info">
         <div class="agent-name" id="agentName">Agent</div>
-        <div class="agent-status" id="agentStatus">Connecting...</div>
+        <div style="display:flex;align-items:center;">
+          <div class="agent-status" id="agentStatus">Connecting...</div>
+          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode.l10n.t('Reconnect')}</button>
+        </div>
       </div>
     </div>
     <div class="agent-buttons" id="agentButtons"></div>
@@ -3649,6 +3672,16 @@ body {
     agentNameEl.textContent = agent.name || agent.id || '${vscode.l10n.t('Agent')}';
     agentStatusEl.textContent = connected ? '${vscode.l10n.t('online')}' : '${vscode.l10n.t('disconnected')}';
     agentStatusEl.className = 'agent-status' + (connected ? ' online' : '');
+    const btnReconnectEl = document.getElementById('btnReconnect');
+    if (btnReconnectEl) {
+      btnReconnectEl.style.display = connected ? 'none' : '';
+      // 点击重连：向 extension 发送 reconnect 消息（idempotent，重复赋值安全）
+      btnReconnectEl.onclick = () => {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: 'reconnect' });
+        }
+      };
+    }
   }
 
   function updateChips() {
