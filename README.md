@@ -89,6 +89,26 @@ You can attach files to a chat message in three ways:
 
 | Method | How |
 | ------ | ---- |
+| **📎 Button** | Click the 📎 button above the input box (`attachBtn`) to open the system file picker; multiple files can be selected at once |
+| **Paste** | Press `Ctrl+V` in the input box to paste a file from the clipboard (e.g. a screenshot) as an attachment |
+| **Drag & Drop** | Drag files onto the input area (`.input-area`) to add them as attachments |
+
+**Preview chips:** Each attachment appears as a chip in the `#attachmentPreview` area above the input box, showing an ASCII type tag (`[IMG]` / `[VID]` / `[AUD]` / `[TXT]` / `[PDF]` / `[ZIP]` / `[FILE]`), the file name, and its size.
+
+**Remove:** Click the `×` on a chip to remove that attachment before sending.
+
+**Sending:** When you send the message, attachments (name, size, mimeType, base64) are posted to the agent together with the text as `{type:'sendMessage', text, fileRefs, attachments}`.
+
+**Limits & behavior:**
+- Maximum size per file is **10 MB** (`MAX_ATTACH_SIZE`); files larger than this trigger an alert and are skipped.
+- While a streaming response is in progress, the 📎 button is hidden and reappears when the response completes.
+
+### Attachments
+
+You can attach files to a chat message in three ways:
+
+| Method | How |
+| ------ | ---- |
 | **📎 Button** | Click the 📎 button above the input box to open the system file picker |
 | **Paste** | Press `Ctrl+V` in the input box to paste a file from the clipboard |
 | **Drag & Drop** | Drag files onto the input area to add them as attachments |
@@ -318,6 +338,31 @@ npm run watch        # rebuild on change
 ```
 
 Reload VSCode after each build to test changes.
+
+## Changelog
+
+### v0.0.24
+- Release preparation (version bump to 0.0.24)
+
+### v0.0.23
+- **Added** subagent status indicator: shows "Subagent active: <label>" and "Waiting for subagent…" yield indicator
+- **Added** internationalization support (i18n): UI string localization
+- **Fixed** chat history display issue
+- **Fixed** media support (images/video)
+- **Fixed** Mermaid diagram rendering bug
+
+### v0.0.22
+- Maintenance release with no feature changes
+
+### v0.0.21
+- **Added** busy status indicator: UI shows "Processing..." after sending a message, and "Processing (N queued)" when multiple messages are queued
+- **Fixed** bug where slash commands (`/stop`, `/new`, etc.) caused busyCount leak
+- **Added** slash command dropdown grouping (SESSION / MODEL & STATUS / HELP), keyboard navigation skips separators
+
+### v0.0.20
+- Improved message queue mechanism: no message loss during Gateway-side queuing
+- Session failure notifications: extension can detect failure events pushed back by the Gateway and automatically retry
+- Separator SLASH_COMMANDS feature reimplementation
 
 ## License
 
