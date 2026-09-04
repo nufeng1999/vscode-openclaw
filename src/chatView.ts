@@ -53,6 +53,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private supervisorTimeout: NodeJS.Timeout | null = null;
   private supervisorAccumulated: string = "";
   private busyCount = 0;
+  private serverVersion: string = '';
   // Subagent activity tracking (Requirement A)
   private lastSubagentEventMs = 0;
   private activeSubagentCount = 0;
@@ -113,7 +114,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.postToWebview({ type: "clearMessages" });
   }
 
-  public updateConnectionStatus(connected: boolean) {
+  public updateConnectionStatus(connected: boolean, serverVersion?: string) {
+    // 缓存版本号，供 webviewReady 时携带（防止后到的 init 覆盖版本号）
+    this.serverVersion = serverVersion || this.serverVersion;
     // 发送完整的 init 消息，确保 webview 拿到权威状态
     this.postToWebview({
       type: "init",
@@ -125,7 +128,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       thinkingLevel: this.thinkingLevel,
       verboseLevel: this.verboseLevel,
       messageHistory: this.messageHistory,
-      supervisionEnabled: this.supervisionEnabled
+      supervisionEnabled: this.supervisionEnabled,
+      version: this.serverVersion
     });
     // 同时发送 connectionStatus（保持向后兼容）
     this.postToWebview({
@@ -543,6 +547,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             await this.handleLoadMessages(this.currentSessionKey);
           }
           // Now send init with the resolved agent and session key
+          // 携带缓存的 serverVersion，避免两条 init 互相覆盖版本号
           this.postToWebview({
             type: "init",
             sessionKey: this.currentSessionKey,
@@ -553,7 +558,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             thinkingLevel: this.thinkingLevel,
             verboseLevel: this.verboseLevel,
             messageHistory: this.messageHistory,
-            supervisionEnabled: this.supervisionEnabled
+            supervisionEnabled: this.supervisionEnabled,
+            version: this.serverVersion
           });
           break;
         case "sendMessage":
@@ -2258,7 +2264,7 @@ body {
       <div id="sessionsList"></div>
     </div>
     <div class="hud-footer">
-      <span class="hud-footer-badge">OPENCLAW v0.41.11</span>
+      <span class="hud-footer-badge" id="footerVersion">OPENCLAW v...</span>
     </div>
   </div>
 
@@ -2818,6 +2824,11 @@ body {
         gatewayUrl = msg.gatewayUrl || '';
         messageHistory = msg.messageHistory || [];
         historyIndex = -1;
+        // 动态更新页脚版本号（服务器返回了版本信息时）
+        if (msg.version) {
+          const footerVersion = document.getElementById('footerVersion');
+          if (footerVersion) footerVersion.textContent = 'OPENCLAW v' + msg.version;
+        }
         updateAgentCard();
         updateChips();
         serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t('not configured')}';

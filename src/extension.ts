@@ -70,9 +70,11 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   // gateway 连接后：更新 agent 配置
-  gateway.on("connected", async () => {
+  gateway.on("connected", async (result: any) => {
     nodeApproved = false;
-    chatView.updateConnectionStatus(true);
+    // 从 connect RPC 响应（hello-ok payload）中提取服务器版本号（防御性提取）
+    const version = result?.server?.version ?? result?.payload?.server?.version ?? '';
+    chatView.updateConnectionStatus(true, version);
     if (nodeDeviceId) {
       try {
         await updateNodeAgentConfig(gateway, nodeDeviceId, outputChannel);
