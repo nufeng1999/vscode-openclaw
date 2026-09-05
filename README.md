@@ -1,52 +1,34 @@
-# OpenClaw Client for VSCode
+# OpenClaw Client for VS Code
 
-AI chat sidebar and node host for [OpenClaw](https://github.com/openclaw) gateway. Connects to your OpenClaw instance via WebSocket and provides a native chat interface directly in VSCode.
+AI chat sidebar for the OpenClaw gateway and VS Code node. The extension connects to an [OpenClaw](https://github.com/openclaw) gateway over WebSocket, providing real-time AI chat, multi-agent and session management, workspace context, media display, Mermaid diagram rendering, and local tool execution from inside VS Code.
 
-![](https://github.com/nufeng1999/imgs/blob/main/img/HikkX9mXOB.png?raw=true)
-
-## Description
-
-This extension integrates the OpenClaw AI agent system into VSCode, providing a real-time chat sidebar, multi-agent support, file context, Mermaid diagram rendering, and local tool execution capabilities — all connected to your local OpenClaw gateway.
+![OpenClaw Client](https://github.com/nufeng1999/imgs/blob/main/img/HikkX9mXOB.png?raw=true)
 
 ## Features
 
-- **Agent HUD** — Connection status, model settings, session management
-- **Reconnect Button** — One-click reconnect button in the HUD panel that appears automatically when the gateway connection is lost (hidden while connected)
-- **Multi-Agent Support** — Switch between agents (main, clerk, coder2, designer, manager, etc.) with one click; each agent gets its own chat tab and independent session pool
-- **Session Management** — Each agent maintains multiple sessions; create, switch, and delete sessions independently per agent
-- **Supervisor Mode** — Configure a supervisor agent to periodically check your current agent's output with customizable intervals, reminder messages, and stop signals
-- **Streaming Responses** — Real-time markdown rendering of AI responses
-- **Image & Video Support** — Automatically display images and videos embedded in gateway replies (base64-encoded data URLs)
-- **Mermaid Diagram Support** — AI replies containing Mermaid code blocks are automatically rendered as SVG diagrams; supports flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, and more
-- **Mermaid View Toggle** — Switch between rendered **Image** view and **Source** view with a dedicated toggle button on each diagram
-- **Mermaid Copy & Export** — Copy a diagram's source code or image (PNG to clipboard), and export it as a local PNG file via a save dialog
-- **Full-Width Diagrams** — Mermaid charts automatically expand to the full chat panel width
-- **Streaming Mermaid Rendering** — Diagrams are automatically rendered once a streaming response completes; no manual history refresh needed
-- **Robust Image Copy** — Uses `createImageBitmap` with a `DOMParser`/`foreignObject` CSP fallback to reliably copy diagram images despite `blob:` restrictions
-- **Auto-Retry on Agent Failure** — When the gateway returns an agent run failure error, the extension automatically sends "Continue" up to 3 times to resume the conversation
-- **Busy Status Indicator** — UI shows "Processing..." or "Processing (N queued)" while messages are being processed or queued by the gateway
-- **Slash Commands with Separator** — Type `/` to see categorized commands (`/stop`, `/new`, `/models`, `/help`, etc.); commands are grouped into SESSION / MODEL & STATUS / HELP sections with visual separators
-- **Context Meter** — Visual indicator of token usage per session
-- **Device Identity** — Ed25519 signed authentication (compatible with OpenClaw pairing)
-- **Message History** — Persistent input history, cycle with `Ctrl+Up` / `Ctrl+Down`
-- **@path File Context** — Type `@` to search and attach workspace files as context to your message
-- **Directory Navigation** — Type `@folder/` to browse directory contents; selecting a directory auto-expands its children
-- **Line Number References** — Attach file context with line numbers using `@path#L123` (single line) or `@path#L100-#L200` (line range)
-- **Node Capabilities** — Runs as a paired node, enabling `exec`, `read`, `write`, `edit` tool calls from the agent
-- **Exec Approval** — Commands are executed locally with a cwd-based approval dialog (Allow Once / Always Allow / Deny)
-- **Configurable Agent/Session** — Set `agentId` and `sessionKey` in VSCode settings to control which agent and session the extension connects to
-- **Open Agent Workspace** — Add the agent's workspace folder to VS Code Explorer with one click
-- **Attachment Support** — Paste (`Ctrl+V`), click 📎, or drag & drop files into the chat input as attachments; preview chips show type tag, name, size, and a `×` remove button; attachments (name/size/mimeType/base64) are sent with your message (10 MB per-file limit)
-- **Subagent Activity Tracking** — Shows "Subagent active: <label>" and "Waiting for subagent…" yield indicator
-- **Internationalization Support** — UI string localization via VSCode's i10n system
+- **Agent HUD**: View connection status, model settings, server information, reliability settings, and sessions.
+- **Reconnect**: Use the HUD button or the `OpenClaw: Reconnect` command when the gateway connection is lost.
+- **Multi-agent chat**: Switch between agents. Each agent has its own chat tab and session pool.
+- **Session management**: Create, switch, and delete sessions independently for each agent, with token usage shown in the HUD.
+- **Supervisor mode**: Periodically inspect the current agent output with a configurable supervisor, reminder, inquiry method, and stop signal.
+- **Streaming responses**: Render assistant Markdown as responses arrive, with a busy indicator for processing and queued messages.
+- **Media display**: Display images and videos embedded in gateway replies as base64 data URLs.
+- **Mermaid diagrams**: Render fenced Mermaid blocks as SVG, switch between Image and Source views, copy source or PNG, and export PNG files.
+- **Workspace context**: Search workspace files with `@`, browse directories, and attach single-line or line-range references.
+- **Attachments**: Add files by picker, paste, or drag and drop. Each file is limited to 10 MB. Files are labeled with a type tag such as `[IMG]`, `[VID]`, `[AUD]`, `[TXT]`, `[PDF]`, `[ZIP]`, or `[FILE]`.
+- **Paired node tools**: Expose `exec`, `read`, `write`, and `edit` to the agent through the paired VS Code node.
+- **Command approval**: Approve local commands once, always for a working directory, or deny them.
+- **Device identity**: Authenticate with an Ed25519 device identity compatible with OpenClaw pairing.
+- **Subagent activity**: Show active subagent labels and waiting-for-subagent status in chat.
+- **Internationalization**: Localize extension UI strings through the VS Code localization system.
 
 ## Installation
 
-### From VS Marketplace
+### VS Code Marketplace
 
-Search for **nufeng1999** in the VS Code Extensions panel, or visit the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT.nufeng-OpenClaw-vscode&ssr=false#overview).
+Search for **nufeng1999** in the VS Code Extensions view, or open the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=CQCBIT.nufeng-OpenClaw-vscode&ssr=false#overview).
 
-### From Source
+### From source
 
 ```bash
 git clone https://github.com/nufeng/openclaw-vscode.git
@@ -55,314 +37,148 @@ npm install
 npm run build
 ```
 
-Then copy the folder to `~/.vscode/extensions/`.
+Install the resulting extension folder in `~/.vscode/extensions/`.
 
 ## Usage
 
-1. Start the OpenClaw gateway
-2. Open the OpenClaw sidebar from the Activity Bar
-3. The extension connects automatically (operator + node roles)
-4. Click **Chat** in the tabs bar to start chatting
-5. Click agent buttons in the HUD to switch agents
+1. Start the OpenClaw gateway.
+2. Open **OpenClaw** from the VS Code Activity Bar.
+3. The extension connects to the gateway as an operator and node.
+4. Select **Chat** in the tab bar and send a message.
+5. Use the HUD agent buttons to switch agents, or use **New Chat** to start a session.
 
-### HUD Panel
+### HUD and chat
 
-Toggle with the grid button (⊞) in the tabs bar. Contains:
+Use the grid button in the tab bar to toggle the HUD. It contains the current agent card, connection state, reconnect control, agent switcher, settings, and sessions. In the chat panel, press Enter to send and Shift+Enter for a newline. Use **Stop** to abort a running response.
 
-- **Agent Card** — Name, emoji, connection status
-- **Reconnect Button** — Shown next to the agent status when the extension is disconnected; hidden once connected. Clicking it sends a `reconnect` message to the extension host and triggers the `openclaw.reconnect` command to re-establish the gateway connection
-- **Agent Buttons** — Switch between agents (shown when multiple agents exist)
-- **Settings** — Model defaults, reliability settings, server info
-- **Sessions** — List of chat sessions with token usage
+The attachment button opens a file picker. Files can also be pasted with `Ctrl+V` or dropped onto the input area. Attachments show a type label, name, and size; remove a file with its `x` control. Files over 10 MB are skipped. While a response is streaming, the attachment button is hidden until processing completes.
 
-### Chat Panel
+### Slash commands
 
-- **Tabs** — Each agent gets its own tab; click to switch
-- **Messages** — Markdown-rendered assistant responses
-- **Input** — Type and press Enter to send, Shift+Enter for newline
-- **Stop** — Abort a running response
-- **Busy Indicator** — Shows "Processing..." during message processing; "Processing (N queued)" when multiple messages are queued
+Type `/` to open the command menu. It contains `/stop` and `/new` under SESSION, `/models` and `/status` under MODEL & STATUS, and `/help`, `/reset`, and `/compact` under HELP. Use the arrow keys to navigate, Enter to select, and Escape to close the menu.
 
-### Attachments
+### Workspace context
 
-You can attach files to a chat message in three ways:
+Type `@` in the input to search workspace files and folders. Use `@folder/` to browse a directory. A selected file is inserted as `@path`. Add `#L123` for one line or `#L100-#L200` for a line range; the reference is sent as structured context to the gateway.
 
-| Method | How |
-| ------ | ---- |
-| **📎 Button** | Click the 📎 button above the input box (`attachBtn`) to open the system file picker; multiple files can be selected at once |
-| **Paste** | Press `Ctrl+V` in the input box to paste a file from the clipboard (e.g. a screenshot) as an attachment |
-| **Drag & Drop** | Drag files onto the input area (`.input-area`) to add them as attachments |
+### Supervisor mode
 
-**Preview chips:** Each attachment appears as a chip in the `#attachmentPreview` area above the input box, showing an ASCII type tag (`[IMG]` / `[VID]` / `[AUD]` / `[TXT]` / `[PDF]` / `[ZIP]` / `[FILE]`), the file name, and its size.
+Enable supervision with the checkbox in the HUD. The supervisor checks the current agent at the configured interval. If output is unchanged, the optional reminder is sent, then the supervisor is asked whether work should stop. Supervision stops when configured output content or the supervisor reply matches its stop signal, or when supervision is disabled.
 
-**Remove:** Click the `×` on a chip to remove that attachment before sending.
+### Workspace commands
 
-**Sending:** When you send the message, attachments (name, size, mimeType, base64) are posted to the agent together with the text as `{type:'sendMessage', text, fileRefs, attachments}`.
-
-**Limits & behavior:**
-- Maximum size per file is **10 MB** (`MAX_ATTACH_SIZE`); files larger than this trigger an alert and are skipped.
-- While a streaming response is in progress, the 📎 button is hidden and reappears when the response completes.
-
-### Attachments
-
-You can attach files to a chat message in three ways:
-
-| Method | How |
-| ------ | ---- |
-| **📎 Button** | Click the 📎 button above the input box to open the system file picker |
-| **Paste** | Press `Ctrl+V` in the input box to paste a file from the clipboard |
-| **Drag & Drop** | Drag files onto the input area to add them as attachments |
-
-**Preview chips:** Each attachment appears as a chip showing an ASCII type tag (`[IMG]` / `[VID]` / `[AUD]` / `[TXT]` / `[PDF]` / `[ZIP]` / `[FILE]`), the file name, and its size.
-
-**Limits:** Maximum size per file is **10 MB**; the 📎 button is hidden during streaming and reappears when the response completes.
-
-### Slash Commands
-
-Type `/` in the chat input to trigger the slash command dropdown. Commands are grouped into sections:
-
-| Section | Commands |
-|---------|----------|
-| SESSION | `/stop`, `/new` |
-| MODEL & STATUS | `/models`, `/status` |
-| HELP | `/help`, `/reset`, `/compact` |
-
-Navigate with `↑` / `↓`, press `Enter` to select, or `Escape` to cancel.
-
-### @path File Context
-
-Type `@` in the input box to trigger file search. A dropdown shows workspace files and folders matching your query.
-
-| Action | Result |
-|--------|--------|
-| Type `@` | Show all workspace files |
-| Type `@app` | Filter files containing "app" |
-| `↑` / `↓` | Navigate the dropdown |
-| `Enter` | Select and insert `@filepath` |
-| `Escape` | Close the dropdown |
-
-**Directory navigation:** Type `@folder/` to list directory contents; selecting a directory auto-expands it.
-
-**Line number references:** Use `@path#L123` for a single line or `@path#L100-#L200` for a range. Line number info is sent as structured data to the gateway.
-
-### Mermaid Diagram Support
-
-When the AI returns a fenced Mermaid code block, the extension renders it as a live SVG diagram inside the chat.
-
-**Controls (per diagram):**
-
-| Button | Action |
-|--------|--------|
-| **Image / Source** | Toggle between rendered SVG and raw source code |
-| **Copy** | Copy source code or diagram as PNG to clipboard |
-| **Export** | Save the diagram as a local PNG file |
-
-### Multi-Agent Support
-
-Each agent has its own chat tab and independent session pool:
-
-| Feature | Description |
-|---------|-------------|
-| Agent Switching | Click agent buttons in the HUD to switch between agents |
-| Independent Tabs | Each agent gets its own chat tab; conversations are isolated |
-| Independent Sessions | Each agent maintains its own set of sessions; state does not cross agents |
-| Configurable Default | Set `openclaw.agentId` in VSCode settings to control the default agent |
-
-**Common Agent IDs:** `main`, `clerk`, `coder2`, `designer`, `manager`
-
-### Supervisor Feature
-
-Configure a supervisor agent to periodically check your current agent's output and intervene if needed.
-
-#### Enabling Supervision
-
-Enable supervision via the checkbox in the chat HUD panel, or use the `toggleSupervision` command.
-
-#### Configuration Example
-
-```json
-{
-  "openclaw.supervisor.agentId": "manager",
-  "openclaw.supervisor.intervalMinutes": 5,
-  "openclaw.supervisor.stopInquiryMethod": "Judge",
-  "openclaw.supervisor.reminderMessage": "Please continue your work.",
-  "openclaw.supervisor.stopSignalContent": "done|finished|completed",
-  "openclaw.supervisor.stopSignalReply": "yes"
-}
-```
-
-#### How It Works
-
-1. On enable, the extension sends a hello handshake to the supervisor agent (30s timeout)
-2. Every `intervalMinutes`, the extension fetches the current agent's last output via `chat.history`
-3. If output is unchanged, the extension sends `reminderMessage` to the current agent
-4. The extension sends an inquiry to the supervisor agent and waits for a reply
-5. If the supervisor replies with `stopSignalReply` (or output matches `stopSignalContent`), supervision stops
-6. Otherwise, supervision continues until the user disables it or the output changes
-
-### Message History
-
-Your sent messages are saved automatically (up to 200 entries, persisted across sessions).
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Up` | Cycle backward through message history |
-| `Ctrl+Down` | Cycle forward through message history |
-
-History resets when you send a new message.
-
-### Node Capabilities
-
-On first connection, the extension registers as a **node** alongside its operator role. This enables the AI agent to call built-in tools:
-
-- **`exec`** — Execute shell commands on your local machine
-- **`read`** — Read files from your workspace
-- **`write`** — Create or overwrite files
-- **`edit`** — Apply targeted text replacements in files
-
-### Exec Approval
-
-When the agent tries to run a command, a VSCode QuickPick dialog appears:
-
-| Option | Behavior |
-|--------|----------|
-| **Allow Once** | Execute this command once |
-| **Always Allow** | Auto-approve all commands in this cwd and its subdirectories |
-| **Deny** | Cancel the command |
-
-Approval is based on the working directory (cwd), not the specific command. Subdirectories inherit approval from their parent.
-
-### Open Agent Workspace
-
-Clicking the **Open current agent workspace** button adds the agent's workspace folder to the VS Code Explorer sidebar as a multi-root entry. If the folder is already present in the workspace, the button focuses and expands it in the Explorer instead.
+Right-click a folder in Explorer and select **Switch working directory to this folder** to make it the working directory, or select **Analyze this project** to ask the agent to analyze the folder's code structure, file organization, and technology stack.
 
 ## Commands
 
 | Command | Description |
-|---------|-------------|
-| `OpenClaw: Open Chat` | Open the chat sidebar |
-| `OpenClaw: Reconnect` | Reconnect to the gateway |
-| `OpenClaw: New Chat` | Start a new chat session |
-| `OpenClaw: Settings` | Open extension settings |
-| `OpenClaw: Approve Node Pairing` | Manually trigger node pairing approval |
-| `OpenClaw: Reset Device Identity` | Reset the device identity and re-pair |
-| `Switch workspace here` | Switch working directory to the selected folder (Explorer context menu) |
-| `Analyze the project` | Analyze code structure, file organization and tech stack of the selected folder (Explorer context menu) |
+| --- | --- |
+| `OpenClaw: Open Chat` | Open the chat sidebar. |
+| `OpenClaw: Reconnect` | Reconnect to the gateway. |
+| `OpenClaw: Approve Node Pairing` | Trigger node pairing approval. |
+| `OpenClaw: New Chat` | Start a new chat session. |
+| `OpenClaw: Settings` | Open extension settings. |
+| `OpenClaw: Reset Device Identity` | Generate a new device identity and re-pair. |
+| `OpenClaw: Set Input Text` | Set the chat input text programmatically. |
+| `Switch working directory to this folder` | Set the selected folder as the working directory. |
+| `Analyze this project` | Analyze the selected folder. |
 
 ## Configuration
 
-Open VSCode Settings and search for `openclaw`:
+Open VS Code Settings and search for `openclaw`.
 
-### General Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the gateway |
-| `openclaw.token` | _(empty)_ | Auth token for the gateway |
-| `openclaw.sessionKey` | `OpenClaw VSCode` | Default session key |
-| `openclaw.agentId` | `OpenClaw VSCode` | Default agent ID or node display name |
-
-### Supervisor Settings
+### General settings
 
 | Setting | Default | Description |
-|---------|---------|-------------|
-| `openclaw.supervisor.intervalMinutes` | `5` | How often (minutes) to check the current agent's output |
-| `openclaw.supervisor.stopSignalContent` | `""` | Stop signal content — pipe-separated list (e.g. `done\|finished\|completed`) |
-| `openclaw.supervisor.reminderMessage` | `""` | Reminder message sent when output is unchanged |
-| `openclaw.supervisor.agentId` | `""` | Supervisor agent ID (e.g. `manager`, `main`) |
-| `openclaw.supervisor.stopInquiryMethod` | `""` | Prompt method prefix for supervisor inquiry (e.g. `Judge`, `Evaluate`) |
-| `openclaw.supervisor.stopSignalReply` | `"yes"` | Reply text that triggers stop (case-insensitive) |
+| --- | --- | --- |
+| `openclaw.gatewayUrl` | `ws://127.0.0.1:18789` | WebSocket URL of the OpenClaw gateway. |
+| `openclaw.token` | Empty | Gateway authentication token. |
+| `openclaw.sessionKey` | `OpenClaw VSCode` | Session key used by the extension. |
+| `openclaw.agentId` | `OpenClaw VSCode` | Default agent ID or node display name. |
+
+### Supervisor settings
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `openclaw.supervisor.intervalMinutes` | `5` | Minutes between checks. Set to `0` to disable supervision. |
+| `openclaw.supervisor.stopSignalContent` | Empty | Pipe-separated output matches, such as `done\|finished\|completed`, that stop supervision. |
+| `openclaw.supervisor.reminderMessage` | Empty | Message sent to the current agent when output is unchanged. Empty means no reminder. |
+| `openclaw.supervisor.agentId` | Empty | Agent ID used for periodic supervision, such as `manager` or `main`. |
+| `openclaw.supervisor.stopInquiryMethod` | Empty | Prefix for the supervisor inquiry, such as `Judge` or `Evaluate`. |
+| `openclaw.supervisor.stopSignalReply` | `yes` | Case-insensitive supervisor reply that stops supervision. |
+
+Example:
+
+```json
+{
+  "openclaw.gatewayUrl": "ws://127.0.0.1:18789",
+  "openclaw.agentId": "main",
+  "openclaw.supervisor.agentId": "manager",
+  "openclaw.supervisor.intervalMinutes": 5,
+  "openclaw.supervisor.reminderMessage": "Please continue your work.",
+  "openclaw.supervisor.stopSignalContent": "done|finished|completed",
+  "openclaw.supervisor.stopInquiryMethod": "Judge",
+  "openclaw.supervisor.stopSignalReply": "yes"
+}
+```
 
 ## How It Works
 
-The extension connects to the OpenClaw gateway with two roles:
+The extension uses the gateway as both an operator client and a paired node. The operator connection powers chat, agents, sessions, and model state. The node connection authorizes local tools such as `exec`, `read`, `write`, and `edit`.
 
-1. **Operator** — UI client for chat, sessions, and agent management
-2. **Node** — Paired node host for tool execution (exec, read, write, edit)
+On the first connection, the extension creates an Ed25519 device identity and stores it in VS Code global storage as `nodeDeviceIdentityV2`. The public identity is used to sign the gateway challenge. If pairing is required, approve the latest device with `openclaw devices approve --latest` or use **OpenClaw: Approve Node Pairing**. **OpenClaw: Reset Device Identity** clears the stored identity so the device can pair again.
 
-### Connection Flow
-
-1. WebSocket opens → receives `connect.challenge` with nonce
-2. Sends `connect` request with Ed25519 device identity signature
-3. On success, loads agents, sessions, and defaults
-4. Registers node capabilities (`system.run`, `system.which`, etc.)
-5. Chat messages are sent via `chat.send` RPC
-6. Responses stream in via `chat` events (`delta` → `final`)
-7. On agent run failure responses, auto-sends "Continue" up to 3 times to resume conversation
-
-### Node Pairing
-
-The node is auto-approved on first connect. If pairing is needed:
-
-1. The extension sends `node.pair.requested` to the gateway
-2. Run `openclaw devices approve --latest` on the server, or
-3. Use the **Approve Node Pairing** command in VSCode
+After a successful connection, the extension loads agents, sessions, and model defaults. Chat messages use the `chat.send` RPC; streamed `chat` events update the UI from delta to final state. Agent-run failures are retried by sending `Continue`, up to three times. Disconnections trigger automatic reconnect with exponential backoff, and the HUD also provides manual reconnect.
 
 ## Troubleshooting
 
-### Connection Refused
+### Gateway connection fails
 
-- Ensure the OpenClaw gateway is running (`ws://127.0.0.1:18789` by default)
-- Check the VSCode Output panel (`OpenClaw` channel) for detailed connection logs
-- Verify your firewall is not blocking the WebSocket connection
-- If the connection drops while the extension is running, click the **Reconnect** button in the HUD panel to retry immediately, or run the **OpenClaw: Reconnect** command from the Command Palette
+- Confirm that the gateway is running and that `openclaw.gatewayUrl` is the correct WebSocket URL.
+- Check the **OpenClaw** channel in the VS Code Output panel.
+- Check firewall and network access to the gateway port.
+- Use **OpenClaw: Reconnect** or the HUD reconnect button after correcting the configuration.
 
-### Node Pairing Issues
+### Node pairing fails
 
-- Use the **OpenClaw: Approve Node Pairing** command to manually trigger approval
-- Alternatively, run `openclaw devices approve --latest` on the gateway server
-- To reset the device identity, use **OpenClaw: Reset Device Identity**
+- Run `openclaw devices approve --latest` on the gateway host.
+- Use **OpenClaw: Approve Node Pairing** and inspect pairing messages in the Output panel.
+- Use **OpenClaw: Reset Device Identity**, then reconnect and approve the new device.
 
-### Mermaid Diagrams Not Rendering
+### Mermaid diagrams do not render
 
-- Ensure the AI response contains a fenced Mermaid code block (```` ```mermaid ````)
-- Streaming responses render diagrams automatically upon completion
+- Ensure the response contains a fenced block beginning with ` ```mermaid `.
+- Wait for streaming to finish; diagrams render when the response completes.
+- Check the Output panel for rendering errors, and use Source view to inspect the generated Mermaid text.
 
-### Attachments Not Sending
+### Attachments fail
 
-- Verify the file is under the 10 MB per-file limit
-- Check that the gateway supports file attachment handling
+- Confirm that every file is below the 10 MB per-file limit.
+- Check the file picker, paste, or drop operation and inspect the Output panel.
+- Confirm that the gateway accepts the attachment payload and that the connection remains active.
 
-### Supervisor Not Responding
+### Supervisor does not respond
 
-- Verify the supervisor `agentId` is correct and the agent exists on the gateway
-- Check that `intervalMinutes` is greater than 0
-- Review the Output channel for supervisor inquiry logs
+- Confirm that `openclaw.supervisor.intervalMinutes` is greater than `0` and that the supervisor agent exists.
+- Check the supervisor agent ID, stop inquiry method, and stop signal reply.
+- Configure `reminderMessage` if unchanged output should trigger a reminder.
+- Review supervisor entries in the OpenClaw Output channel.
+
+### Agent retries are exhausted
+
+When an agent-run failure is reported, the extension sends `Continue` up to three times. If all retries fail, the error is displayed in chat. Inspect the gateway and OpenClaw Output logs for the original failure.
 
 ## Development
 
 ```bash
 npm install
-npm run build        # one-time build
-npm run watch        # rebuild on change
+npm run build
+npm run watch
 ```
 
-Reload VSCode after each build to test changes.
+`npm run build` runs the repository's esbuild entry point once. `npm run watch` rebuilds when source files change. Reload the VS Code window or extension after rebuilding to test the result.
 
-## Changelog
-
-### v0.0.24
-- Release preparation (version bump to 0.0.24)
-
-### v0.0.23
-- **Added** subagent status indicator: shows "Subagent active: <label>" and "Waiting for subagent…" yield indicator
-- **Added** internationalization support (i18n): UI string localization
-- **Fixed** chat history display issue
-- **Fixed** media support (images/video)
-- **Fixed** Mermaid diagram rendering bug
-
-### v0.0.22
-- Maintenance release with no feature changes
-
-### v0.0.21
-- **Added** busy status indicator: UI shows "Processing..." after sending a message, and "Processing (N queued)" when multiple messages are queued
-- **Fixed** bug where slash commands (`/stop`, `/new`, etc.) caused busyCount leak
-- **Added** slash command dropdown grouping (SESSION / MODEL & STATUS / HELP), keyboard navigation skips separators
-
-### v0.0.20
-- Improved message queue mechanism: no message loss during Gateway-side queuing
-- Session failure notifications: extension can detect failure events pushed back by the Gateway and automatically retry
-- Separator SLASH_COMMANDS feature reimplementation
+For diagnostics, inspect the **OpenClaw** output channel. Connection and protocol code is in `src/gateway.ts`; chat and webview behavior is in `src/chatView.ts`; extension commands and activation are in `src/extension.ts`.
 
 ## License
 
