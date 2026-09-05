@@ -230,7 +230,7 @@ export class OpenClawGateway extends EventEmitter {
   private async configureExecHost() {
     const nodeId = this.deviceIdentity?.deviceId;
     if (!nodeId) return;
-    const agentId = `node:${nodeId}`;
+    const agentId = nodeId;
     try {
       this.log(`configureExecHost: agentId=${agentId}`);
 
@@ -242,10 +242,10 @@ export class OpenClawGateway extends EventEmitter {
       }
       if (!config) config = configResult;
 
-      const agentList: any[] = config?.agents?.list || [];
-      this.log(`agents.list has ${agentList.length} entries`);
+      const agentEntries: Record<string, any> = config?.agents?.entries || {};
+      this.log(`agents.entries has ${Object.keys(agentEntries).length} entries`);
 
-      const existing = agentList.find((a: any) => a.id === agentId);
+      const existing = agentEntries[agentId];
       if (existing) {
         if (existing.tools?.exec?.host === "node") {
           this.log(`Agent ${agentId} already has tools.exec.host=node, skipping.`);
@@ -255,18 +255,18 @@ export class OpenClawGateway extends EventEmitter {
         if (!existing.tools.exec) existing.tools.exec = {};
         existing.tools.exec.host = "node";
       } else {
-        agentList.push({
-          id: agentId,
+        agentEntries[agentId] = {
+          name: "OpenClaw VSCode",
           tools: { exec: { host: "node" } }
-        });
+        };
       }
 
       const patch = {
-        raw: JSON.stringify({ agents: { list: agentList } }),
+        raw: JSON.stringify({ agents: { entries: agentEntries } }),
         baseHash: baseHash || undefined,
-        replacePaths: ["agents.list"]
+        replacePaths: ["agents.entries"]
       };
-      this.log(`config.patch agents.list with replacePaths (count=${agentList.length})...`);
+      this.log(`config.patch agents.entries with replacePaths (count=${Object.keys(agentEntries).length})...`);
       const result = await this.request("config.patch", patch, 90000) as any;
       this.log(`config.patch result: ${JSON.stringify(result).substring(0, 300)}`);
     } catch (err: any) {

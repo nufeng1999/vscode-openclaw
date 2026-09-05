@@ -188,7 +188,7 @@ export function deactivate() {
 }
 
 async function updateNodeAgentConfig(gw: OpenClawGateway, nodeDeviceId: string, channel: vscode.OutputChannel) {
-  const agentId = `node:${nodeDeviceId}`;
+  const agentId = nodeDeviceId;
   channel.appendLine(`updateNodeAgentConfig: ${agentId}`);
 
   const configResult = await gw.request("config.get", {}) as any;
@@ -199,29 +199,30 @@ async function updateNodeAgentConfig(gw: OpenClawGateway, nodeDeviceId: string, 
   }
   if (!config) config = configResult;
 
-  const agentList: any[] = config?.agents?.list || [];
+  const agentEntries: Record<string, any> = config?.agents?.entries || {};
 
-  // 移除所有旧的 node:* 条目
-  const filtered = agentList.filter((a: any) => !a.id?.startsWith("node:"));
-// 添加/更新 node 条目（直接设置 name 为 OpenClaw VSCode）
-    filtered.push({
-      id: agentId,
-      name: "OpenClaw VSCode",
-      tools: { exec: { host: "node", node: "OpenClaw VSCode", notifyOnExit: false } }
-    });
+  // 移除所有旧的 node-* 条目
+  for (const key of Object.keys(agentEntries)) {
+    if (key.startsWith("node-")) delete agentEntries[key];
+  }
+  // 添加 node 条目（直接设置 name 为 OpenClaw VSCode）
+  agentEntries[agentId] = {
+    name: "OpenClaw VSCode",
+    tools: { exec: { host: "node", node: "OpenClaw VSCode", notifyOnExit: false } }
+  };
 
   const patch = {
-    raw: JSON.stringify({ agents: { list: filtered } }),
+    raw: JSON.stringify({ agents: { entries: agentEntries } }),
     baseHash: baseHash || undefined,
-    replacePaths: ["agents.list"]
+    replacePaths: ["agents.entries"]
   };
-  channel.appendLine(`config.patch agents.list (count=${filtered.length})...`);
+  channel.appendLine(`config.patch agents.entries (count=${Object.keys(agentEntries).length})...`);
   const result = await gw.request("config.patch", patch, 90000) as any;
   channel.appendLine(`config.patch result: ok=${result?.ok}`);
 }
 
 async function updateNodeAgentName(gw: OpenClawGateway, nodeDeviceId: string, displayName: string, channel: vscode.OutputChannel) {
-  const agentId = `node:${nodeDeviceId}`;
+  const agentId = nodeDeviceId;
   channel.appendLine(`updateNodeAgentName: ${agentId} -> ${displayName}`);
 
   const configResult = await gw.request("config.get", {}) as any;
@@ -232,26 +233,19 @@ async function updateNodeAgentName(gw: OpenClawGateway, nodeDeviceId: string, di
   }
   if (!config) config = configResult;
 
-  const agentList: any[] = config?.agents?.list || [];
+  const agentEntries: Record<string, any> = config?.agents?.entries || {};
 
-  let changed = false;
-  const updated = agentList.map((agent: any) => {
-    if (agent?.id === agentId && agent.name !== displayName) {
-      changed = true;
-      return { ...agent, name: displayName };
-    }
-    return agent;
-  });
-
-  if (!changed) {
+  const existing = agentEntries[agentId];
+  if (!existing || existing.name === displayName) {
     channel.appendLine(`updateNodeAgentName: no change needed`);
     return;
   }
+  existing.name = displayName;
 
   const patch = {
-    raw: JSON.stringify({ agents: { list: updated } }),
+    raw: JSON.stringify({ agents: { entries: agentEntries } }),
     baseHash: baseHash || undefined,
-    replacePaths: ["agents.list"]
+    replacePaths: ["agents.entries"]
   };
   const result = await gw.request("config.patch", patch, 90000) as any;
   channel.appendLine(`updateNodeAgentName result: ok=${result?.ok}`);
