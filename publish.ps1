@@ -122,16 +122,28 @@ try {
     Write-Log "Current version: $oldVersion"
 
     # ── Step 2.5: Pre-flight check — skip if target version already on remote ──
-    Format-LogBlock "Step 2.5 - Check remote tags (idempotency guard)"
+    Format-LogBlock "Step 2.5 - Check remote tags & commit (idempotency guard)"
     & git fetch origin --tags 2>&1 | Out-Null
     $newVersionBare = Get-IncrementedVersion -CurrentVersion $oldVersion
     $newVersionTag  = "v$newVersionBare"
+
+    # 2.5a: Check if remote tag already exists
     $remoteTag = git ls-remote --tags origin "$newVersionTag" 2>&1
     if ($remoteTag) {
         Write-Log "Remote already has tag $newVersionTag — nothing to do, exiting gracefully."
         Write-Log "This usually means a previous run pushed the tag but did not exit cleanly."
         exit 0
     }
+
+    # 2.5b: Check if remote HEAD commit message already contains "release $newVersionTag"
+    # This catches the case where commit was pushed but tag creation failed.
+    $remoteHeadMsg = git log origin/$currentBranch -1 --format="%s" 2>&1
+    if ($remoteHeadMsg -and $remoteHeadMsg.StartsWith("release $newVersionTag")) {
+        Write-Log "Remote HEAD already contains commit '$remoteHeadMsg' — nothing to do, exiting gracefully."
+        Write-Log "This usually means a previous run committed and pushed but failed at tag creation."
+        exit 0
+    }
+
     Write-Log "No remote tag $newVersionTag found, proceed with publish."
 
     # ── Step 3: Bump version ─────────────────────────────────────────────────
