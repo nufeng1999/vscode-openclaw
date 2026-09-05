@@ -121,6 +121,19 @@ try {
     $oldVersion = $packageJson.version
     Write-Log "Current version: $oldVersion"
 
+    # ── Step 2.5: Pre-flight check — skip if target version already on remote ──
+    Format-LogBlock "Step 2.5 - Check remote tags (idempotency guard)"
+    & git fetch origin --tags 2>&1 | Out-Null
+    $newVersionBare = Get-IncrementedVersion -CurrentVersion $oldVersion
+    $newVersionTag  = "v$newVersionBare"
+    $remoteTag = git ls-remote --tags origin "$newVersionTag" 2>&1
+    if ($remoteTag) {
+        Write-Log "Remote already has tag $newVersionTag — nothing to do, exiting gracefully."
+        Write-Log "This usually means a previous run pushed the tag but did not exit cleanly."
+        exit 0
+    }
+    Write-Log "No remote tag $newVersionTag found, proceed with publish."
+
     # ── Step 3: Bump version ─────────────────────────────────────────────────
     Format-LogBlock "Step 3 - Bump version"
 
@@ -173,13 +186,15 @@ try {
     Format-LogBlock "Step 8 - Create git tag"
 
     $tagName = $newVersionTag
+    # Double-check local tag doesn't already exist (safety net)
     $existingTag = & git tag -l $tagName 2>&1
     if ($existingTag) {
-        throw "Tag already exists, cannot overwrite: $tagName"
+        Write-Log "Local tag $tagName already exists, skipping creation."
+    } else {
+        & git tag -a $tagName -m $commitMsg
+        if ($LASTEXITCODE -ne 0) { throw "git tag failed with exit code $LASTEXITCODE" }
+        Write-Log "git tag created: $tagName"
     }
-    & git tag -a $tagName -m $commitMsg
-    if ($LASTEXITCODE -ne 0) { throw "git tag failed with exit code $LASTEXITCODE" }
-    Write-Log "git tag created: $tagName"
 
     # ── Step 9: git push tag ─────────────────────────────────────────────────
     Format-LogBlock "Step 9 - git push origin tag"
