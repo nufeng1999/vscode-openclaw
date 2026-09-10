@@ -3546,6 +3546,14 @@ if (resizeHandle) {
     const data = msg.data;
     const noteContent = document.getElementById('progress-note-panel-content');
 
+    // ── 清除分支：data 为 null/undefined 时清空 Notes 面板 ──
+    if (!data) {
+        if (noteContent) {
+            noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>';
+        }
+        return;
+    }
+
     // ── 优先支持纯 markdown 格式（Gateway 返回只有 markdown 字段的情况）──
     if (noteContent && data && data.markdown) {
       // 移除占位提示文本
