@@ -175,6 +175,28 @@ export async function activate(context: vscode.ExtensionContext) {
       chatView.handleChatEvent(payload);
     } else if (event === "stream" || event === "agent") {
       chatView.handleStreamEvent(payload);
+    } else if (event === "progressCard.changed") {
+      // 收到 progressCard.changed 事件后，调用 API 获取完整卡片内容
+      const changedSessionKey = payload?.sessionKey || '';
+      outputChannel.appendLine(`progressCard.changed: sessionKey=${changedSessionKey} revision=${payload?.revision ?? 'null'}`);
+      // 延迟一小段时间确保 Gateway 已完成写入
+      setTimeout(async () => {
+        try {
+          const result = await gateway.request('progressCard.get', {
+            sessionKey: changedSessionKey
+          }) as any;
+          const card = result?.card;
+          if (card) {
+            outputChannel.appendLine(`progressCard.get: got card (revision=${card.revision}, markdown=${(card.markdown || '').substring(0, 80)}...)`);
+            chatView.handleProgressCardUpdate(card);
+          } else {
+            outputChannel.appendLine('progressCard.get: card is null (cleared)');
+            chatView.handleProgressCardUpdate(null);
+          }
+        } catch (err: any) {
+          outputChannel.appendLine(`progressCard.get failed: ${err.message}`);
+        }
+      }, 100);
     }
   });
 

@@ -154,6 +154,32 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     await this.handleSendMessage(text);
   }
 
+  /**
+   * 处理进度卡片更新
+   * @param card 进度卡片对象，null 表示清除
+   */
+  public handleProgressCardUpdate(card: any) {
+    if (!this.view) return;
+    if (card) {
+      // 发送给 webview 渲染
+      this.postToWebview({
+        type: 'progressCard',
+        data: {
+          title: card.title,
+          description: card.description,
+          progress: card.progress,
+          status: card.status,
+          steps: card.steps,
+          markdown: card.markdown,
+          revision: card.revision
+        }
+      });
+    } else {
+      // 清除进度卡片
+      this.postToWebview({ type: 'progressCard', data: null });
+    }
+  }
+
   // Match Obsidian plugin's handleChatEvent
   public handleChatEvent(payload: any) {
     const sessionKey = this.resolveSession(payload?.sessionKey);
@@ -2319,47 +2345,81 @@ body {
   cursor: default;
 }
 
-/* Progress card styles */
+/* Progress card styles - theme-adaptive */
 .progress-card {
-  background: linear-gradient(135deg, #1e2937, #334155);
-  border: 2px solid #64748b;
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px;
   margin: 12px 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   transition: all 0.3s ease;
 }
 .progress-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 .progress-card .title {
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text);
   margin-bottom: 8px;
   font-size: 15px;
 }
 .progress-card .progress-bar {
   height: 6px;
-  background: #475569;
+  background: var(--border);
   border-radius: 3px;
   margin: 8px 0;
   overflow: hidden;
 }
 .progress-card .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  background: var(--accent);
   transition: width 0.4s ease;
 }
 .progress-card .status {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 .progress-card .steps {
   margin-top: 12px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--text-muted);
 }
+/* Markdown elements inside progress-card (for marked.parse output) */
+.progress-card h1, .progress-card h2, .progress-card h3,
+.progress-card h4, .progress-card h5, .progress-card h6 {
+  margin: 8px 0 4px 0; line-height: 1.3;
+}
+.progress-card h1 { font-size: 1.2em; }
+.progress-card h2 { font-size: 1.1em; }
+.progress-card h3 { font-size: 1em; }
+.progress-card p { margin: 4px 0; }
+.progress-card ul, .progress-card ol { margin: 4px 0; padding-left: 20px; }
+.progress-card li { margin: 2px 0; }
+.progress-card code {
+  background: rgba(128,128,128,0.15); padding: 1px 4px; border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 0.9em;
+}
+.progress-card pre {
+  background: rgba(0,0,0,0.1); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; overflow-x: auto; margin: 6px 0;
+}
+.progress-card pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.4; }
+.progress-card blockquote {
+  border-left: 3px solid var(--accent); padding-left: 10px; margin: 6px 0;
+  color: var(--text-muted);
+}
+.progress-card table { border-collapse: collapse; margin: 6px 0; width: 100%; }
+.progress-card th, .progress-card td {
+  border: 1px solid var(--border); padding: 4px 8px; text-align: left; font-size: 12px;
+}
+.progress-card th { background: rgba(128,128,128,0.1); font-weight: 600; }
+.progress-card td { }
+.progress-card strong { font-weight: 600; }
+.progress-card em { font-style: italic; }
+.progress-card a { color: var(--accent); text-decoration: none; }
+.progress-card a:hover { text-decoration: underline; }
+.progress-card hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
 </style>
 </head>
 <body>
@@ -3483,39 +3543,58 @@ if (resizeHandle) {
   }
 
   function renderProgressCard(msg) {
-    const { title, description, progress, status, steps } = msg.data;
+    const data = msg.data;
+    const noteContent = document.getElementById('progress-note-panel-content');
+
+    // ── 优先支持纯 markdown 格式（Gateway 返回只有 markdown 字段的情况）──
+    if (noteContent && data && data.markdown) {
+      // 移除占位提示文本
+      const placeholder = noteContent.querySelector('div[style*="text-align:center"]');
+      if (placeholder && placeholder.textContent.includes('Progress notes will appear here')) {
+        placeholder.remove();
+      }
+      // 使用 marked.parse() 将 markdown 转为 HTML，否则回退为 <pre> 文本
+      const noteHTML = '<div class="progress-card" style="margin:8px 0;">' +
+        (typeof marked !== 'undefined' ? marked.parse(data.markdown) : '<pre>' + data.markdown + '</pre>') +
+        '</div>';
+      noteContent.innerHTML = noteHTML;
+      noteContent.scrollTop = noteContent.scrollHeight;
+      return;
+    }
+
+    // ── 原有结构化字段逻辑（保留向后兼容）──
+    const { title, description, progress, status, steps } = data || {};
     const cardHTML = 
       '<div class="progress-card">' +
       '  <div class="title">' + (title || 'Processing...') + '</div>' +
-      (description ? '  <div style="margin-bottom:8px;color:#94a3b8;font-size:14px;">' + description + '</div>' : '') +
+      (description ? '  <div style="margin-bottom:8px;color:var(--text-muted);font-size:14px;">' + description + '</div>' : '') +
       '  <div class="progress-bar">' +
       '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
       '  </div>' +
       '  <div class="status">' +
       '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
       '  </div>' +
-      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:#64748b;">Steps: ' + steps.map((s, i) => '<span style="margin-right:8px;">' + (i+1) + '. ' + s + '</span>').join('') + '</div>' : '') +
+      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">Steps: ' + steps.map((s, i) => '<span style="margin-right:8px;">' + (i+1) + '. ' + s + '</span>').join('') + '</div>' : '') +
       '</div>';
     appendMessage({ role: 'assistant', text: cardHTML, timestamp: Date.now() });
     // Also update the side panel
-    const noteContent = document.getElementById('progress-note-panel-content');
     if (noteContent && title) {
       const noteHTML =
         '<div class="progress-card" style="margin:8px 0;">' +
         '  <div class="title">' + title + '</div>' +
-        (description ? '  <div style="margin-bottom:6px;color:#94a3b8;font-size:12px;">' + description + '</div>' : '') +
+        (description ? '  <div style="margin-bottom:6px;color:var(--text-muted);font-size:12px;">' + description + '</div>' : '') +
         '  <div class="progress-bar">' +
         '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
         '  </div>' +
         '  <div class="status" style="font-size:12px;">' +
         '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
         '  </div>' +
-        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:#64748b;">' + steps.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') + '</div>' : '') +
+        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + steps.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') + '</div>' : '') +
         '</div>';
       // Remove placeholder text if present
-      const placeholder = noteContent.querySelector('div[style*="text-align:center"]');
-      if (placeholder && placeholder.textContent.includes('Progress notes will appear here')) {
-        placeholder.remove();
+      const placeholder2 = noteContent.querySelector('div[style*="text-align:center"]');
+      if (placeholder2 && placeholder2.textContent.includes('Progress notes will appear here')) {
+        placeholder2.remove();
       }
       noteContent.insertAdjacentHTML('beforeend', noteHTML);
       noteContent.scrollTop = noteContent.scrollHeight;
