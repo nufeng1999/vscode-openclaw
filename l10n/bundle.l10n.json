@@ -67,5 +67,10 @@
   "Auto-continue failed after {0} attempts": "Auto-continue failed after {0} attempts",
   "Subagent active: {0}": "Subagent active: {0}",
   "Waiting for subagent…": "Waiting for subagent…",
-  "Reconnect": "Reconnect"
+  "Reconnect": "Reconnect",
+  "Progress Note": "Progress Note",
+  "Progress notes will appear here": "Progress notes will appear here",
+  "Toggle progress note panel": "Toggle progress note panel",
+  "Copy all content": "Copy all content",
+  "Copy as Markdown": "Copy as Markdown"
 }

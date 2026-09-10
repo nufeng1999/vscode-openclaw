@@ -2511,16 +2511,16 @@ body {
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
   <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
   </div> <!-- /messages-container -->
-    <div id="progress-note-resize-handle" title="Drag to resize"></div>
+    <div id="progress-note-resize-handle" title="${vscode.l10n.t('Drag to resize')}"></div>
     <div id="progress-note-panel">
     <div id="progress-note-panel-header">
-      <span id="progress-note-panel-title">Notes</span>
-      <button id="progressCopyAllBtn" class="toolbar-btn" title="Copy all content">📋</button>
-      <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="Copy as Markdown">📝</button>
-      <button id="progress-note-panel-toggle" title="Toggle panel">进度备注</button>
+      <span id="progress-note-panel-title">${vscode.l10n.t('Progress Note')}</span>
+      <button id="progressCopyAllBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy all content')}">📋</button>
+      <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy as Markdown')}">📝</button>
+      <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}">◀▶</button>
     </div>
     <div id="progress-note-panel-content">
-      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>
+      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
     </div>
   </div>
   </div> <!-- /top-row -->
@@ -3723,7 +3723,7 @@ if (resizeHandle) {
     // ── 清除分支：data 为 null/undefined 时清空 Notes 面板 ──
     if (!data) {
         if (noteContent) {
-            noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>';
+            noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>';
         }
         return;
     }

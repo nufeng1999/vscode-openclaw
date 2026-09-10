@@ -67,5 +67,10 @@
   "Auto-continue failed after {0} attempts": "自动继续失败，已尝试 {0} 次",
   "Subagent active: {0}": "子代理活跃: {0}",
   "Waiting for subagent…": "等待子代理…",
-  "Reconnect": "重连"
+  "Reconnect": "重连",
+  "Progress Note": "进度备注",
+  "Progress notes will appear here": "进度备注将显示在此处",
+  "Toggle progress note panel": "切换进度备注面板",
+  "Copy all content": "复制所有内容",
+  "Copy as Markdown": "复制为 Markdown 格式"
 }

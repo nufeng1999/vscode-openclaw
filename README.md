@@ -20,6 +20,7 @@ AI chat sidebar for the OpenClaw gateway and VS Code node. The extension connect
 - **Command approval**: Approve local commands once, always for a working directory, or deny them.
 - **Device identity**: Authenticate with an Ed25519 device identity compatible with OpenClaw pairing.
 - **Subagent activity**: Show active subagent labels and waiting-for-subagent status in chat.
+- **Progress note panel**: View and manage subagent progress notes in a resizable side panel with copy-as-Markdown support.
 - **Internationalization**: Localize extension UI strings through the VS Code localization system.
 
 ## Installation
@@ -64,6 +65,10 @@ Type `@` in the input to search workspace files and folders. Use `@folder/` to b
 ### Supervisor mode
 
 Enable supervision with the checkbox in the HUD. The supervisor checks the current agent at the configured interval. If output is unchanged, the optional reminder is sent, then the supervisor is asked whether work should stop. Supervision stops when configured output content or the supervisor reply matches its stop signal, or when supervision is disabled.
+
+### Progress note panel
+
+A resizable side panel displays subagent progress notes (also called "进度备注") in real time. The panel header shows the current note title and provides two toolbar buttons: **📋 Copy all content** copies the full note text to the clipboard, and **📝 Copy as Markdown** copies the note formatted as Markdown. The panel can be toggled open/closed with the **进度备注** button and resized by dragging its handle.
 
 ### Workspace commands
 
