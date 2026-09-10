@@ -1852,10 +1852,96 @@ body {
 #chat-panel {
   flex: 1;
   display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Left messages container */
+#messages-container {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
 }
+
+/* Vertical drag bar between messages and progress panel */
+#progress-note-resize-handle {
+  width: 6px;
+  background: var(--border);
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#progress-note-resize-handle::before {
+  content: '';
+  width: 1px;
+  height: 40%;
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* Right progress note panel */
+#progress-note-panel {
+  width: 280px;
+  min-width: 220px;
+  max-width: 450px;
+  background: var(--background);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+#progress-note-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  border-left: none;
+  overflow: hidden;
+}
+#progress-note-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#progress-note-panel-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#progress-note-panel-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+#progress-note-panel-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+#progress-note-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+#progress-note-panel-content::-webkit-scrollbar { width: 4px; }
+#progress-note-panel-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .context-bar { height: 3px; background: rgba(128, 128, 128, 0.1); flex-shrink: 0; }
 .context-fill { height: 100%; background: var(--accent); transition: width 0.3s; width: 0%; }
@@ -2223,6 +2309,48 @@ body {
   border-bottom: 1px solid rgba(128,128,128,0.08);
   cursor: default;
 }
+
+/* Progress card styles */
+.progress-card {
+  background: linear-gradient(135deg, #1e2937, #334155);
+  border: 2px solid #64748b;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+.progress-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+.progress-card .title {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+.progress-card .progress-bar {
+  height: 6px;
+  background: #475569;
+  border-radius: 3px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.progress-card .progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.4s ease;
+}
+.progress-card .status {
+  font-size: 13px;
+  color: #94a3b8;
+}
+.progress-card .steps {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
 </style>
 </head>
 <body>
@@ -2286,6 +2414,7 @@ body {
 
 <!-- ═══ CHAT PANEL ═══ -->
 <div id="chat-panel">
+  <div id="messages-container">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
     <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t('Toggle HUD Panel')}">
@@ -2334,6 +2463,17 @@ body {
       <button class="send-btn" id="sendBtn" title="${vscode.l10n.t('Send')}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
+    </div>
+  </div>
+  </div> <!-- /messages-container -->
+  <div id="progress-note-resize-handle" title="Drag to resize"></div>
+  <div id="progress-note-panel">
+    <div id="progress-note-panel-header">
+      <span id="progress-note-panel-title">Notes</span>
+      <button id="progress-note-panel-toggle" title="Toggle panel">进度备注</button>
+    </div>
+    <div id="progress-note-panel-content">
+      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>
     </div>
   </div>
 </div>
@@ -2566,7 +2706,78 @@ body {
     inputBox.style.height = Math.max(40, availableHeight) + 'px';
   }
 
-  if (resizeHandle) {
+  
+  // ── Progress Note Panel - Vertical Resize + Toggle ──
+  // ── Progress Note Panel End ──
+  const progressNoteHandle = document.getElementById('progress-note-resize-handle');
+  const progressNotePanel = document.getElementById('progress-note-panel');
+  const progressNoteToggle = document.getElementById('progress-note-panel-toggle');
+  const messagesContainer = document.getElementById('messages-container');
+  let isProgressResizing = false;
+  let progressStartX = 0;
+  let progressStartWidth = 0;
+
+  // Load saved panel state
+  const savedPanelWidth = localStorage.getItem('openclaw.progressNoteWidth');
+  const savedPanelCollapsed = localStorage.getItem('openclaw.progressNoteCollapsed');
+  if (progressNotePanel) {
+    if (savedPanelWidth && savedPanelCollapsed !== 'true') {
+      progressNotePanel.style.width = savedPanelWidth + 'px';
+      progressNotePanel.classList.remove('collapsed');
+    } else if (savedPanelCollapsed === 'true') {
+      progressNotePanel.classList.add('collapsed');
+    }
+  }
+
+  if (progressNoteToggle) {
+    progressNoteToggle.addEventListener('click', () => {
+      if (!progressNotePanel) return;
+      const isCollapsed = progressNotePanel.classList.toggle('collapsed');
+      progressNoteToggle.textContent = isCollapsed ? '▶' : '◀';
+      if (!isCollapsed && savedPanelWidth) {
+        progressNotePanel.style.width = savedPanelWidth + 'px';
+      }
+      localStorage.setItem('openclaw.progressNoteCollapsed', isCollapsed.toString());
+    });
+  }
+
+  if (progressNoteHandle) {
+    progressNoteHandle.addEventListener('mousedown', (e) => {
+      isProgressResizing = true;
+      progressStartX = e.clientX;
+      progressStartWidth = progressNotePanel ? progressNotePanel.offsetWidth : 280;
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isProgressResizing) return;
+      const delta = progressStartX - e.clientX;
+      let newWidth = progressStartWidth + delta;
+      const minWidth = 200;
+      const maxWidth = 450;
+      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      if (progressNotePanel) {
+        progressNotePanel.style.width = newWidth + 'px';
+        progressNotePanel.classList.remove('collapsed');
+        if (progressNoteToggle) progressNoteToggle.textContent = '◀';
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isProgressResizing) {
+        isProgressResizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        if (progressNotePanel) {
+          localStorage.setItem('openclaw.progressNoteWidth', progressNotePanel.offsetWidth.toString());
+          localStorage.setItem('openclaw.progressNoteCollapsed', progressNotePanel.classList.contains('collapsed').toString());
+        }
+      }
+    });
+  }
+if (resizeHandle) {
     resizeHandle.addEventListener('mousedown', (e) => {
       isResizing = true;
       startY = e.clientY;
@@ -3030,6 +3241,10 @@ body {
         }
         break;
       }
+      case 'progressCard': {
+        renderProgressCard(msg);
+        break;
+      }
       case 'setInputText':
         if (inputBox && msg.text) {
           inputBox.value = msg.text;
@@ -3254,6 +3469,46 @@ body {
     hideSlashDropdown();
     inputBox.style.height = 'auto';
     inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
+  }
+
+  function renderProgressCard(msg) {
+    const { title, description, progress, status, steps } = msg.data;
+    const cardHTML = 
+      '<div class="progress-card">' +
+      '  <div class="title">' + (title || 'Processing...') + '</div>' +
+      (description ? '  <div style="margin-bottom:8px;color:#94a3b8;font-size:14px;">' + description + '</div>' : '') +
+      '  <div class="progress-bar">' +
+      '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
+      '  </div>' +
+      '  <div class="status">' +
+      '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
+      '  </div>' +
+      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:#64748b;">Steps: ' + steps.map((s, i) => '<span style="margin-right:8px;">' + (i+1) + '. ' + s + '</span>').join('') + '</div>' : '') +
+      '</div>';
+    appendMessage({ role: 'assistant', text: cardHTML, timestamp: Date.now() });
+    // Also update the side panel
+    const noteContent = document.getElementById('progress-note-panel-content');
+    if (noteContent && title) {
+      const noteHTML =
+        '<div class="progress-card" style="margin:8px 0;">' +
+        '  <div class="title">' + title + '</div>' +
+        (description ? '  <div style="margin-bottom:6px;color:#94a3b8;font-size:12px;">' + description + '</div>' : '') +
+        '  <div class="progress-bar">' +
+        '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
+        '  </div>' +
+        '  <div class="status" style="font-size:12px;">' +
+        '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
+        '  </div>' +
+        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:#64748b;">' + steps.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') + '</div>' : '') +
+        '</div>';
+      // Remove placeholder text if present
+      const placeholder = noteContent.querySelector('div[style*="text-align:center"]');
+      if (placeholder && placeholder.textContent.includes('Progress notes will appear here')) {
+        placeholder.remove();
+      }
+      noteContent.insertAdjacentHTML('beforeend', noteHTML);
+      noteContent.scrollTop = noteContent.scrollHeight;
+    }
   }
 
   function appendMessage(msg) {
