@@ -2420,6 +2420,9 @@ body {
 .progress-card a { color: var(--accent); text-decoration: none; }
 .progress-card a:hover { text-decoration: underline; }
 .progress-card hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+.progress-card-copy-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
+.progress-card-md-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
+.progress-card .copy-bar { display: flex; align-items: center; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -3557,6 +3560,26 @@ if (resizeHandle) {
     }).catch(function() {});
   }
 
+  function copyProgressCardAsMarkdown(btn) {
+    var card = btn.closest('.progress-card');
+    if (!card) return;
+    
+    var mdText = card.getAttribute('data-raw-markdown') || '';
+    
+    if (!mdText) {
+      var clone = card.cloneNode(true);
+      clone.querySelectorAll('.progress-card-copy-btn, .progress-card-md-btn').forEach(function(b) { b.remove(); });
+      mdText = htmlToMarkdown(clone);
+    }
+    
+    if (!mdText) return;
+    
+    navigator.clipboard.writeText(mdText).then(function() {
+      btn.textContent = '\u2705';
+      setTimeout(function() { btn.textContent = '\u{1F4DD}'; }, 1500);
+    }).catch(function() {});
+  }
+
   /** 将 HTML 元素递归转换为 Markdown 文本 */
   function htmlToMarkdown(el) {
     if (!el) return '';
@@ -3726,7 +3749,18 @@ if (resizeHandle) {
         copyBtn.textContent = '\u{1F4CB}';
         copyBtn.title = 'Copy content';
         copyBtn.onclick = function() { copyProgressCard(this); };
-        mdCard.prepend(copyBtn);
+        // 创建 copy-bar 容器包裹两个按钮
+        const bar = document.createElement('div');
+        bar.className = 'copy-bar';
+        mdCard.prepend(bar);
+        bar.appendChild(copyBtn);
+        // 添加 Copy as Markdown 按钮
+        const mdCopyBtn = document.createElement('button');
+        mdCopyBtn.className = 'progress-card-md-btn';
+        mdCopyBtn.textContent = '\u{1F4DD}';
+        mdCopyBtn.title = 'Copy as Markdown';
+        mdCopyBtn.onclick = function() { copyProgressCardAsMarkdown(this); };
+        bar.appendChild(mdCopyBtn);
       }
       noteContent.scrollTop = noteContent.scrollHeight;
       return;
@@ -3767,6 +3801,24 @@ if (resizeHandle) {
         placeholder2.remove();
       }
       noteContent.insertAdjacentHTML('beforeend', noteHTML);
+      // 为最后一张结构化卡片添加 Copy as Markdown 按钮
+      const lastCard = noteContent.querySelector('.progress-card:last-child');
+      if (lastCard) {
+        const existingBtn = lastCard.querySelector('.progress-card-copy-btn');
+        if (existingBtn) {
+          // 创建 copy-bar 容器包裹两个按钮
+          const bar2 = document.createElement('div');
+          bar2.className = 'copy-bar';
+          existingBtn.parentNode.insertBefore(bar2, existingBtn);
+          bar2.appendChild(existingBtn);
+          const mdCopyBtn = document.createElement('button');
+          mdCopyBtn.className = 'progress-card-md-btn';
+          mdCopyBtn.textContent = '\u{1F4DD}';
+          mdCopyBtn.title = 'Copy as Markdown';
+          mdCopyBtn.onclick = function() { copyProgressCardAsMarkdown(this); };
+          bar2.appendChild(mdCopyBtn);
+        }
+      }
       noteContent.scrollTop = noteContent.scrollHeight;
     }
   }
