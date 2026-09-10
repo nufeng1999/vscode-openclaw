@@ -1852,6 +1852,15 @@ body {
 #chat-panel {
   flex: 1;
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Top row: messages + progress panel side by side */
+#top-row {
+  flex: 1;
+  display: flex;
   flex-direction: row;
   overflow: hidden;
   min-height: 0;
@@ -1991,7 +2000,7 @@ body {
 .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
 
-.input-area { padding: 8px 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; min-height: 80px; max-height: 50vh; position: relative; }
+#input-area { padding: 8px 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; min-height: 80px; max-height: 50vh; position: relative; }
 .input-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .bar-chip { font-size: 11px; color: var(--text-muted); padding: 2px 6px; border-radius: 4px; cursor: pointer; }
 .bar-chip:hover { background: var(--hover); color: var(--text); }
@@ -2414,7 +2423,8 @@ body {
 
 <!-- ═══ CHAT PANEL ═══ -->
 <div id="chat-panel">
-  <div id="messages-container">
+  <div id="top-row">
+    <div id="messages-container">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
     <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t('Toggle HUD Panel')}">
@@ -2437,7 +2447,19 @@ body {
   <div id="subagentIndicator" class="subagent-indicator hidden"></div>
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
   <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
-  <div class="input-area">
+  </div> <!-- /messages-container -->
+    <div id="progress-note-resize-handle" title="Drag to resize"></div>
+    <div id="progress-note-panel">
+    <div id="progress-note-panel-header">
+      <span id="progress-note-panel-title">Notes</span>
+      <button id="progress-note-panel-toggle" title="Toggle panel">进度备注</button>
+    </div>
+    <div id="progress-note-panel-content">
+      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>
+    </div>
+  </div>
+  </div> <!-- /top-row -->
+  <div id="input-area" class="input-area">
     <div class="input-meta">
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">·</span>
@@ -2463,17 +2485,6 @@ body {
       <button class="send-btn" id="sendBtn" title="${vscode.l10n.t('Send')}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
-    </div>
-  </div>
-  </div> <!-- /messages-container -->
-  <div id="progress-note-resize-handle" title="Drag to resize"></div>
-  <div id="progress-note-panel">
-    <div id="progress-note-panel-header">
-      <span id="progress-note-panel-title">Notes</span>
-      <button id="progress-note-panel-toggle" title="Toggle panel">进度备注</button>
-    </div>
-    <div id="progress-note-panel-content">
-      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">Progress notes will appear here</div>
     </div>
   </div>
 </div>
@@ -2733,7 +2744,7 @@ body {
     progressNoteToggle.addEventListener('click', () => {
       if (!progressNotePanel) return;
       const isCollapsed = progressNotePanel.classList.toggle('collapsed');
-      progressNoteToggle.textContent = isCollapsed ? '▶' : '◀';
+      progressNoteToggle.textContent = isCollapsed ? '◀' : '▶';
       if (!isCollapsed && savedPanelWidth) {
         progressNotePanel.style.width = savedPanelWidth + 'px';
       }
@@ -2761,7 +2772,7 @@ body {
       if (progressNotePanel) {
         progressNotePanel.style.width = newWidth + 'px';
         progressNotePanel.classList.remove('collapsed');
-        if (progressNoteToggle) progressNoteToggle.textContent = '◀';
+        if (progressNoteToggle) progressNoteToggle.textContent = '▶';
       }
     });
 
