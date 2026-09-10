@@ -3740,6 +3740,15 @@ if (resizeHandle) {
         (typeof marked !== 'undefined' ? marked.parse(data.markdown) : '<pre>' + data.markdown + '</pre>') +
         '</div>';
       noteContent.innerHTML = noteHTML;
+      // 渲染 plan 列表（若 plan 字段存在且非空，优先于 steps）
+      const stepList = (data.plan && data.plan.length > 0) ? data.plan : (data.steps && data.steps.length > 0 ? data.steps : null);
+      if (stepList) {
+        const stepsHTML = '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;">' +
+          '<div style="margin-bottom:4px;font-weight:600;">Steps:</div>' +
+          stepList.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') +
+          '</div>';
+        noteContent.insertAdjacentHTML('beforeend', stepsHTML);
+      }
       // 添加复制按钮和存储原始 Markdown
       const mdCard = noteContent.querySelector('.progress-card');
       if (mdCard) {
