@@ -2512,6 +2512,8 @@ body {
     <div id="progress-note-panel">
     <div id="progress-note-panel-header">
       <span id="progress-note-panel-title">Notes</span>
+      <button id="progressCopyAllBtn" class="toolbar-btn" title="Copy all content">📋</button>
+      <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="Copy as Markdown">📝</button>
       <button id="progress-note-panel-toggle" title="Toggle panel">进度备注</button>
     </div>
     <div id="progress-note-panel-content">
@@ -3542,6 +3544,155 @@ if (resizeHandle) {
     inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
   }
 
+  function copyProgressCard(btn) {
+    var card = btn.closest('.progress-card');
+    if (!card) return;
+    var clone = card.cloneNode(true);
+    clone.querySelectorAll('.progress-card-copy-btn').forEach(function(b) { b.remove(); });
+    var text = (clone.textContent || '').trim();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(function() {
+      btn.textContent = '\u2705';
+      setTimeout(function() { btn.textContent = '\u{1F4CB}'; }, 1500);
+    }).catch(function() {});
+  }
+
+  /** 将 HTML 元素递归转换为 Markdown 文本 */
+  function htmlToMarkdown(el) {
+    if (!el) return '';
+    var BT = String.fromCharCode(96);
+    var TBT = BT + BT + BT;
+    function processNode(node) {
+      if (node.nodeType === 3) return node.textContent || '';
+      if (node.nodeType !== 1) return '';
+      var tag = node.tagName.toLowerCase();
+      var inner = '';
+      for (var i = 0; i < node.childNodes.length; i++) {
+        inner += processNode(node.childNodes[i]);
+      }
+      switch (tag) {
+        case 'h1': return '# ' + inner.trim() + '\\n\\n';
+        case 'h2': return '## ' + inner.trim() + '\\n\\n';
+        case 'h3': return '### ' + inner.trim() + '\\n\\n';
+        case 'h4': return '#### ' + inner.trim() + '\\n\\n';
+        case 'h5': return '##### ' + inner.trim() + '\\n\\n';
+        case 'h6': return '###### ' + inner.trim() + '\\n\\n';
+        case 'p': return inner.trim() + '\\n\\n';
+        case 'br': return '\\n';
+        case 'hr': return '\\n---\\n\\n';
+        case 'strong': case 'b': return '**' + inner.trim() + '**';
+        case 'em': case 'i': return '*' + inner.trim() + '*';
+        case 'code': {
+          if (node.parentElement && node.parentElement.tagName.toLowerCase() === 'pre') return inner;
+          return BT + inner + BT;
+        }
+        case 'pre': return '\\n' + TBT + '\\n' + inner.trim() + '\\n' + TBT + '\\n\\n';
+        case 'blockquote': return inner.split('\\n').map(function(l) { return '> ' + l; }).join('\\n') + '\\n\\n';
+        case 'ul': {
+          var items = '';
+          for (var j = 0; j < node.children.length; j++) {
+            items += '- ' + processNode(node.children[j]).trim() + '\\n';
+          }
+          return items + '\\n';
+        }
+        case 'ol': {
+          var items2 = '';
+          var idx = 1;
+          for (var j2 = 0; j2 < node.children.length; j2++) {
+            items2 += idx + '. ' + processNode(node.children[j2]).trim() + '\\n';
+            idx++;
+          }
+          return items2 + '\\n';
+        }
+        case 'li': return inner;
+        case 'a': {
+          var href = node.getAttribute('href') || '';
+          return '[' + inner.trim() + '](' + href + ')';
+        }
+        case 'img': {
+          var src = node.getAttribute('src') || '';
+          var alt = node.getAttribute('alt') || '';
+          return '![' + alt + '](' + src + ')';
+        }
+        case 'input': {
+          if (node.type === 'checkbox') {
+            return node.checked ? '- [x] ' : '- [ ] ';
+          }
+          return '';
+        }
+        case 'div': case 'section': case 'article': case 'main':
+          return inner + '\\n';
+        case 'table': {
+          var rows = [];
+          var trs = node.querySelectorAll('tr');
+          for (var ti = 0; ti < trs.length; ti++) {
+            var cells = [];
+            var tds = trs[ti].querySelectorAll('td, th');
+            for (var di = 0; di < tds.length; di++) {
+              cells.push(processNode(tds[di]).trim());
+            }
+            rows.push(cells);
+          }
+          if (rows.length === 0) return inner;
+          var md = '| ' + rows[0].join(' | ') + ' |\\n';
+          var seps = [];
+          for (var si = 0; si < rows[0].length; si++) seps.push('---');
+          md += '| ' + seps.join(' | ') + ' |\\n';
+          for (var ri = 1; ri < rows.length; ri++) {
+            md += '| ' + rows[ri].join(' | ') + ' |\\n';
+          }
+          return md + '\\n';
+        }
+        default: return inner;
+      }
+    }
+    var result = processNode(el);
+    return result.replace(/\\n{3,}/g, '\\n\\n').trim();
+  }
+
+  // 复制 Notes 面板全部内容
+  const progressCopyAllBtn = document.getElementById('progressCopyAllBtn');
+  if (progressCopyAllBtn) {
+    progressCopyAllBtn.addEventListener('click', () => {
+      const noteContent = document.getElementById('progress-note-panel-content');
+      if (!noteContent) return;
+      const clone = noteContent.cloneNode(true);
+      clone.querySelectorAll('.progress-card-copy-btn').forEach(b => b.remove());
+      clone.querySelectorAll('#progressCopyAllBtn, #progressCopyMarkdownBtn').forEach(b => b.remove());
+      const text = (clone.textContent || '').trim();
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        progressCopyAllBtn.textContent = '\u2705';
+        setTimeout(() => { progressCopyAllBtn.textContent = '\u{1F4CB}'; }, 1500);
+      }).catch(() => {});
+    });
+  }
+
+  // 📝 按钮：复制 Markdown 格式
+  const progressCopyMarkdownBtn = document.getElementById('progressCopyMarkdownBtn');
+  if (progressCopyMarkdownBtn) {
+    progressCopyMarkdownBtn.addEventListener('click', () => {
+      const noteContent = document.getElementById('progress-note-panel-content');
+      if (!noteContent) return;
+      var mdCard = noteContent.querySelector('.progress-card[data-raw-markdown]');
+      var mdText = '';
+      if (mdCard) {
+        mdText = mdCard.getAttribute('data-raw-markdown') || '';
+      }
+      if (!mdText) {
+        var clone = noteContent.cloneNode(true);
+        clone.querySelectorAll('.progress-card-copy-btn').forEach(b => b.remove());
+        clone.querySelectorAll('#progressCopyAllBtn, #progressCopyMarkdownBtn').forEach(b => b.remove());
+        mdText = htmlToMarkdown(clone);
+      }
+      if (!mdText) return;
+      navigator.clipboard.writeText(mdText).then(() => {
+        progressCopyMarkdownBtn.textContent = '\u2705';
+        setTimeout(() => { progressCopyMarkdownBtn.textContent = '\u{1F4DD}'; }, 1500);
+      }).catch(() => {});
+    });
+  }
+
   function renderProgressCard(msg) {
     const data = msg.data;
     const noteContent = document.getElementById('progress-note-panel-content');
@@ -3566,6 +3717,17 @@ if (resizeHandle) {
         (typeof marked !== 'undefined' ? marked.parse(data.markdown) : '<pre>' + data.markdown + '</pre>') +
         '</div>';
       noteContent.innerHTML = noteHTML;
+      // 添加复制按钮和存储原始 Markdown
+      const mdCard = noteContent.querySelector('.progress-card');
+      if (mdCard) {
+        mdCard.setAttribute('data-raw-markdown', data.markdown);
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'progress-card-copy-btn';
+        copyBtn.textContent = '\u{1F4CB}';
+        copyBtn.title = 'Copy content';
+        copyBtn.onclick = function() { copyProgressCard(this); };
+        mdCard.prepend(copyBtn);
+      }
       noteContent.scrollTop = noteContent.scrollHeight;
       return;
     }
