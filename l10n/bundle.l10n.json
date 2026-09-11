@@ -72,5 +72,8 @@
   "Progress notes will appear here": "Progress notes will appear here",
   "Toggle progress note panel": "Toggle progress note panel",
   "Copy all content": "Copy all content",
-  "Copy as Markdown": "Copy as Markdown"
+  "Copy as Markdown": "Copy as Markdown",
+  "Select log level (current: {0})": "Select log level (current: {0})",
+  "OpenClaw: Set Log Level": "OpenClaw: Set Log Level",
+  "Log level changed to: {0}": "Log level changed to: {0}"
 }

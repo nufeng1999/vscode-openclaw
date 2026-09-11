@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { OpenClawGateway } from "./gateway";
+import { log as viewLog, LOG_INFO } from "./logLevel";
 import type { OutputChannel } from "vscode";
 import * as fs from "fs";
 import * as path from "path";
@@ -83,9 +84,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   constructor(context: vscode.ExtensionContext, gateway: OpenClawGateway, channel?: OutputChannel) {
     this.context = context;
     this.gateway = gateway;
-    this.log = channel
-      ? (msg: string) => channel.appendLine(msg)
-      : () => {};
+    const ch = channel;
+    this.log = (msg: string) => viewLog(msg, LOG_INFO, ch);
     this.messageHistory = context.globalState.get<string[]>("openclaw.messageHistory", []);
     const config = vscode.workspace.getConfiguration("openclaw");
     this.gatewayUrl = config.get<string>("gatewayUrl", "ws://127.0.0.1:18789");

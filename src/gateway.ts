@@ -2,6 +2,7 @@ import * as WebSocket from "ws";
 import { EventEmitter } from "events";
 import * as crypto from "crypto";
 import type { OutputChannel, ExtensionContext } from "vscode";
+import { log as extLog, LOG_DEBUG, LOG_TRACE } from "./logLevel";
 
 export interface GatewayMessage {
   type: string;
@@ -42,9 +43,8 @@ export class OpenClawGateway extends EventEmitter {
     super();
     this.url = url;
     this.token = token;
-    this.log = channel
-      ? (msg: string) => channel.appendLine(msg)
-      : () => {};
+    const ch = channel;
+    this.log = (msg: string) => extLog(msg, LOG_DEBUG, ch);
   }
 
   get connected(): boolean {
@@ -481,9 +481,8 @@ export class NodeHost extends EventEmitter {
     super();
     this.url = url;
     this.token = token;
-    this.log = channel
-      ? (msg: string) => channel.appendLine(`[NodeHost] ${msg}`)
-      : () => {};
+    const ch = channel;
+    this.log = (msg: string) => extLog(msg, LOG_DEBUG, ch);
   }
 
   get connected(): boolean { return this._connected; }

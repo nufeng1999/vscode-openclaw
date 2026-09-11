@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { OpenClawGateway, NodeHost } from "./gateway";
 import { OpenClawChatView } from "./chatView";
+import { setLogLevel, getLogLevel } from "./logLevel";
 
 let gateway: OpenClawGateway;
 let nodeHost: NodeHost;
@@ -146,6 +147,22 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("openclaw.setInputText", (text: string) => {
       chatView.setInputText(text);
+    }),
+    vscode.commands.registerCommand("openclaw.setLogLevel", async () => {
+      const levels = ["None", "Error", "Warn", "Info", "Debug", "Trace"];
+      const currentLevel = levels[getLogLevel()] || "Info";
+      const selected = await vscode.window.showQuickPick(levels, {
+        placeHolder: vscode.l10n.t("Select log level (current: {0})", currentLevel),
+        title: vscode.l10n.t("OpenClaw: Set Log Level")
+      });
+      if (selected) {
+        const levelMap: Record<string, number> = {
+          "None": 0, "Error": 1, "Warn": 2, "Info": 3, "Debug": 4, "Trace": 5
+        };
+        setLogLevel(levelMap[selected]);
+        await config.update("logLevel", selected, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(vscode.l10n.t("Log level changed to: {0}", selected));
+      }
     })
   );
 
@@ -199,6 +216,14 @@ export async function activate(context: vscode.ExtensionContext) {
       }, 100);
     }
   });
+
+  // 从配置读取初始日志等级
+  const logLevelConfig = config.get<string>("logLevel", "Info");
+  const logLevelMap: Record<string, number> = {
+    "None": 0, "Error": 1, "Warn": 2, "Info": 3, "Debug": 4, "Trace": 5
+  };
+  setLogLevel(logLevelMap[logLevelConfig] ?? 3);
+  outputChannel.appendLine(`Log level set to: ${logLevelConfig} (${getLogLevel()})`);
 
   gateway.connect();
   nodeHost.connect();

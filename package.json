@@ -66,6 +66,10 @@
 			{
 				"command": "openclaw.analyzeProject",
 				"title": "%analyzeProject.title%"
+			},
+			{
+				"command": "openclaw.setLogLevel",
+				"title": "OpenClaw: Set Log Level"
 			}
 		],
 		"submenus": [
@@ -166,6 +170,12 @@
 					"type": "string",
 					"default": "yes",
 					"description": "%config.supervisor.stopSignalReply.description%"
+				},
+				"openclaw.logLevel": {
+					"type": "string",
+					"default": "Info",
+					"enum": ["None", "Error", "Warn", "Info", "Debug", "Trace"],
+					"description": "Log output level for the OpenClaw extension"
 				}
 			}
 		}
