@@ -169,8 +169,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           description: card.description,
           progress: card.progress,
           status: card.status,
-          steps: card.plan,        // 保留向后兼容
-          plan: card.plan,         // 新增：前端优先读此字段
+          steps: card.steps || card.plan,  // 优先使用 card.steps，回退到 card.plan
+          plan: card.plan,
           markdown: card.markdown,
           revision: card.revision
         }
@@ -2394,6 +2394,13 @@ body {
   font-size: 13px;
   color: var(--text-muted);
 }
+/* Step status indicators */
+.step-item { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0; font-size: 12px; }
+.step-icon { flex-shrink: 0; width: 16px; text-align: center; }
+.step-icon.completed { color: #4ade80; }
+.step-icon.in_progress { color: #facc15; }
+.step-icon.pending { color: var(--text-muted); }
+.step-text { flex: 1; word-break: break-word; }
 /* Markdown elements inside progress-card (for marked.parse output) */
 .progress-card h1, .progress-card h2, .progress-card h3,
 .progress-card h4, .progress-card h5, .progress-card h6 {
@@ -3750,11 +3757,17 @@ if (resizeHandle) {
         '</div>';
       noteContent.innerHTML = noteHTML;
       // 渲染 plan 列表（若 plan 字段存在且非空，优先于 steps）
-      const stepList = (data.plan && data.plan.length > 0) ? data.plan : (data.steps && data.steps.length > 0 ? data.steps : null);
+      const stepList = (data.steps && data.steps.length > 0) ? data.steps : (data.plan && data.plan.length > 0 ? data.plan : null);
       if (stepList) {
         const stepsHTML = '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;">' +
           '<div style="margin-bottom:4px;font-weight:600;">Steps:</div>' +
-          stepList.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') +
+          stepList.map((s, i) => {
+            const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
+            const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
+            const icon = stepStatus === 'completed' ? '\u2705' : stepStatus === 'in_progress' ? '\u23F3' : '\u2B1C';
+            const iconClass = stepStatus === 'completed' ? 'completed' : stepStatus === 'in_progress' ? 'in_progress' : 'pending';
+            return '<div class="step-item"><span class="step-icon ' + iconClass + '">' + icon + '</span><span class="step-text">' + (i+1) + '. ' + stepText + '</span></div>';
+          }).join('') +
           '</div>';
         noteContent.insertAdjacentHTML('beforeend', stepsHTML);
       }
@@ -3785,7 +3798,8 @@ if (resizeHandle) {
     }
 
     // ── 原有结构化字段逻辑（保留向后兼容）──
-    const { title, description, progress, status, steps } = data || {};
+    const { title, description, progress, status, steps: stepListFromData } = data || {};
+    const steps = stepListFromData || data.steps || data.plan;
     const cardHTML = 
       '<div class="progress-card">' +
       '  <div class="title">' + (title || 'Processing...') + '</div>' +
@@ -3796,7 +3810,12 @@ if (resizeHandle) {
       '  <div class="status">' +
       '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
       '  </div>' +
-      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">Steps: ' + steps.map((s, i) => '<span style="margin-right:8px;">' + (i+1) + '. ' + s + '</span>').join('') + '</div>' : '') +
+      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">Steps: ' + steps.map((s, i) => {
+            const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
+            const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
+            const icon = stepStatus === 'completed' ? '\u2705' : stepStatus === 'in_progress' ? '\u23F3' : '\u2B1C';
+            return '<span style="margin-right:8px;">">' + icon + ' ' + (i+1) + '. ' + stepText + '</span>';
+          }).join('') + '</div>' : '') +
       '</div>';
     appendMessage({ role: 'assistant', text: cardHTML, timestamp: Date.now() });
     // Also update the side panel
@@ -3811,7 +3830,12 @@ if (resizeHandle) {
         '  <div class="status" style="font-size:12px;">' +
         '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
         '  </div>' +
-        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + steps.map((s, i) => '<div style="margin:3px 0;">' + (i+1) + '. ' + s + '</div>').join('') + '</div>' : '') +
+        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + steps.map((s, i) => {
+            const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
+            const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
+            const icon = stepStatus === 'completed' ? '\u2705' : stepStatus === 'in_progress' ? '\u23F3' : '\u2B1C';
+            return '<div class="step-item"><span class="step-icon ' + (stepStatus === 'completed' ? 'completed' : stepStatus === 'in_progress' ? 'in_progress' : 'pending') + '">' + icon + '</span><span class="step-text">' + (i+1) + '. ' + stepText + '</span></div>';
+          }).join('') + '</div>' : '') +
         '</div>';
       // Remove placeholder text if present
       const placeholder2 = noteContent.querySelector('div[style*="text-align:center"]');
