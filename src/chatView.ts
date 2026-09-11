@@ -717,6 +717,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             vscode.window.showInformationMessage(msg.text);
           }
           break;
+        case "mermaidError":
+          // Mermaid渲染失败时通过VSCode通知提示用户，不污染webview UI
+          if (msg.text) {
+            vscode.window.showWarningMessage(
+              vscode.l10n.t('Mermaid diagram render failed: {0}', msg.text)
+            );
+          }
+          break;
         case "openSettings":
           vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
           break;
@@ -4117,6 +4125,14 @@ if (resizeHandle) {
           .then(svgResult => {
             // v11.4.1: render 返回 {id, svg} 对象，用 svgResult.svg 获取 SVG 字符串
             const svgCode = svgResult.svg;
+            // Mermaid v11.x 在语法错误时会 resolve 返回含错误文本的 SVG 而非 reject，
+            // 需在 .then() 中过滤，避免错误文本污染 UI
+            if (svgCode && (svgCode.includes('Syntax error') || svgCode.includes('Error:'))) {
+              if (typeof vscode !== 'undefined') {
+                vscode.postMessage({ type: 'mermaidError', text: 'Mermaid syntax error' });
+              }
+              return;
+            }
             // 保留原始代码块，并在其上方插入渲染结果 + 复制按钮
             const wrapper = document.createElement('div');
             wrapper.className = 'mermaid-wrapper mermaid-full-width';
@@ -4203,17 +4219,14 @@ if (resizeHandle) {
           })
           .catch(err => {
             console.error('Mermaid render error:', err);
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'mermaid-error';
-            // ⚠️ 重要：必须使用 createTextNode 而非字符串拼接，
-            // 因为 Mermaid v11.x 错误对象可能包含内嵌的 HTML/SVG 片段
-            // （如 <script>、<svg>、CSS 样式等），直接拼接到 textContent 虽不会
-            // 被浏览器解析为 HTML，但为了保险起见，显式使用文本节点确保零风险。
-            const prefix = document.createTextNode('${vscode.l10n.t('Mermaid diagram render failed: ')}');
-            const messageText = document.createTextNode(String(err && err.message ? err.message : (typeof err === 'string' ? err : JSON.stringify(err))));
-            errorDiv.appendChild(prefix);
-            errorDiv.appendChild(messageText);
-            pre.parentNode.insertBefore(errorDiv, pre);
+            const errMsg = String(err && err.message ? err.message : (typeof err === 'string' ? err : JSON.stringify(err)));
+            // 不再在webview中创建错误div，改为发送通知给扩展宿主
+            if (typeof vscode !== 'undefined') {
+              vscode.postMessage({ 
+                type: 'mermaidError', 
+                text: errMsg.substring(0, 200)
+              });
+            }
           });
       });
     }, 100);  // 增加延迟，确保 DOM 完全渲染
