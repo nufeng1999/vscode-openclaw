@@ -169,7 +169,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           description: card.description,
           progress: card.progress,
           status: card.status,
-          steps: card.plan,
+          steps: card.plan,        // 保留向后兼容
+          plan: card.plan,         // 新增：前端优先读此字段
           markdown: card.markdown,
           revision: card.revision
         }
