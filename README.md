@@ -6,6 +6,8 @@ AI chat sidebar for the OpenClaw gateway and VS Code node. The extension connect
 
 ## Features
 
+- **Log Level Control**: Dynamically switch log output levels (None/Error/Warn/Info/Debug/Trace) via the command palette or settings. Logs are persisted across sessions and take effect immediately.
+
 - **Agent HUD**: View connection status, model settings, server information, reliability settings, and sessions.
 - **Reconnect**: Use the HUD button or the `OpenClaw: Reconnect` command when the gateway connection is lost.
 - **Multi-agent chat**: Switch between agents. Each agent has its own chat tab and session pool.
@@ -20,7 +22,7 @@ AI chat sidebar for the OpenClaw gateway and VS Code node. The extension connect
 - **Command approval**: Approve local commands once, always for a working directory, or deny them.
 - **Device identity**: Authenticate with an Ed25519 device identity compatible with OpenClaw pairing.
 - **Subagent activity**: Show active subagent labels and waiting-for-subagent status in chat.
-- **Progress note panel**: View and manage subagent progress notes in a resizable side panel with copy-as-Markdown support.
+- **Progress note panel**: View and manage subagent progress notes in a resizable side panel with copy-as-Markdown support. Steps are rendered as readable text with status indicators.
 - **Internationalization**: Localize extension UI strings through the VS Code localization system.
 
 ## Installation
@@ -85,6 +87,7 @@ Right-click a folder in Explorer and select **Switch working directory to this f
 | `OpenClaw: Settings` | Open extension settings. |
 | `OpenClaw: Reset Device Identity` | Generate a new device identity and re-pair. |
 | `OpenClaw: Set Input Text` | Set the chat input text programmatically. |
+| `OpenClaw: Set Log Level` | Open the log level picker to change output verbosity. |
 | `Switch working directory to this folder` | Set the selected folder as the working directory. |
 | `Analyze this project` | Analyze the selected folder. |
 
@@ -100,6 +103,7 @@ Open VS Code Settings and search for `openclaw`.
 | `openclaw.token` | Empty | Gateway authentication token. |
 | `openclaw.sessionKey` | `OpenClaw VSCode` | Session key used by the extension. |
 | `openclaw.agentId` | `OpenClaw VSCode` | Default agent ID or node display name. |
+| `openclaw.logLevel` | `Info` | Log output level: None, Error, Warn, Info, Debug, or Trace. |
 
 ### Supervisor settings
 
