@@ -2017,6 +2017,13 @@ body {
 }
 #progress-note-panel-content::-webkit-scrollbar { width: 4px; }
 #progress-note-panel-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.progress-resize-handle { width: 4px; cursor: ew-resize; background: transparent; flex-shrink: 0; }
+.progress-resize-handle:hover { background: var(--accent); opacity: 0.5; }
+.progress-resize-handle.dragging { background: var(--accent); opacity: 0.7; }
+#progress-note-panel.collapsed + .progress-resize-handle { display: none; }
+/* 右侧 overlay 样式 */
+#progress-note-panel.right-overlay { position: absolute; right: 0; top: 0; bottom: 0; z-index: 1000; }
+#progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
 
 /* Panel Tab 栏 */
 .panel-tabs {
@@ -2598,6 +2605,7 @@ body {
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
   <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
   </div> <!-- /messages-container -->
+    <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs">
         <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('进度备注')}</div>
@@ -2885,6 +2893,10 @@ body {
 
   
   const progressNotePanel = document.getElementById('progress-note-panel');
+  const progressResizeHandle = document.getElementById('progressResizeHandle');
+  let isPanelResizing = false;
+  let panelStartX = 0;
+  let panelStartWidth = 0;
   const progressNoteToggle = document.getElementById('progress-note-panel-toggle');
   const messagesContainer = document.getElementById('messages-container');
 
@@ -2895,6 +2907,10 @@ body {
       progressNotePanel.classList.add('collapsed');
     }
   }
+  const savedPanelWidth = localStorage.getItem('openclaw.progressNotePanelWidth');
+  if (savedPanelWidth && progressNotePanel) {
+    progressNotePanel.style.width = savedPanelWidth + 'px';
+  }
 
   if (progressNoteToggle) {
     progressNoteToggle.addEventListener('click', () => {
@@ -2902,8 +2918,23 @@ body {
       const isCollapsed = progressNotePanel.classList.toggle('collapsed');
       progressNoteToggle.textContent = isCollapsed ? '◀' : '▶';
       localStorage.setItem('openclaw.progressNoteCollapsed', isCollapsed.toString());
+      updatePanelPosition();
     });
   }
+
+  // 检测是否在最右侧（容器右边距 < 50px 视为右边界）
+  function updatePanelPosition() {
+    if (!progressNotePanel) return;
+    const rect = progressNotePanel.getBoundingClientRect();
+    const containerRect = document.querySelector('.chat-container')?.getBoundingClientRect();
+    if (containerRect && (containerRect.right - rect.right) < 50) {
+      progressNotePanel.classList.add('right-overlay');
+    } else {
+      progressNotePanel.classList.remove('right-overlay');
+    }
+  }
+  // 在 panel 展开/折叠、窗口 resize 时调用
+  window.addEventListener('resize', updatePanelPosition);
 
   // Tab 切换
   document.querySelectorAll('.panel-tab').forEach(tab => {
@@ -2943,6 +2974,41 @@ if (resizeHandle) {
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         localStorage.setItem('openclaw.inputAreaHeight', inputArea.offsetHeight.toString());
+      }
+    });
+  }
+
+  // 面板拖拽调整宽度
+  if (progressResizeHandle && progressNotePanel) {
+    progressResizeHandle.addEventListener('mousedown', (e) => {
+      isPanelResizing = true;
+      panelStartX = e.clientX;
+      panelStartWidth = progressNotePanel.offsetWidth;
+      progressResizeHandle.classList.add('dragging');
+      progressNotePanel.classList.add('resizing');
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isPanelResizing) return;
+      const delta = panelStartX - e.clientX;
+      let newWidth = panelStartWidth + delta;
+      const minWidth = 180;
+      const maxWidth = window.innerWidth * 0.6;
+      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      progressNotePanel.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isPanelResizing) {
+        isPanelResizing = false;
+        progressResizeHandle.classList.remove('dragging');
+        progressNotePanel.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('openclaw.progressNotePanelWidth', progressNotePanel.offsetWidth.toString());
       }
     });
   }
