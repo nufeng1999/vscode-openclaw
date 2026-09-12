@@ -798,13 +798,43 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.postToWebview({ type: "streamStart", runId });
 
     try {
-      const res = await this.gateway.request("chat.send", {
-        sessionKey: this.gwSessionKey(),
-        message: text,
-        deliver: false,
-        idempotencyKey: runId,
-        ...(attachments.length > 0 ? { attachments } : {})
-      }) as any;
+      let res: any;
+      try {
+        res = await this.gateway.request("chat.send", {
+          sessionKey: this.gwSessionKey(),
+          message: text,
+          deliver: false,
+          idempotencyKey: runId,
+          ...(attachments.length > 0 ? { attachments } : {})
+        });
+      } catch (sendErr: any) {
+        const errMsg = sendErr?.message || "";
+        if (errMsg.includes("ended during restart recovery")) {
+          this.log(`Session ended, sending /new to create replacement...`);
+          try {
+            await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: "/new",
+              deliver: false,
+              idempotencyKey: this.genId()
+            });
+            await new Promise(r => setTimeout(r, 1000));
+            this.log(`Retrying send after /new...`);
+            res = await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: text,
+              deliver: false,
+              idempotencyKey: runId,
+              ...(attachments.length > 0 ? { attachments } : {})
+            });
+          } catch (retryErr: any) {
+            this.log(`Retry after /new failed: ${retryErr?.message}`);
+            throw sendErr;
+          }
+        } else {
+          throw sendErr;
+        }
+      }
       this.setBusy(true);
       // If gateway didn't start a stream (e.g. /stop returns aborted:false, runIds:[]),
       // clear the "Thinking" state and show the gateway's reply as assistant message
@@ -844,14 +874,35 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     const runId = this.genId();
     this.postToWebview({ type: "streamStart", runId });
     try {
-      await this.gateway.request("chat.send", {
-        sessionKey: this.gwSessionKey(),
-        message: "Continue",
-        deliver: false,
-        idempotencyKey: runId
-      }) as any;
+      try {
+        await this.gateway.request("chat.send", {
+          sessionKey: this.gwSessionKey(),
+          message: "Continue",
+          deliver: false,
+          idempotencyKey: runId
+        });
+      } catch (sendErr: any) {
+        const errMsg = sendErr?.message || "";
+        if (errMsg.includes("ended during restart recovery")) {
+          this.log(`Continue: session ended, sending /new...`);
+          await this.gateway.request("chat.send", {
+            sessionKey: this.gwSessionKey(),
+            message: "/new",
+            deliver: false,
+            idempotencyKey: this.genId()
+          });
+          await new Promise(r => setTimeout(r, 1000));
+          await this.gateway.request("chat.send", {
+            sessionKey: this.gwSessionKey(),
+            message: "Continue",
+            deliver: false,
+            idempotencyKey: runId
+          });
+        } else {
+          throw sendErr;
+        }
+      }
     } catch {
-      // If sending fails, don't add anything to history
       this.postToWebview({ type: "streamDone", runId });
       this.setBusy(false);
     }

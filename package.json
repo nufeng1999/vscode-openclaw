@@ -174,7 +174,14 @@
 				"openclaw.logLevel": {
 					"type": "string",
 					"default": "Info",
-					"enum": ["None", "Error", "Warn", "Info", "Debug", "Trace"],
+					"enum": [
+						"None",
+						"Error",
+						"Warn",
+						"Info",
+						"Debug",
+						"Trace"
+					],
 					"description": "Log output level for the OpenClaw extension"
 				}
 			}
@@ -186,9 +193,9 @@
 	},
 	"devDependencies": {
 		"@types/node": "^20.11.0",
-		"@types/ws": "^8.5.10",
 		"@types/vscode": "^1.80.0",
-		"esbuild": "^0.20.0",
+		"@types/ws": "^8.5.10",
+		"esbuild": "^0.20.2",
 		"typescript": "^5.3.0"
 	},
 	"dependencies": {
