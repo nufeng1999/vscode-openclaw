@@ -1962,26 +1962,6 @@ body {
   min-height: 0;
 }
 
-/* Vertical drag bar between messages and progress panel */
-#progress-note-resize-handle {
-  width: 6px;
-  background: var(--border);
-  cursor: ew-resize;
-  user-select: none;
-  touch-action: none;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#progress-note-resize-handle::before {
-  content: '';
-  width: 1px;
-  height: 40%;
-  background: var(--text-muted);
-  opacity: 0.4;
-}
-
 /* Right progress note panel */
 #progress-note-panel {
   width: 280px;
@@ -2037,6 +2017,46 @@ body {
 }
 #progress-note-panel-content::-webkit-scrollbar { width: 4px; }
 #progress-note-panel-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Panel Tab 栏 */
+.panel-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 0 6px;
+}
+.panel-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.panel-tab:hover { color: var(--text); }
+.panel-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Panel Tab 内容区 */
+.panel-tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.tab-pane {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.tab-pane.active { display: flex; }
 
 .context-bar { height: 3px; background: rgba(128, 128, 128, 0.1); flex-shrink: 0; }
 .context-fill { height: 100%; background: var(--accent); transition: width 0.3s; width: 0%; }
@@ -2578,18 +2598,32 @@ body {
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
   <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
   </div> <!-- /messages-container -->
-    <div id="progress-note-resize-handle" title="${vscode.l10n.t('Drag to resize')}"></div>
     <div id="progress-note-panel">
-    <div id="progress-note-panel-header">
-      <span id="progress-note-panel-title">${vscode.l10n.t('Progress Note')}</span>
-      <button id="progressCopyAllBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy all content')}">📋</button>
-      <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy as Markdown')}">📝</button>
-      <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}">◀▶</button>
+      <div class="panel-tabs">
+        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('进度备注')}</div>
+        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('任务')}</div>
+        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('会话')}</div>
+      </div>
+      <div class="panel-tab-content">
+        <div id="tab-notes" class="tab-pane active">
+          <div id="progress-note-panel-header">
+            <span id="progress-note-panel-title">${vscode.l10n.t('Progress Note')}</span>
+            <button id="progressCopyAllBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy all content')}">📋</button>
+            <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy as Markdown')}">📝</button>
+            <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}">◀▶</button>
+          </div>
+          <div id="progress-note-panel-content">
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
+          </div>
+        </div>
+        <div id="tab-tasks" class="tab-pane">
+          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无任务数据')}</div>
+        </div>
+        <div id="tab-sessions" class="tab-pane">
+          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无会话数据')}</div>
+        </div>
+      </div>
     </div>
-    <div id="progress-note-panel-content">
-      <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
-    </div>
-  </div>
   </div> <!-- /top-row -->
   <div id="input-area" class="input-area">
     <div class="input-meta">
@@ -2850,24 +2884,14 @@ body {
   }
 
   
-  // ── Progress Note Panel - Vertical Resize + Toggle ──
-  // ── Progress Note Panel End ──
-  const progressNoteHandle = document.getElementById('progress-note-resize-handle');
   const progressNotePanel = document.getElementById('progress-note-panel');
   const progressNoteToggle = document.getElementById('progress-note-panel-toggle');
   const messagesContainer = document.getElementById('messages-container');
-  let isProgressResizing = false;
-  let progressStartX = 0;
-  let progressStartWidth = 0;
 
   // Load saved panel state
-  const savedPanelWidth = localStorage.getItem('openclaw.progressNoteWidth');
   const savedPanelCollapsed = localStorage.getItem('openclaw.progressNoteCollapsed');
   if (progressNotePanel) {
-    if (savedPanelWidth && savedPanelCollapsed !== 'true') {
-      progressNotePanel.style.width = savedPanelWidth + 'px';
-      progressNotePanel.classList.remove('collapsed');
-    } else if (savedPanelCollapsed === 'true') {
+    if (savedPanelCollapsed === 'true') {
       progressNotePanel.classList.add('collapsed');
     }
   }
@@ -2877,49 +2901,19 @@ body {
       if (!progressNotePanel) return;
       const isCollapsed = progressNotePanel.classList.toggle('collapsed');
       progressNoteToggle.textContent = isCollapsed ? '◀' : '▶';
-      if (!isCollapsed && savedPanelWidth) {
-        progressNotePanel.style.width = savedPanelWidth + 'px';
-      }
       localStorage.setItem('openclaw.progressNoteCollapsed', isCollapsed.toString());
     });
   }
 
-  if (progressNoteHandle) {
-    progressNoteHandle.addEventListener('mousedown', (e) => {
-      isProgressResizing = true;
-      progressStartX = e.clientX;
-      progressStartWidth = progressNotePanel ? progressNotePanel.offsetWidth : 280;
-      document.body.style.cursor = 'ew-resize';
-      document.body.style.userSelect = 'none';
-      e.preventDefault();
+  // Tab 切换
+  document.querySelectorAll('.panel-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
     });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!isProgressResizing) return;
-      const delta = progressStartX - e.clientX;
-      let newWidth = progressStartWidth + delta;
-      const minWidth = 200;
-      const maxWidth = 450;
-      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
-      if (progressNotePanel) {
-        progressNotePanel.style.width = newWidth + 'px';
-        progressNotePanel.classList.remove('collapsed');
-        if (progressNoteToggle) progressNoteToggle.textContent = '▶';
-      }
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (isProgressResizing) {
-        isProgressResizing = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        if (progressNotePanel) {
-          localStorage.setItem('openclaw.progressNoteWidth', progressNotePanel.offsetWidth.toString());
-          localStorage.setItem('openclaw.progressNoteCollapsed', progressNotePanel.classList.contains('collapsed').toString());
-        }
-      }
-    });
-  }
+  });
 if (resizeHandle) {
     resizeHandle.addEventListener('mousedown', (e) => {
       isResizing = true;
