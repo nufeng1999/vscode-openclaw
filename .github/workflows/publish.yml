@@ -36,7 +36,23 @@ jobs:
 
       - name: Publish to VS Code Marketplace
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npx --yes @vscode/vsce publish
+        run: |
+          set -euo pipefail
+          attempt=1
+          max_attempts=3
+          while true; do
+            if npx --yes @vscode/vsce publish; then
+              echo "✅ Publish succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "❌ All $max_attempts attempts failed"
+              exit 1
+            fi
+            echo "⚠️ Attempt $attempt failed, waiting 10s before retry..."
+            sleep 10
+            ((attempt++))
+          done
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
