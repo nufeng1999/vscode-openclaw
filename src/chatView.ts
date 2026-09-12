@@ -2020,7 +2020,7 @@ body {
 .progress-resize-handle { width: 4px; cursor: ew-resize; background: transparent; flex-shrink: 0; }
 .progress-resize-handle:hover { background: var(--accent); opacity: 0.5; }
 .progress-resize-handle.dragging { background: var(--accent); opacity: 0.7; }
-#progress-note-panel.collapsed + .progress-resize-handle { display: none; }
+#progress-note-panel.collapsed + .progress-resize-handle { width: 4px; cursor: ew-resize; background: var(--accent); opacity: 0.3; }
 /* 右侧 overlay 样式 */
 #progress-note-panel.right-overlay { position: absolute; right: 0; top: 0; bottom: 0; z-index: 1000; }
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
@@ -2611,6 +2611,7 @@ body {
         <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('进度备注')}</div>
         <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('任务')}</div>
         <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('会话')}</div>
+        <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">◀▶</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
@@ -2618,7 +2619,6 @@ body {
             <span id="progress-note-panel-title">${vscode.l10n.t('Progress Note')}</span>
             <button id="progressCopyAllBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy all content')}">📋</button>
             <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy as Markdown')}">📝</button>
-            <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}">◀▶</button>
           </div>
           <div id="progress-note-panel-content">
             <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
@@ -2981,6 +2981,14 @@ if (resizeHandle) {
   // 面板拖拽调整宽度
   if (progressResizeHandle && progressNotePanel) {
     progressResizeHandle.addEventListener('mousedown', (e) => {
+      // 如果面板是折叠状态，先展开面板
+      if (progressNotePanel.classList.contains('collapsed')) {
+        progressNotePanel.classList.remove('collapsed');
+        progressNoteToggle.textContent = '▶';
+        localStorage.setItem('openclaw.progressNoteCollapsed', 'false');
+        updatePanelPosition();
+      }
+      
       isPanelResizing = true;
       panelStartX = e.clientX;
       panelStartWidth = progressNotePanel.offsetWidth;
@@ -2988,6 +2996,17 @@ if (resizeHandle) {
       progressNotePanel.classList.add('resizing');
       document.body.style.cursor = 'ew-resize';
       document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    // 双击展开面板
+    progressResizeHandle.addEventListener('dblclick', (e) => {
+      if (progressNotePanel.classList.contains('collapsed')) {
+        progressNotePanel.classList.remove('collapsed');
+        progressNoteToggle.textContent = '▶';
+        localStorage.setItem('openclaw.progressNoteCollapsed', 'false');
+        updatePanelPosition();
+      }
       e.preventDefault();
     });
 
