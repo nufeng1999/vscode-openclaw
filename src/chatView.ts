@@ -106,6 +106,16 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.gateway.on('task.updated', () => {
       this.handleRequestTasks();
     });
+    // 监听会话状态变化，自动刷新会话列表
+    this.gateway.on('session.updated', () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on('session.created', () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on('session.deleted', () => {
+      this.handleRequestSessions();
+    });
   }
 
   public show() {
@@ -669,13 +679,37 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await this.handleDeleteSession(msg.sessionKey);
           break;
         case "addChatTabFromSession": {
-          // 点击会话列表：直接打开该 agent 的默认聊天界面（不创建新 tab）
-          // sessionKey 格式: agent:main:xxx → agentId = main
           const sessionKey = msg.sessionKey || '';
-          let agentId = 'main';
-          const m = sessionKey.match(/^agent:([^:]+):/);
-          if (m) agentId = m[1];
-          this.postToWebview({ type: 'activateAgentChat', agentId });
+          // subagent 会话（sessionKey 含 :subagent:）：创建新 tab 显示该会话历史
+          if (sessionKey.includes(':subagent:')) {
+            const deviceName = msg.deviceName || sessionKey;
+            // 截断设备名称用于 tab 标题
+            const parts = deviceName.split(':');
+            let tabLabel = parts[0].trim();
+            if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
+            // 从 sessionKey 解析 agentId
+            let tabAgentId = 'main';
+            const match = sessionKey.match(/^agent:([^:]+):/);
+            if (match) tabAgentId = match[1];
+            const newTab = {
+              id: 'tab-' + sessionKey + '-' + Date.now(),
+              label: tabLabel,
+              agentId: tabAgentId,
+              sessionKey: sessionKey,
+              messages: []
+            };
+            // 通知 webview 创建 tab（webview 侧会做去重）
+            this.postToWebview({ type: 'addChatTab', tab: newTab });
+            // 加载该 subagent 会话历史
+            this.currentSessionKey = this.resolveSession(sessionKey);
+            await this.handleLoadMessages(this.currentSessionKey);
+          } else {
+            // 普通会话：直接打开该 agent 的默认聊天界面（不创建新 tab）
+            let agentId = 'main';
+            const m = sessionKey.match(/^agent:([^:]+):/);
+            if (m) agentId = m[1];
+            this.postToWebview({ type: 'activateAgentChat', agentId });
+          }
           break;
         }
         case "switchAgent":
