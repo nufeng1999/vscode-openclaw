@@ -4514,46 +4514,20 @@ if (resizeHandle) {
       blocked: { color: '#ff5722', text: t('阻塞') },
       lost: { color: '#9e9e9e', text: t('丢失') }
     };
-    function truncate(str, maxLen) {
-      if (!str) return '';
-      return str.length > maxLen ? str.substring(0, maxLen) + '…' : str;
-    }
-    function relTime(ts) {
-      if (!ts) return '';
-      const diff = Date.now() - ts;
-      if (diff < 0) return '';
-      const m = Math.floor(diff / 60000);
-      if (m < 1) return '刚刚';
-      if (m < 60) return m + '分钟前';
-      const h = Math.floor(m / 60);
-      if (h < 24) return h + '小时前';
-      return Math.floor(h / 24) + '天前';
-    }
     let html = '';
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
       const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('未知') };
-      // 优先级：label > task（截断50字符）> sourceId
-      const displayName = task.label || truncate(task.task, 50) || task.sourceId || task.taskId;
-      const timeText = relTime(task.endedAt || task.createdAt);
       html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
-      // 第一行：名称 + 相对时间
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
-      html += '<span style="font-weight:500;">' + displayName + '</span>';
-      html += '<span style="color:var(--text-muted);font-size:11px;">' + timeText + '</span>';
+      html += '<span style="font-weight:500;">' + (task.label || task.id) + '</span>';
+      html += '<span style="color:' + statusInfo.color + ';font-size:11px;">● ' + statusInfo.text + '</span>';
       html += '</div>';
-      // 第二行：● 状态 + runtime标签 + 智能体（同一行）
-      const runtimeLabel = { cli: 'CLI', subagent: '子智能体', cron: '定时任务', acp: 'ACP' }[task.runtime] || task.runtime || '';
-      let metaLine = '<span style="color:' + statusInfo.color + ';font-size:11px;">● ' + statusInfo.text + '</span>';
-      if (runtimeLabel) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + runtimeLabel + '</span>';
-      if (task.agentId) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + t('智能体') + ': ' + task.agentId + '</span>';
-      html += '<div style="display:flex;align-items:center;margin-bottom:2px;">' + metaLine + '</div>';
-      // 第三行：摘要 = terminalSummary || progressSummary
-      const summaryText = task.terminalSummary || task.progressSummary || '';
-      if (summaryText) {
-        html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(summaryText, 120) + '</div>';
-      } else if (task.task && task.task !== task.label && task.task.length > 20) {
-        html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(task.task, 100) + '</div>';
+      if (task.agentId) {
+        html += '<div style="color:var(--text-muted);font-size:11px;">' + t('子智能体') + ': ' + task.agentId + '</div>';
+      }
+      if (task.preview) {
+        html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + task.preview.substring(0, 100) + (task.preview.length > 100 ? '…' : '') + '</div>';
       }
       html += '</div>';
     }
