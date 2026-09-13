@@ -655,26 +655,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "deleteSession":
           await this.handleDeleteSession(msg.sessionKey);
           break;
-        case "addChatTabFromSession": {
-          const sessionKey = msg.sessionKey;
-          const deviceName = msg.deviceName || sessionKey;
-          // 截断设备名称用于 tab 标题
-          const parts = deviceName.split(':');
-          let tabLabel = parts[0].trim();
-          if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
-          const newTab = {
-            id: 'tab-' + sessionKey + '-' + Date.now(),
-            label: tabLabel,
-            agentId: 'main',
-            sessionKey: sessionKey,
-            messages: []
-          };
-          // 通知 webview 创建 tab（webview 侧会做去重）
-          this.postToWebview({ type: 'addChatTab', tab: newTab });
-          this.currentSessionKey = sessionKey;
-          await this.handleLoadMessages(sessionKey);
-          break;
-        }
         case "switchAgent":
           await this.handleSwitchAgent(msg.agentId);
           break;
@@ -3426,19 +3406,6 @@ if (resizeHandle) {
           tab.messages = activeTabMessages;
         }
         for (const m of (msg.messages || [])) appendMessage(m);
-        break;
-      case 'addChatTab':
-        if (msg.tab) {
-          // 去重：同一 sessionKey 已有 tab 则直接切换
-          const existing = tabs.find(t => t.sessionKey === msg.tab.sessionKey);
-          if (existing) {
-            switchToTab(existing.id);
-          } else {
-            tabs.push(msg.tab);
-            switchToTab(msg.tab.id);
-            renderTabs();
-          }
-        }
         break;
       case 'clearMessages':
         clearMessages();
