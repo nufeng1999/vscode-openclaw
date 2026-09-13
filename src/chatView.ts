@@ -4521,7 +4521,7 @@ if (resizeHandle) {
     // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
-      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务' };
       return dict[str] || str;
     };
     if (!tasks || tasks.length === 0) {
@@ -4529,14 +4529,14 @@ if (resizeHandle) {
       return;
     }
     const statusMap = {
-      running: { color: '#4caf50', text: t('运行中') },
-      queued: { color: '#ff9800', text: t('排队中') },
-      succeeded: { color: '#2196f3', text: t('已完成') },
-      failed: { color: '#f44336', text: t('失败') },
-      cancelled: { color: '#9e9e9e', text: t('已取消') },
-      timed_out: { color: '#9e9e9e', text: t('超时') },
-      blocked: { color: '#ff5722', text: t('阻塞') },
-      lost: { color: '#9e9e9e', text: t('丢失') }
+      running: { color: '#4caf50', text: t('Running') },
+      queued: { color: '#ff9800', text: t('Queued') },
+      succeeded: { color: '#2196f3', text: t('Succeeded') },
+      failed: { color: '#f44336', text: t('Failed') },
+      cancelled: { color: '#9e9e9e', text: t('Cancelled') },
+      timed_out: { color: '#9e9e9e', text: t('Timed out') },
+      blocked: { color: '#ff5722', text: t('Blocked') },
+      lost: { color: '#9e9e9e', text: t('Lost') }
     };
     function truncate(str, maxLen) {
       if (!str) return '';
@@ -4547,16 +4547,16 @@ if (resizeHandle) {
       const diff = Date.now() - ts;
       if (diff < 0) return '';
       const m = Math.floor(diff / 60000);
-      if (m < 1) return '刚刚';
-      if (m < 60) return m + '分钟前';
+      if (m < 1) return t('Just now');
+      if (m < 60) return t('{0}m ago', m);
       const h = Math.floor(m / 60);
-      if (h < 24) return h + '小时前';
-      return Math.floor(h / 24) + '天前';
+      if (h < 24) return t('{0}h ago', h);
+      return t('{0}d ago', Math.floor(h / 24));
     }
     let html = '';
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
-      const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('未知') };
+      const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('Unknown') };
       // 优先级：label > task（截断50字符）> sourceId
       const displayName = task.label || truncate(task.task, 50) || task.sourceId || task.taskId;
       const timeText = relTime(task.endedAt || task.createdAt);
@@ -4567,10 +4567,10 @@ if (resizeHandle) {
       html += '<span style="color:var(--text-muted);font-size:11px;">' + timeText + '</span>';
       html += '</div>';
       // 第二行：● 状态 + runtime标签 + 智能体（同一行）
-      const runtimeLabel = { cli: 'CLI', subagent: '子智能体', cron: '定时任务', acp: 'ACP' }[task.runtime] || task.runtime || '';
+      const runtimeLabel = { cli: 'CLI', subagent: t('Subagent'), cron: t('Cron job'), acp: 'ACP' }[task.runtime] || task.runtime || '';
       let metaLine = '<span style="color:' + statusInfo.color + ';font-size:11px;">● ' + statusInfo.text + '</span>';
       if (runtimeLabel) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + runtimeLabel + '</span>';
-      if (task.agentId) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + t('智能体') + ': ' + task.agentId + '</span>';
+      if (task.agentId) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + t('Agent') + ': ' + task.agentId + '</span>';
       html += '<div style="display:flex;align-items:center;margin-bottom:2px;">' + metaLine + '</div>';
       // 第三行：摘要 = terminalSummary || progressSummary
       const summaryText = task.terminalSummary || task.progressSummary || '';

@@ -81,5 +81,20 @@
   "Sessions": "Sessions",
   "Progress Notes": "Progress Notes",
   "In progress": "In progress",
-  "Steps": "Steps"
+  "Steps": "Steps",
+  "Running": "Running",
+  "Queued": "Queued",
+  "Succeeded": "Succeeded",
+  "Failed": "Failed",
+  "Cancelled": "Cancelled",
+  "Timed out": "Timed out",
+  "Blocked": "Blocked",
+  "Lost": "Lost",
+  "Unknown": "Unknown",
+  "Just now": "Just now",
+  "{0}m ago": "{0}m ago",
+  "{0}h ago": "{0}h ago",
+  "{0}d ago": "{0}d ago",
+  "Subagent": "Subagent",
+  "Cron job": "Cron job"
 }
