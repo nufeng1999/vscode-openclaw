@@ -1,6 +1,6 @@
 {
-  "Device identities cleared. Reconnecting...": "设备身份已清除，正在重新连接...",
-  "Analyze the code structure, file organization and tech stack of the project at {0}": "分析位于 {0} 的项目的代码结构、文件组织和技术栈",
+  "Device identities cleared. Reconnecting...": "Device identities cleared. Reconnecting...",
+  "Analyze the code structure, file organization and tech stack of the project at {0}": "Analyze the code structure, file organization and tech stack of the project at {0}",
   "Copied to clipboard": "已复制到剪贴板",
   "Failed to copy image, please check output log": "复制图片失败，请查看输出日志",
   "Copy image failed: {0}": "复制图片失败: {0}",
@@ -68,9 +68,18 @@
   "Subagent active: {0}": "子代理活跃: {0}",
   "Waiting for subagent…": "等待子代理…",
   "Reconnect": "重连",
-  "Progress Note": "进度备注",
+  "Progress Note": "Progress Note",
   "Progress notes will appear here": "进度备注将显示在此处",
   "Toggle progress note panel": "切换进度备注面板",
   "Copy all content": "复制所有内容",
-  "Copy as Markdown": "复制为 Markdown 格式"
+  "Copy as Markdown": "复制为 Markdown 格式",
+  "Select log level (current: {0})": "Select log level (current: {0})",
+  "OpenClaw: Set Log Level": "OpenClaw: Set Log Level",
+  "Log level changed to: {0}": "Log level changed to: {0}",
+  "No tasks": "无任务",
+  "Tasks": "任务",
+  "Sessions": "会话",
+  "Progress Notes": "进度备注",
+  "In progress": "进行中",
+  "Steps": "步骤"
 }

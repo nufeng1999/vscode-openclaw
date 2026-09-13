@@ -75,5 +75,11 @@
   "Copy as Markdown": "Copy as Markdown",
   "Select log level (current: {0})": "Select log level (current: {0})",
   "OpenClaw: Set Log Level": "OpenClaw: Set Log Level",
-  "Log level changed to: {0}": "Log level changed to: {0}"
+  "Log level changed to: {0}": "Log level changed to: {0}",
+  "No tasks": "No tasks",
+  "Tasks": "Tasks",
+  "Sessions": "Sessions",
+  "Progress Notes": "Progress Notes",
+  "In progress": "In progress",
+  "Steps": "Steps"
 }

@@ -3917,8 +3917,13 @@ if (resizeHandle) {
   function renderProgressCard(msg) {
     const data = msg.data;
     const noteContent = document.getElementById('progress-note-panel-content');
-    // vs10n: webview l10n helper
-    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
+    // vs10n: webview l10n helper with Chinese fallback
+    const t = (str, ...args) => {
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      // webview fallback dictionary (zh-CN)
+      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      return dict[str] || str;
+    };
 
     // ── 清除分支：data 为 null/undefined 时清空 Notes 面板 ──
     if (!data) {
@@ -4507,7 +4512,11 @@ if (resizeHandle) {
     const container = document.getElementById('tasksListContent');
     if (!container) return;
     // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
-    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
+    const t = (str, ...args) => {
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      return dict[str] || str;
+    };
     if (!tasks || tasks.length === 0) {
       container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('No tasks') + '</div>';
       return;
@@ -4569,7 +4578,11 @@ if (resizeHandle) {
   }
 
   function renderSessions() {
-    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
+    const t = (str, ...args) => {
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      return dict[str] || str;
+    };
     // Build a single shared HTML list so both panels stay in sync
     const buildList = (activeKey) => {
       let html = '';
