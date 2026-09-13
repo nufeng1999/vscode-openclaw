@@ -634,8 +634,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await this.handleRequestTasks();
           break;
         case "switchSession":
-          this.currentSessionKey = msg.sessionKey;
-          await this.handleLoadMessages(msg.sessionKey);
+          // 移除可能的 agent 前缀
+          const ssLocalKey = msg.sessionKey && msg.sessionKey.startsWith(this.agentPrefix)
+            ? msg.sessionKey.substring(this.agentPrefix.length)
+            : msg.sessionKey;
+          this.currentSessionKey = ssLocalKey;
+          await this.handleLoadMessages(ssLocalKey);
           break;
         case "switchTab":
           if (msg.agentId) {
@@ -648,8 +652,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               if (byName) this.activeAgent = byName;
             }
           }
-          this.currentSessionKey = msg.sessionKey || "main";
-          await this.handleLoadMessages(this.currentSessionKey);
+          // 移除可能的 agent 前缀
+          const localSessionKey = (msg.sessionKey || "main").startsWith(this.agentPrefix)
+            ? (msg.sessionKey || "main").substring(this.agentPrefix.length)
+            : (msg.sessionKey || "main");
+          this.currentSessionKey = localSessionKey;
+          await this.handleLoadMessages(localSessionKey);
           this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
           break;
         case "deleteSession":
@@ -672,7 +680,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           // 通知 webview 创建 tab（webview 侧会做去重）
           this.postToWebview({ type: 'addChatTab', tab: newTab });
           this.currentSessionKey = sessionKey;
-          await this.handleLoadMessages(sessionKey);
+          // 移除可能的 agent 前缀，因为 handleLoadMessages 期望不带前缀的 key
+          const localSessionKey = sessionKey.startsWith(this.agentPrefix) ? sessionKey.substring(this.agentPrefix.length) : sessionKey;
+          await this.handleLoadMessages(localSessionKey);
           break;
         }
         case "switchAgent":
