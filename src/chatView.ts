@@ -1173,17 +1173,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   private async handleRequestSessions() {
     try {
+      // 获取未归档会话（活跃会话）
       const res = await this.gateway.request("sessions.list", {
-        activeOnly: true,
-        archived: "all",
+        archived: false,
         includeGlobal: true,
         includeUnknown: true,
         includeDerivedTitles: true,
         limit: 100
       });
       this.sessions = res?.sessions || [];
+      this.log(`sessions.list: ${this.sessions.length} 条`);
       this.postToWebview({ type: "sessionsList", sessions: this.sessions });
-    } catch {
+    } catch (err: any) {
+      this.log(`sessions.list error: ${err.message}`);
       this.postToWebview({ type: "sessionsList", sessions: [] });
     }
   }
@@ -1222,12 +1224,16 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   private async handleRequestTasks() {
     try {
+      // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
       const res = await this.gateway.request("tasks.list", {
-        status: ["queued", "running"],
         limit: 500
       });
-      const tasks = res?.tasks || [];
-      this.postToWebview({ type: "tasksList", tasks });
+      // 后端过滤：只保留 queued 和 running 状态的任务
+      const allTasks = res?.tasks || [];
+      
+      const activeTasks = allTasks.filter((t: any) => t.status === "queued" || t.status === "running");
+      this.log(`tasks.list: ${activeTasks.length} 条 (总 ${allTasks.length} 条)`);
+      this.postToWebview({ type: "tasksList", tasks: activeTasks });
     } catch (err: any) {
       this.log(`tasks.list error: ${err.message}`);
       this.postToWebview({ type: "tasksList", tasks: [] });
@@ -2656,7 +2662,9 @@ body {
           </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
-          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无会话数据')}</div>
+          <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无会话数据')}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -4496,18 +4504,30 @@ if (resizeHandle) {
       container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('暂无任务数据') + '</div>';
       return;
     }
+    const statusMap = {
+      running: { color: '#4caf50', text: t('运行中') },
+      queued: { color: '#ff9800', text: t('排队中') },
+      succeeded: { color: '#2196f3', text: t('已完成') },
+      failed: { color: '#f44336', text: t('失败') },
+      cancelled: { color: '#9e9e9e', text: t('已取消') },
+      timed_out: { color: '#9e9e9e', text: t('超时') },
+      blocked: { color: '#ff5722', text: t('阻塞') },
+      lost: { color: '#9e9e9e', text: t('丢失') }
+    };
     let html = '';
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
-      const statusColor = task.status === 'running' ? '#4caf50' : '#ff9800';
-      const statusText = task.status === 'running' ? t('运行中') : t('排队中');
+      const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('未知') };
       html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
       html += '<span style="font-weight:500;">' + (task.label || task.id) + '</span>';
-      html += '<span style="color:' + statusColor + ';font-size:11px;">● ' + statusText + '</span>';
+      html += '<span style="color:' + statusInfo.color + ';font-size:11px;">● ' + statusInfo.text + '</span>';
       html += '</div>';
       if (task.agentId) {
-        html += '<div style="color:var(--text-muted);font-size:11px;">' + t('Agent') + ': ' + task.agentId + '</div>';
+        html += '<div style="color:var(--text-muted);font-size:11px;">' + t('子智能体') + ': ' + task.agentId + '</div>';
+      }
+      if (task.preview) {
+        html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + task.preview.substring(0, 100) + (task.preview.length > 100 ? '…' : '') + '</div>';
       }
       html += '</div>';
     }
@@ -4515,49 +4535,60 @@ if (resizeHandle) {
   }
 
   function renderSessions() {
-    sessionsList.innerHTML = '';
-    // vs10n: same l10n guard as renderTasks — webview acquireVsCodeApi() lacks l10n.
     const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
+    // Build a single shared HTML list so both panels stay in sync
+    const buildList = (activeKey) => {
+      let html = '';
+      for (const session of sessions) {
+        const cls = 'device-item' + (session.key === activeKey ? ' active' : '');
+        const dotCls = 'device-dot' + (session.key === activeKey ? ' active' : '');
+        html += '<div class="' + cls + '" data-key="' + session.key + '">';
+        html += '<div class="' + dotCls + '"></div>';
+        html += '<div class="device-info"><div class="device-name">' + (session.displayName || session.key) + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + '</div></div>';
+        if (session.totalTokens) html += '<div class="device-tokens">' + formatTokens(session.totalTokens) + '</div>';
+        html += '<button class="device-delete">×</button>';
+        html += '</div>';
+      }
+      return html;
+    };
+    // Update HUD panel (sessionsList)
+    sessionsList.innerHTML = '';
     if (sessions.length === 0) {
       sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">' + t('No sessions') + '</div>';
-      return;
+    } else {
+      sessionsList.innerHTML = buildList(currentSession);
+      // Attach click handlers after DOM insertion
+      sessionsList.querySelectorAll('.device-item[data-key]').forEach(el => {
+        el.addEventListener('click', () => {
+          currentSession = el.getAttribute('data-key');
+          vscode.postMessage({ type: 'switchSession', sessionKey: currentSession });
+          renderSessions();
+        });
+        el.querySelector('.device-delete')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+        });
+      });
     }
-    for (const session of sessions) {
-      const item = document.createElement('div');
-      item.className = 'device-item' + (session.key === currentSession ? ' active' : '');
-      const dot = document.createElement('div');
-      dot.className = 'device-dot' + (session.key === currentSession ? ' active' : '');
-      const info = document.createElement('div');
-      info.className = 'device-info';
-      const name = document.createElement('div');
-      name.className = 'device-name';
-      name.textContent = session.displayName || session.key;
-      const meta = document.createElement('div');
-      meta.className = 'device-meta';
-      const statusText = session.status ? '[' + session.status + '] ' : '';
-      meta.textContent = statusText + (session.agentId || session.key);
-      info.appendChild(name);
-      info.appendChild(meta);
-      const tokens = document.createElement('div');
-      tokens.className = 'device-tokens';
-      if (session.totalTokens) tokens.textContent = formatTokens(session.totalTokens);
-      const del = document.createElement('button');
-      del.className = 'device-delete';
-      del.textContent = '×';
-      del.addEventListener('click', (e) => {
-        e.stopPropagation();
-        vscode.postMessage({ type: 'deleteSession', sessionKey: session.key });
-      });
-      item.appendChild(dot);
-      item.appendChild(info);
-      item.appendChild(tokens);
-      item.appendChild(del);
-      item.addEventListener('click', () => {
-        currentSession = session.key;
-        vscode.postMessage({ type: 'switchSession', sessionKey: session.key });
-        renderSessions();
-      });
-      sessionsList.appendChild(item);
+    // Also update the progress-note-panel tab-sessions content
+    const tabSessionsEl = document.getElementById('tabSessionsContent');
+    if (tabSessionsEl) {
+      if (sessions.length === 0) {
+        tabSessionsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('暂无会话数据') + '</div>';
+      } else {
+        tabSessionsEl.innerHTML = buildList(currentSession);
+        tabSessionsEl.querySelectorAll('.device-item[data-key]').forEach(el => {
+          el.addEventListener('click', () => {
+            currentSession = el.getAttribute('data-key');
+            vscode.postMessage({ type: 'switchSession', sessionKey: currentSession });
+            renderSessions();
+          });
+          el.querySelector('.device-delete')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+          });
+        });
+      }
     }
   }
 
