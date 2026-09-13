@@ -634,28 +634,33 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await this.handleRequestTasks();
           break;
         case "switchSession":
-          // 移除可能的 agent 前缀
-          const ssLocalKey = msg.sessionKey && msg.sessionKey.startsWith(this.agentPrefix)
-            ? msg.sessionKey.substring(this.agentPrefix.length)
-            : msg.sessionKey;
+          const ssLocalKey = this.resolveSession(msg.sessionKey);
           this.currentSessionKey = ssLocalKey;
           await this.handleLoadMessages(ssLocalKey);
           break;
         case "switchTab":
-          if (msg.agentId) {
+          // 从 sessionKey 解析 agentId（格式: agent:<agentId>:<localKey>）
+          if (msg.sessionKey) {
+            const match = msg.sessionKey.match(/^agent:([^:]+):/);
+            if (match) {
+              const agentId = match[1];
+              const ag = this.agents.find(a => a.id === agentId);
+              if (ag) {
+                this.activeAgent = ag;
+              }
+            }
+          }
+          // 也兼容显式传入的 agentId
+          if (msg.agentId && (!this.activeAgent || this.activeAgent.id !== msg.agentId)) {
             const ag = this.agents.find(a => a.id === msg.agentId);
             if (ag) {
               this.activeAgent = ag;
             } else {
-              // 如果 agents 未加载，尝试通过 name 反查（兼容配置的 agentId 为 display name 的情况）
               const byName = this.agents.find(a => (a.name || "") === msg.agentId);
               if (byName) this.activeAgent = byName;
             }
           }
-          // 移除可能的 agent 前缀
-          const localSessionKey = (msg.sessionKey || "main").startsWith(this.agentPrefix)
-            ? (msg.sessionKey || "main").substring(this.agentPrefix.length)
-            : (msg.sessionKey || "main");
+          const localSessionKey = this.resolveSession(msg.sessionKey || "main");
           this.currentSessionKey = localSessionKey;
           await this.handleLoadMessages(localSessionKey);
           this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
@@ -670,18 +675,26 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           const parts = deviceName.split(':');
           let tabLabel = parts[0].trim();
           if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
+          // 从 sessionKey 解析 agentId
+          let tabAgentId = 'main';
+          const match = sessionKey.match(/^agent:([^:]+):/);
+          if (match) tabAgentId = match[1];
           const newTab = {
             id: 'tab-' + sessionKey + '-' + Date.now(),
             label: tabLabel,
-            agentId: 'main',
+            agentId: tabAgentId,
             sessionKey: sessionKey,
             messages: []
           };
           // 通知 webview 创建 tab（webview 侧会做去重）
           this.postToWebview({ type: 'addChatTab', tab: newTab });
-          this.currentSessionKey = sessionKey;
-          // 移除可能的 agent 前缀，因为 handleLoadMessages 期望不带前缀的 key
-          const localSessionKey = sessionKey.startsWith(this.agentPrefix) ? sessionKey.substring(this.agentPrefix.length) : sessionKey;
+          // 切换到对应 agent
+          if (tabAgentId !== 'main') {
+            const ag = this.agents.find(a => a.id === tabAgentId);
+            if (ag) this.activeAgent = ag;
+          }
+          const localSessionKey = this.resolveSession(sessionKey);
+          this.currentSessionKey = localSessionKey;
           await this.handleLoadMessages(localSessionKey);
           break;
         }
