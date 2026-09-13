@@ -669,33 +669,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await this.handleDeleteSession(msg.sessionKey);
           break;
         case "addChatTabFromSession": {
-          const sessionKey = msg.sessionKey;
-          const deviceName = msg.deviceName || sessionKey;
-          // 截断设备名称用于 tab 标题
-          const parts = deviceName.split(':');
-          let tabLabel = parts[0].trim();
-          if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
-          // 从 sessionKey 解析 agentId
-          let tabAgentId = 'main';
-          const match = sessionKey.match(/^agent:([^:]+):/);
-          if (match) tabAgentId = match[1];
-          const newTab = {
-            id: 'tab-' + sessionKey + '-' + Date.now(),
-            label: tabLabel,
-            agentId: tabAgentId,
-            sessionKey: sessionKey,
-            messages: []
-          };
-          // 通知 webview 创建 tab（webview 侧会做去重）
-          this.postToWebview({ type: 'addChatTab', tab: newTab });
-          // 切换到对应 agent
-          if (tabAgentId !== 'main') {
-            const ag = this.agents.find(a => a.id === tabAgentId);
-            if (ag) this.activeAgent = ag;
-          }
-          const localSessionKey = this.resolveSession(sessionKey);
-          this.currentSessionKey = localSessionKey;
-          await this.handleLoadMessages(localSessionKey);
+          // 点击会话列表：直接打开该 agent 的默认聊天界面（不创建新 tab）
+          // sessionKey 格式: agent:main:xxx → agentId = main
+          const sessionKey = msg.sessionKey || '';
+          let agentId = 'main';
+          const m = sessionKey.match(/^agent:([^:]+):/);
+          if (m) agentId = m[1];
+          this.postToWebview({ type: 'activateAgentChat', agentId });
           break;
         }
         case "switchAgent":
@@ -3449,6 +3429,24 @@ if (resizeHandle) {
           tab.messages = activeTabMessages;
         }
         for (const m of (msg.messages || [])) appendMessage(m);
+        break;
+      case 'activateAgentChat':
+        // 切换到该 agent 的默认聊天界面（复用 agent 按钮切换逻辑）
+        if (msg.agentId) {
+          let tab = tabs.find(t => t.agentId === msg.agentId);
+          if (!tab) {
+            const ag = agents.find(a => a.id === msg.agentId);
+            tab = {
+              id: 'tab-' + msg.agentId + '-' + Date.now(),
+              label: (ag && (ag.name || ag.id)) || msg.agentId,
+              agentId: msg.agentId,
+              sessionKey: 'main',
+              messages: []
+            };
+            tabs.push(tab);
+          }
+          switchToTab(tab.id);
+        }
         break;
       case 'addChatTab':
         if (msg.tab) {
