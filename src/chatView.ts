@@ -1173,7 +1173,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   private async handleRequestSessions() {
     try {
-      const res = await this.gateway.request("sessions.list", {});
+      const res = await this.gateway.request("sessions.list", {
+        activeOnly: true,
+        archived: "all",
+        includeGlobal: true,
+        includeUnknown: true,
+        includeDerivedTitles: true,
+        limit: 100
+      });
       this.sessions = res?.sessions || [];
       this.postToWebview({ type: "sessionsList", sessions: this.sessions });
     } catch {
@@ -1818,7 +1825,7 @@ body {
 
 .device-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid rgba(128, 128, 128, 0.08); }
 .device-item:last-child { border-bottom: none; }
-.device-item:hover { background: rgba(128, 128, 128, 0.06); }
+.device-item:hover { background: rgba(128, 128, 128, 0.06); transform: scale(1.01); }
 .device-item.active { background: rgba(128, 128, 128, 0.1); }
 .device-dot { width: 8px; height: 8px; border-radius: 50%; background: #888; flex-shrink: 0; }
 .device-dot.active { background: var(--accent); }
@@ -4501,41 +4508,42 @@ if (resizeHandle) {
   function renderSessions() {
     sessionsList.innerHTML = '';
     if (sessions.length === 0) {
-      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">${vscode.l10n.t('No sessions')}</div>';
+      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">' + vscode.l10n.t('No sessions') + '</div>';
       return;
     }
-    for (const s of sessions) {
+    for (const session of sessions) {
       const item = document.createElement('div');
-      item.className = 'device-item' + (s.key === currentSession ? ' active' : '');
+      item.className = 'device-item' + (session.key === currentSession ? ' active' : '');
       const dot = document.createElement('div');
-      dot.className = 'device-dot' + (s.key === currentSession ? ' active' : '');
+      dot.className = 'device-dot' + (session.key === currentSession ? ' active' : '');
       const info = document.createElement('div');
       info.className = 'device-info';
       const name = document.createElement('div');
       name.className = 'device-name';
-      name.textContent = s.displayName || s.key;
+      name.textContent = session.displayName || session.key;
       const meta = document.createElement('div');
       meta.className = 'device-meta';
-      meta.textContent = s.agentId || s.key;
+      const statusText = session.status ? '[' + session.status + '] ' : '';
+      meta.textContent = statusText + (session.agentId || session.key);
       info.appendChild(name);
       info.appendChild(meta);
       const tokens = document.createElement('div');
       tokens.className = 'device-tokens';
-      if (s.totalTokens) tokens.textContent = formatTokens(s.totalTokens);
+      if (session.totalTokens) tokens.textContent = formatTokens(session.totalTokens);
       const del = document.createElement('button');
       del.className = 'device-delete';
       del.textContent = '×';
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        vscode.postMessage({ type: 'deleteSession', sessionKey: s.key });
+        vscode.postMessage({ type: 'deleteSession', sessionKey: session.key });
       });
       item.appendChild(dot);
       item.appendChild(info);
       item.appendChild(tokens);
       item.appendChild(del);
       item.addEventListener('click', () => {
-        currentSession = s.key;
-        vscode.postMessage({ type: 'switchSession', sessionKey: s.key });
+        currentSession = session.key;
+        vscode.postMessage({ type: 'switchSession', sessionKey: session.key });
         renderSessions();
       });
       sessionsList.appendChild(item);
