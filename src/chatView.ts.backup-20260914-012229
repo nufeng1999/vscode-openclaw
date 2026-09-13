@@ -655,26 +655,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "deleteSession":
           await this.handleDeleteSession(msg.sessionKey);
           break;
-        case "addChatTabFromSession": {
-          const sessionKey = msg.sessionKey;
-          const deviceName = msg.deviceName || sessionKey;
-          // 截断设备名称用于 tab 标题
-          const parts = deviceName.split(':');
-          let tabLabel = parts[0].trim();
-          if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
-          const newTab = {
-            id: 'tab-' + sessionKey + '-' + Date.now(),
-            label: tabLabel,
-            agentId: 'main',
-            sessionKey: sessionKey,
-            messages: []
-          };
-          // 通知 webview 创建 tab（webview 侧会做去重）
-          this.postToWebview({ type: 'addChatTab', tab: newTab });
-          this.currentSessionKey = sessionKey;
-          await this.handleLoadMessages(sessionKey);
-          break;
-        }
         case "switchAgent":
           await this.handleSwitchAgent(msg.agentId);
           break;
@@ -3427,19 +3407,6 @@ if (resizeHandle) {
         }
         for (const m of (msg.messages || [])) appendMessage(m);
         break;
-      case 'addChatTab':
-        if (msg.tab) {
-          // 去重：同一 sessionKey 已有 tab 则直接切换
-          const existing = tabs.find(t => t.sessionKey === msg.tab.sessionKey);
-          if (existing) {
-            switchToTab(existing.id);
-          } else {
-            tabs.push(msg.tab);
-            switchToTab(msg.tab.id);
-            renderTabs();
-          }
-        }
-        break;
       case 'clearMessages':
         clearMessages();
         activeTabMessages = [];
@@ -4621,7 +4588,7 @@ if (resizeHandle) {
   // 简化设备名称：从完整字符串中提取有意义的部分
   // 格式示例："hostname:macaddress:pid" → 取冒号分隔的第一段
   // 如果太短（< 5字符），直接返回原值
-  function simplifyDeviceName(name) {
+  function simplifyDeviceName(name: string): string {
     if (!name) return '';
     // 优先取冒号分隔的第一段（hostname 部分）
     const parts = name.split(':');
@@ -4645,7 +4612,7 @@ if (resizeHandle) {
         const cls = 'device-item' + (session.key === activeKey ? ' active' : '');
         const dotCls = 'device-dot' + (session.key === activeKey ? ' active' : '');
         // 提取 device-info.device-name 用于显示
-        const deviceName = session['device-info']?.['device-name'] || session.displayName || session.key;
+        const deviceName = (session as any)['device-info']?.['device-name'] || session.displayName || session.key;
         const simplifiedName = simplifyDeviceName(deviceName);
         html += '<div class="' + cls + '" data-key="' + session.key + '" data-device-name="' + deviceName + '">';
         html += '<div class="' + dotCls + '"></div>';
