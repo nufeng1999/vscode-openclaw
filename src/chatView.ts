@@ -2971,6 +2971,13 @@ body {
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      
+      // 刷新对应面板数据
+      if (tab.dataset.tab === 'tasks') {
+        vscode.postMessage({ type: 'requestTasks' });
+      } else if (tab.dataset.tab === 'sessions') {
+        vscode.postMessage({ type: 'requestSessions' });
+      }
     });
   });
 if (resizeHandle) {
@@ -4483,22 +4490,24 @@ if (resizeHandle) {
   function renderTasks(tasks) {
     const container = document.getElementById('tasksListContent');
     if (!container) return;
+    // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
+    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
     if (!tasks || tasks.length === 0) {
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + vscode.l10n.t('暂无任务数据') + '</div>';
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('暂无任务数据') + '</div>';
       return;
     }
     let html = '';
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
       const statusColor = task.status === 'running' ? '#4caf50' : '#ff9800';
-      const statusText = task.status === 'running' ? vscode.l10n.t('运行中') : vscode.l10n.t('排队中');
+      const statusText = task.status === 'running' ? t('运行中') : t('排队中');
       html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
       html += '<span style="font-weight:500;">' + (task.label || task.id) + '</span>';
       html += '<span style="color:' + statusColor + ';font-size:11px;">● ' + statusText + '</span>';
       html += '</div>';
       if (task.agentId) {
-        html += '<div style="color:var(--text-muted);font-size:11px;">' + vscode.l10n.t('Agent') + ': ' + task.agentId + '</div>';
+        html += '<div style="color:var(--text-muted);font-size:11px;">' + t('Agent') + ': ' + task.agentId + '</div>';
       }
       html += '</div>';
     }
@@ -4507,8 +4516,10 @@ if (resizeHandle) {
 
   function renderSessions() {
     sessionsList.innerHTML = '';
+    // vs10n: same l10n guard as renderTasks — webview acquireVsCodeApi() lacks l10n.
+    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
     if (sessions.length === 0) {
-      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">' + vscode.l10n.t('No sessions') + '</div>';
+      sessionsList.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">' + t('No sessions') + '</div>';
       return;
     }
     for (const session of sessions) {
