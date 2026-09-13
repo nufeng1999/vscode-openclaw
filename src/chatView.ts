@@ -152,6 +152,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.handleRequestAgents().catch(() => {});
       this.handleRequestTasks().catch(() => {});  // 新增：连接成功时触发任务拉取
       this.handleLoadMessages(this.currentSessionKey).catch(() => {});
+    } else {
+      // agent 断连/终止时，强制清除 busyIndicator 和 subagent 状态
+      this.busyCount = 0;
+      this.postToWebview({ type: "busyState", busy: false, label: "" });
+      this.activeSubagentCount = 0;
+      this.postToWebview({ type: "subagentState", active: false, label: "", state: "" });
+      this.updateYieldState();
     }
   }
 
