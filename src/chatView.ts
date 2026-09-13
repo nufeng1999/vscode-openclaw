@@ -142,6 +142,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.handleRequestModels().catch(() => {});
       this.handleRequestSessions().catch(() => {});
       this.handleRequestAgents().catch(() => {});
+      this.handleRequestTasks().catch(() => {});  // 新增：连接成功时触发任务拉取
       this.handleLoadMessages(this.currentSessionKey).catch(() => {});
     }
   }
@@ -570,6 +571,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             await this.handleRequestAgents();
             await this.handleRequestModels();
             await this.handleRequestSessions();
+            await this.handleRequestTasks();  // 新增：webviewReady 时触发任务拉取
             await this.handleLoadDefaults();
             await this.handleLoadMessages(this.currentSessionKey);
           }
@@ -612,6 +614,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           break;
         case "requestAgents":
           await this.handleRequestAgents();
+          break;
+        case "requestTasks":
+          await this.handleRequestTasks();
           break;
         case "switchSession":
           this.currentSessionKey = msg.sessionKey;
@@ -1205,6 +1210,20 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
     } catch {
       this.postToWebview({ type: "agentsList", agents: [] });
+    }
+  }
+
+  private async handleRequestTasks() {
+    try {
+      const res = await this.gateway.request("tasks.list", {
+        status: ["queued", "running"],
+        limit: 500
+      });
+      const tasks = res?.tasks || [];
+      this.postToWebview({ type: "tasksList", tasks });
+    } catch (err: any) {
+      this.log(`tasks.list error: ${err.message}`);
+      this.postToWebview({ type: "tasksList", tasks: [] });
     }
   }
 
@@ -2625,7 +2644,9 @@ body {
           </div>
         </div>
         <div id="tab-tasks" class="tab-pane">
-          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无任务数据')}</div>
+          <div id="tasksListContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无任务数据')}</div>
+          </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
           <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无会话数据')}</div>
@@ -3312,6 +3333,9 @@ if (resizeHandle) {
         }
         break;
       case 'modelsList': renderModels(msg.models); break;
+      case 'tasksList':
+        renderTasks(msg.tasks);
+        break;
       case 'sessionsList':
         sessions = msg.sessions || [];
         renderSessions();
@@ -4447,6 +4471,31 @@ if (resizeHandle) {
 
   function renderModels(models) {
     modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode.l10n.t('default')}';
+  }
+
+  function renderTasks(tasks) {
+    const container = document.getElementById('tasksListContent');
+    if (!container) return;
+    if (!tasks || tasks.length === 0) {
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + vscode.l10n.t('暂无任务数据') + '</div>';
+      return;
+    }
+    let html = '';
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const statusColor = task.status === 'running' ? '#4caf50' : '#ff9800';
+      const statusText = task.status === 'running' ? vscode.l10n.t('运行中') : vscode.l10n.t('排队中');
+      html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+      html += '<span style="font-weight:500;">' + (task.label || task.id) + '</span>';
+      html += '<span style="color:' + statusColor + ';font-size:11px;">● ' + statusText + '</span>';
+      html += '</div>';
+      if (task.agentId) {
+        html += '<div style="color:var(--text-muted);font-size:11px;">' + vscode.l10n.t('Agent') + ': ' + task.agentId + '</div>';
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
   }
 
   function renderSessions() {
