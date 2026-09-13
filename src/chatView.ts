@@ -4811,6 +4811,15 @@ if (resizeHandle) {
       const div = document.createElement('div');
       div.className = 'tab-item' + (t.id === activeTabId ? ' active' : '');
       div.dataset.tabId = t.id;
+      // 添加 tooltip 显示会话信息
+      let tooltipText = t.label;
+      if (t.sessionKey) {
+        const agentObj = agents.find(a => a.id === t.agentId);
+        const agentName = agentObj?.name || t.agentId;
+        const shortKey = t.sessionKey.length > 25 ? t.sessionKey.substring(0, 22) + '...' : t.sessionKey;
+        tooltipText = agentName + ' | ' + shortKey;
+      }
+      div.title = tooltipText;
       const label = document.createElement('span');
       label.textContent = t.label;
       div.appendChild(label);
