@@ -98,6 +98,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (configSessionKey) {
       this.currentSessionKey = configSessionKey;
     }
+
+    // 监听任务状态变化，自动刷新任务列表
+    this.gateway.on('task.ended', () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on('task.updated', () => {
+      this.handleRequestTasks();
+    });
   }
 
   public show() {
