@@ -11,3 +11,5 @@ outputs/
 backup/
 src/*.backup
 src/chatView.ts.bak_20260913151911
+src/chatView.ts.backup-20260913212636
+src/chatView.ts.backup-20260913212954

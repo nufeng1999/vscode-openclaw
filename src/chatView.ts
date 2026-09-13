@@ -2648,17 +2648,15 @@ body {
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('进度备注')}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('任务')}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('会话')}</div>
+        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('Progress Notes')}</div>
+        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('Tasks')}</div>
+        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('Sessions')}</div>
         <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">◀▶</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode.l10n.t('Progress Note')}</span>
-            <button id="progressCopyAllBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy all content')}">📋</button>
-            <button id="progressCopyMarkdownBtn" class="toolbar-btn" title="${vscode.l10n.t('Copy as Markdown')}">📝</button>
+            <span id="progress-note-panel-title">${vscode.l10n.t('Progress Notes')}</span>
           </div>
           <div id="progress-note-panel-content">
             <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
@@ -2666,12 +2664,12 @@ body {
         </div>
         <div id="tab-tasks" class="tab-pane">
           <div id="tasksListContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无任务数据')}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('No tasks')}</div>
           </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
           <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('暂无会话数据')}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('No sessions')}</div>
           </div>
         </div>
       </div>
@@ -3919,11 +3917,13 @@ if (resizeHandle) {
   function renderProgressCard(msg) {
     const data = msg.data;
     const noteContent = document.getElementById('progress-note-panel-content');
+    // vs10n: webview l10n helper
+    const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
 
     // ── 清除分支：data 为 null/undefined 时清空 Notes 面板 ──
     if (!data) {
         if (noteContent) {
-            noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>';
+            noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('Progress notes will appear here') + '</div>';
         }
         return;
     }
@@ -3944,7 +3944,7 @@ if (resizeHandle) {
       const stepList = (data.steps && data.steps.length > 0) ? data.steps : (data.plan && data.plan.length > 0 ? data.plan : null);
       if (stepList) {
         const stepsHTML = '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;">' +
-          '<div style="margin-bottom:4px;font-weight:600;">Steps:</div>' +
+          '<div style="margin-bottom:4px;font-weight:600;">' + t('Steps') + ':</div>' +
           stepList.map((s, i) => {
             const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
             const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
@@ -3986,15 +3986,15 @@ if (resizeHandle) {
     const steps = stepListFromData || data.steps || data.plan;
     const cardHTML = 
       '<div class="progress-card">' +
-      '  <div class="title">' + (title || 'Processing...') + '</div>' +
+      '  <div class="title">' + (title || t('Processing...')) + '</div>' +
       (description ? '  <div style="margin-bottom:8px;color:var(--text-muted);font-size:14px;">' + description + '</div>' : '') +
       '  <div class="progress-bar">' +
       '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
       '  </div>' +
       '  <div class="status">' +
-      '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
+      '    ' + (status || t('In progress')) + ' • ' + (progress || 0) + '%' +
       '  </div>' +
-      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">Steps: ' + steps.map((s, i) => {
+      (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">' + t('Steps') + ' ' + steps.map((s, i) => {
             const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
             const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
             const icon = stepStatus === 'completed' ? '\u2705' : stepStatus === 'in_progress' ? '\u23F3' : '\u2B1C';
@@ -4012,9 +4012,9 @@ if (resizeHandle) {
         '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
         '  </div>' +
         '  <div class="status" style="font-size:12px;">' +
-        '    ' + (status || 'In progress') + ' • ' + (progress || 0) + '%' +
+        '    ' + (status || t('In progress')) + ' • ' + (progress || 0) + '%' +
         '  </div>' +
-        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + steps.map((s, i) => {
+        (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + t('Steps') + ' ' + steps.map((s, i) => {
             const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
             const stepStatus = (typeof s === 'object' && s !== null) ? (s.status || '') : '';
             const icon = stepStatus === 'completed' ? '\u2705' : stepStatus === 'in_progress' ? '\u23F3' : '\u2B1C';
@@ -4509,7 +4509,7 @@ if (resizeHandle) {
     // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
     const t = (str, ...args) => (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') ? vscode.l10n.t(str, ...args) : str;
     if (!tasks || tasks.length === 0) {
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('暂无任务数据') + '</div>';
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('No tasks') + '</div>';
       return;
     }
     const statusMap = {
@@ -4608,7 +4608,7 @@ if (resizeHandle) {
     const tabSessionsEl = document.getElementById('tabSessionsContent');
     if (tabSessionsEl) {
       if (sessions.length === 0) {
-        tabSessionsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('暂无会话数据') + '</div>';
+        tabSessionsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('No sessions') + '</div>';
       } else {
         tabSessionsEl.innerHTML = buildList(currentSession);
         tabSessionsEl.querySelectorAll('.device-item[data-key]').forEach(el => {
