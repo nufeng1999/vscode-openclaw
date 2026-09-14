@@ -1106,12 +1106,16 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             // dirPrefix 是工作区根目录名：只搜索该工作区文件夹下的文件
             // 使用 RelativePattern 限制搜索范围到指定工作区
             const targetFolder = folders.find(f => f.name.toLowerCase() === dirPrefix.toLowerCase());
+            if (!targetFolder) {
+              // 如果找不到目标文件夹，返回空结果
+              return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
+            }
             const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
             const relativePattern = new vscode.RelativePattern(targetFolder, basePattern);
             const uris = await vscode.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
             
             // 直接处理结果并返回
-            return this.processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder);
+            return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
           } else if (fileKeyword) {
             // Search for files matching keyword under the specified directory
             pattern = `${dirPrefix}/**/*${fileKeyword}*`;
@@ -1125,7 +1129,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
       }
       const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
-      return this.processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder);
+      return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
     } catch {
       this.postToWebview({ type: "fileResults", requestId, files: [] });
     }
@@ -1366,7 +1370,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
       
       // Normalize path: uppercase drive letter for Windows (e.g. l:\ → L:\)
-      const normalizedPath = workspace.replace(/^[a-z]:/i, (match) => match.toUpperCase());
+      const normalizedPath = workspace.replace(/^[a-z]:/i, (match: string) => match.toUpperCase());
       const workspaceUri = vscode.Uri.file(normalizedPath);
       const folders = vscode.workspace.workspaceFolders;
       
