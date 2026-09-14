@@ -554,6 +554,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               }
             }
           }
+        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && block.content) {
+          // 处理音频/文件/媒体块：提取路径并转为 MEDIA: 标记
+          const mediaPath = typeof block.content === "string" ? block.content : (block.content.path || block.content.url || "");
+          if (mediaPath) {
+            text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
+          }
         }
       }
       return this.resolveMediaPaths(text);
@@ -2284,6 +2290,14 @@ body {
 .msg-assistant .msg-bubble img { max-width: 100%; border-radius: 4px; display: block; margin: 4px 0; }
 .msg-assistant .msg-bubble video { max-width: 100%; max-height: 400px; border-radius: 4px; display: block; margin: 4px 0; }
 .msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
+
+/* 语音消息样式 */
+.msg-audio-bubble { display: flex; flex-direction: column; gap: 8px; }
+.msg-audio { display: flex; align-items: center; gap: 10px; background: rgba(128,128,128,0.08); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 4px 0; }
+.msg-audio-play { font-size: 16px; color: var(--accent); cursor: pointer; flex-shrink: 0; width: 20px; text-align: center; }
+.msg-audio-play:hover { opacity: 0.7; }
+.msg-audio-player { flex: 1; height: 32px; }
+.msg-audio-player audio { width: 100%; height: 32px; }
 
 /* Mermaid diagram container */
 .msg-assistant .msg-bubble .mermaid-wrapper {
@@ -4162,6 +4176,40 @@ if (resizeHandle) {
       bubble.textContent = msg.text;
     }
     div.appendChild(bubble);
+    
+    // 处理助手消息中的音频附件（TTS 语音回复）
+    // 直接在 bubble 中查找 <audio> 元素（msg.text 已经过 resolveMediaPaths 转换，MEDIA: 已被替换为 <audio>）
+    if (msg.role === 'assistant') {
+      const audioElements = bubble.querySelectorAll('audio');
+      if (audioElements.length > 0) {
+        // 将带有音频的消息标记为语音消息样式
+        bubble.classList.add('msg-audio-bubble');
+        // 在所有 <audio> 元素外层包裹语音消息容器
+        for (let i = 0; i < audioElements.length; i++) {
+          const audio = audioElements[i];
+          const audioContainer = document.createElement('div');
+          audioContainer.className = 'msg-audio';
+          // 创建播放按钮图标
+          const playIcon = document.createElement('span');
+          playIcon.className = 'msg-audio-play';
+          playIcon.textContent = '\u25B6'; // ▶
+          audioContainer.appendChild(playIcon);
+          // 克隆 audio 元素并移入容器
+          const audioClone = audio.cloneNode(true);
+          audioClone.style.display = 'none';
+          audioContainer.appendChild(audioClone);
+          // 创建可显示的 audio 播放器
+          const audioDisplay = document.createElement('audio');
+          audioDisplay.src = audio.src;
+          audioDisplay.controls = true;
+          audioDisplay.className = 'msg-audio-player';
+          audioDisplay.preload = 'metadata';
+          audioContainer.appendChild(audioDisplay);
+          // 替换原 audio 元素
+          audio.parentNode.replaceChild(audioContainer, audio);
+        }
+      }
+    }
     
     // Render attachments (for user-sent images)
     if (msg.attachments && msg.attachments.length > 0) {
