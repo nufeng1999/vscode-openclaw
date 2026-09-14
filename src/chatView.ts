@@ -588,7 +588,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
-      enableResourceLoading: true,
       localResourceRoots: []
     };
 
@@ -750,7 +749,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               child_process.exec(
                 "powershell -NoProfile -STA -EncodedCommand " + encoded,
                 { timeout: 15000 },
-                (pErr, pStdout) => {
+                (pErr: any, pStdout: any) => {
                   try { fs.unlinkSync(tmpB64); } catch (e) { /* ignore */ }
                   if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
                     console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
@@ -1082,7 +1081,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         return;
       }
 
-      let pattern: string;
+      let pattern: string = '**/*';
       // 清理 query：去掉末尾的路径分隔符，用于过滤匹配
       const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
       
@@ -1139,7 +1138,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     // 读取当前浏览目录的直接子目录和文件（用于目录导航）
     if (cleanQuery) {
       let browseUri: vscode.Uri | undefined;
-      let displayPrefix: string;
+      let displayPrefix: string = '';
       if (folders.length === 1) {
         const folder = folders[0];
         if (isRootFolder) {
@@ -4194,10 +4193,6 @@ if (resizeHandle) {
           playIcon.className = 'msg-audio-play';
           playIcon.textContent = '\u25B6'; // ▶
           audioContainer.appendChild(playIcon);
-          // 克隆 audio 元素并移入容器
-          const audioClone = audio.cloneNode(true);
-          audioClone.style.display = 'none';
-          audioContainer.appendChild(audioClone);
           // 创建可显示的 audio 播放器
           const audioDisplay = document.createElement('audio');
           audioDisplay.src = audio.src;
@@ -4205,6 +4200,18 @@ if (resizeHandle) {
           audioDisplay.className = 'msg-audio-player';
           audioDisplay.preload = 'metadata';
           audioContainer.appendChild(audioDisplay);
+          
+          // 添加点击事件处理
+          playIcon.onclick = () => {
+            if (audioDisplay.paused) {
+              audioDisplay.play();
+              playIcon.textContent = '\u23F8'; // ⏸ 暂停图标
+            } else {
+              audioDisplay.pause();
+              playIcon.textContent = '\u25B6'; // ▶ 播放图标
+            }
+          };
+          
           // 替换原 audio 元素
           audio.parentNode.replaceChild(audioContainer, audio);
         }
