@@ -4321,6 +4321,7 @@ if (resizeHandle) {
           const playIcon = document.createElement('span');
           playIcon.className = 'msg-audio-play';
           playIcon.textContent = '\u25B6'; // ▶
+          console.log('[Audio] playIcon created, initial state: ▶');
           audioContainer.appendChild(playIcon);
           // 创建可显示的 audio 播放器
           const audioDisplay = document.createElement('audio');
@@ -4355,7 +4356,7 @@ if (resizeHandle) {
           };
           
           // 添加点击事件处理
-          playIcon.onclick = () => {
+          playIcon.addEventListener('click', () => {
             if (audioDisplay.paused) {
               audioDisplay.play().catch(err => {
                 console.error('[Audio] Play failed:', err);
@@ -4370,7 +4371,8 @@ if (resizeHandle) {
           };
           
           // 替换原 audio 元素
-          audio.parentNode.replaceChild(audioContainer, audio);
+          audio.parentNode.insertBefore(audioContainer, audio);
+          audio.parentNode.removeChild(audio);
         }
       }
     }
