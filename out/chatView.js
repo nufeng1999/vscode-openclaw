@@ -1,1918 +1,1677 @@
-import * as vscode from "vscode";
-import { OpenClawGateway } from "./gateway";
-import { log as viewLog, LOG_INFO } from "./logLevel";
-import type { OutputChannel } from "vscode";
-import * as fs from "fs";
-import * as path from "path";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  text: string;
-  timestamp: number;
-  contentBlocks?: any[];
-}
-
-interface Session {
-  key: string;
-  displayName?: string;
-  agentId?: string;
-  totalTokens?: number;
-  contextTokens?: number;
-  lastActive?: number;
-  status?: string;
-}
-
-interface Agent {
-  id: string;
-  name: string;
-  emoji?: string;
-}
-
-export class OpenClawChatView implements vscode.WebviewViewProvider {
-  public static readonly viewType = "openclaw.chatView";
-  private view?: vscode.WebviewView;
-  private context: vscode.ExtensionContext;
-  private gateway: OpenClawGateway;
-  private log: (msg: string) => void;
-  private messages: ChatMessage[] = [];
-  private sessions: Session[] = [];
-  private agents: Agent[] = [];
-  private activeAgent: Agent = { id: "main", name: "Agent", emoji: "🤖" };
-  private currentModel = "";
-  private currentSessionKey = "main";
-  private thinkingLevel = "";
-  private verboseLevel = "";
-  private gatewayUrl = "";
-  private messageHistory: string[] = [];
-  private autoContinueCount = 0;
-  private supervisionEnabled = false;
-  private supervisionTimer: NodeJS.Timeout | null = null;
-  private lastSupervisedContent: string = "";
-  private supervisorBusy: boolean = false;
-  private supervisorPendingSessionKey: string | null = null;
-  private supervisorResponseResolver: ((text: string | null) => void) | null = null;
-  private supervisorTimeout: NodeJS.Timeout | null = null;
-  private supervisorAccumulated: string = "";
-  private busyCount = 0;
-  private serverVersion: string = '';
-  // Subagent activity tracking (Requirement A)
-  private lastSubagentEventMs = 0;
-  private activeSubagentCount = 0;
-  private subagentTimer: NodeJS.Timeout | null = null;
-  private static readonly SUBAGENT_ACTIVITY_TIMEOUT_MS = 60_000;
-  // sessions_yield tracking (Requirement B): set when busy + active subagent
-  private yieldState = false;
-  private yieldTimer: NodeJS.Timeout | null = null;
-  private static readonly AUTO_CONTINUE_MAX = 3;
-  private static readonly ERROR_PATTERNS = [
-    "The agent run failed before producing a reply", // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
-    "Agent run ended before producing a complete result", // ✅ formatAbandonedLivenessError 产出
-    "Agent run blocked before producing a usable result", // ✅ formatBlockedLivenessError 产出
-    "Agent failed before reply", // ✅ AGENT_FAILED_BEFORE_REPLY_TEXT
-    "Agent run failed", // ✅ 通用后备文本
-    "ACP turn failed before completion" // ✅ ACP 轮次失败
-  ];
-
-  get agentPrefix(): string {
-    return `agent:${this.activeAgent.id}:`;
-  }
-
-  private gwSessionKey(localKey?: string): string {
-    return this.agentPrefix + (localKey || this.currentSessionKey);
-  }
-
-  constructor(context: vscode.ExtensionContext, gateway: OpenClawGateway, channel?: OutputChannel) {
-    this.context = context;
-    this.gateway = gateway;
-    const ch = channel;
-    this.log = (msg: string) => viewLog(msg, LOG_INFO, ch);
-    this.messageHistory = context.globalState.get<string[]>("openclaw.messageHistory", []);
-    const config = vscode.workspace.getConfiguration("openclaw");
-    this.gatewayUrl = config.get<string>("gatewayUrl", "ws://127.0.0.1:18789");
-    // Read agentId and sessionKey from configuration
-    const configAgentId = config.get<string>("agentId", "");
-    const configSessionKey = config.get<string>("sessionKey", "");
-    if (configAgentId) {
-      this.activeAgent = { id: configAgentId, name: configAgentId, emoji: "🤖" };
+"use strict";
+(() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+    get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+  }) : x)(function(x) {
+    if (typeof require !== "undefined")
+      return require.apply(this, arguments);
+    throw Error('Dynamic require of "' + x + '" is not supported');
+  });
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
     }
-    if (configSessionKey) {
-      this.currentSessionKey = configSessionKey;
+    return to;
+  };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
+
+  // src/chatView.ts
+  var vscode = __toESM(__require("vscode"));
+
+  // src/logLevel.ts
+  var LOG_NONE = 0;
+  var LOG_ERROR = 1;
+  var LOG_WARN = 2;
+  var LOG_INFO = 3;
+  var LOG_DEBUG = 4;
+  var LOG_TRACE = 5;
+  var LOG_LEVEL_NAMES = {
+    [LOG_NONE]: "None",
+    [LOG_ERROR]: "Error",
+    [LOG_WARN]: "Warn",
+    [LOG_INFO]: "Info",
+    [LOG_DEBUG]: "Debug",
+    [LOG_TRACE]: "Trace"
+  };
+  var _logLevel = LOG_INFO;
+  function log(message, level = LOG_INFO, channel) {
+    if (channel && _logLevel >= level) {
+      channel.appendLine(message);
     }
-
-    // 监听任务状态变化，自动刷新任务列表
-    this.gateway.on('task.ended', () => {
-      this.handleRequestTasks();
-    });
-    this.gateway.on('task.updated', () => {
-      this.handleRequestTasks();
-    });
-    // 监听会话状态变化，自动刷新会话列表
-    this.gateway.on('session.updated', () => {
-      this.handleRequestSessions();
-    });
-    this.gateway.on('session.created', () => {
-      this.handleRequestSessions();
-    });
-    this.gateway.on('session.deleted', () => {
-      this.handleRequestSessions();
-    });
   }
 
-  public show() {
-    this.view?.webview.postMessage({ type: "show" });
-  }
-
-  public setInputText(text: string) {
-    this.postToWebview({ type: "setInputText", text });
-  }
-
-  public newChat() {
-    this.messages = [];
-    this.currentSessionKey = "main";
-    this.postToWebview({ type: "clearMessages" });
-  }
-
-  public updateConnectionStatus(connected: boolean, serverVersion?: string) {
-    // 缓存版本号，供 webviewReady 时携带（防止后到的 init 覆盖版本号）
-    this.serverVersion = serverVersion || this.serverVersion;
-    // 发送完整的 init 消息，确保 webview 拿到权威状态
-    this.postToWebview({
-      type: "init",
-      sessionKey: this.currentSessionKey,
-      model: this.currentModel,
-      connected,
-      agent: this.activeAgent,
-      gatewayUrl: this.gatewayUrl,
-      thinkingLevel: this.thinkingLevel,
-      verboseLevel: this.verboseLevel,
-      messageHistory: this.messageHistory,
-      supervisionEnabled: this.supervisionEnabled,
-      version: this.serverVersion
-    });
-    // 同时发送 connectionStatus（保持向后兼容）
-    this.postToWebview({
-      type: "connectionStatus",
-      connected,
-      agent: this.activeAgent
-    });
-    // 如果连上了，主动拉取最新数据
-    if (connected) {
-      this.handleRequestModels().catch(() => {});
-      this.handleRequestSessions().catch(() => {});
-      this.handleRequestAgents().catch(() => {});
-      this.handleRequestTasks().catch(() => {});  // 新增：连接成功时触发任务拉取
-      this.handleLoadMessages(this.currentSessionKey).catch(() => {});
-    } else {
-      // agent 断连/终止时，强制清除 busyIndicator 和 subagent 状态
+  // src/chatView.ts
+  var fs = __toESM(__require("fs"));
+  var path = __toESM(__require("path"));
+  var _OpenClawChatView = class _OpenClawChatView {
+    constructor(context, gateway, channel) {
+      this.messages = [];
+      this.sessions = [];
+      this.agents = [];
+      this.activeAgent = { id: "main", name: "Agent", emoji: "\u{1F916}" };
+      this.currentModel = "";
+      this.currentSessionKey = "main";
+      this.thinkingLevel = "";
+      this.verboseLevel = "";
+      this.gatewayUrl = "";
+      this.messageHistory = [];
+      this.autoContinueCount = 0;
+      this.supervisionEnabled = false;
+      this.supervisionTimer = null;
+      this.lastSupervisedContent = "";
+      this.supervisorBusy = false;
+      this.supervisorPendingSessionKey = null;
+      this.supervisorResponseResolver = null;
+      this.supervisorTimeout = null;
+      this.supervisorAccumulated = "";
       this.busyCount = 0;
-      this.postToWebview({ type: "busyState", busy: false, label: "" });
+      this.serverVersion = "";
+      // Subagent activity tracking (Requirement A)
+      this.lastSubagentEventMs = 0;
       this.activeSubagentCount = 0;
-      this.postToWebview({ type: "subagentState", active: false, label: "", state: "" });
-      this.updateYieldState();
-    }
-  }
-
-  /**
-   * Public method to send text to the chat view
-   * @param text The text to send
-   */
-  public async sendText(text: string) {
-    await this.handleSendMessage(text);
-  }
-
-  /**
-   * 处理进度卡片更新
-   * @param card 进度卡片对象，null 表示清除
-   */
-  public handleProgressCardUpdate(card: any) {
-    if (!this.view) return;
-    if (card) {
-      // 发送给 webview 渲染
-      this.postToWebview({
-        type: 'progressCard',
-        data: {
-          title: card.title,
-          description: card.description,
-          progress: card.progress,
-          status: card.status,
-          steps: card.steps || card.plan,  // 优先使用 card.steps，回退到 card.plan
-          plan: card.plan,
-          markdown: card.markdown,
-          revision: card.revision
-        }
-      });
-    } else {
-      // 清除进度卡片
-      this.postToWebview({ type: 'progressCard', data: null });
-    }
-  }
-
-  // Match Obsidian plugin's handleChatEvent
-  public async handleChatEvent(payload: any) {
-    const sessionKey = this.resolveSession(payload?.sessionKey);
-    const rawSessionKey = payload?.sessionKey || "";
-    const state = typeof payload?.state === "string" ? payload.state : "";
-    
-    // Intercept supervisor agent responses
-    if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
-      if (state === "delta") {
-        const text = await this.extractDeltaText(payload?.message);
-        if (text) {
-          this.supervisorAccumulated += text;
-          this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
-        }
-      } else if (state === "final") {
-        const finalText = await this.extractDeltaText(payload?.message);
-        const fullReply = finalText || this.supervisorAccumulated;
-        
-        this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
-        
-        // Clean up
-        if (this.supervisorTimeout) {
-          clearTimeout(this.supervisorTimeout);
-          this.supervisorTimeout = null;
-        }
-        this.supervisorPendingSessionKey = null;
-        const resolver = this.supervisorResponseResolver;
-        this.supervisorResponseResolver = null;
-        this.supervisorAccumulated = "";
-        
-        if (resolver) {
-          resolver(fullReply);
-        }
-        // Don't forward supervisor events to webview
-        return;
-      } else if (state === "error") {
-        if (this.supervisorTimeout) {
-          clearTimeout(this.supervisorTimeout);
-          this.supervisorTimeout = null;
-        }
-        this.supervisorPendingSessionKey = null;
-        const resolver = this.supervisorResponseResolver;
-        this.supervisorResponseResolver = null;
-        this.supervisorAccumulated = "";
-        if (resolver) {
-          resolver(null);
-        }
-        return;
+      this.subagentTimer = null;
+      // sessions_yield tracking (Requirement B): set when busy + active subagent
+      this.yieldState = false;
+      this.yieldTimer = null;
+      this.context = context;
+      this.gateway = gateway;
+      const ch = channel;
+      this.log = (msg) => log(msg, LOG_INFO, ch);
+      this.messageHistory = context.globalState.get("openclaw.messageHistory", []);
+      const config = vscode.workspace.getConfiguration("openclaw");
+      this.gatewayUrl = config.get("gatewayUrl", "ws://127.0.0.1:18789");
+      const configAgentId = config.get("agentId", "");
+      const configSessionKey = config.get("sessionKey", "");
+      if (configAgentId) {
+        this.activeAgent = { id: configAgentId, name: configAgentId, emoji: "\u{1F916}" };
       }
+      if (configSessionKey) {
+        this.currentSessionKey = configSessionKey;
+      }
+      this.gateway.on("task.ended", () => {
+        this.handleRequestTasks();
+      });
+      this.gateway.on("task.updated", () => {
+        this.handleRequestTasks();
+      });
+      this.gateway.on("session.updated", () => {
+        this.handleRequestSessions();
+      });
+      this.gateway.on("session.created", () => {
+        this.handleRequestSessions();
+      });
+      this.gateway.on("session.deleted", () => {
+        this.handleRequestSessions();
+      });
     }
-
-    // ── Requirement A: detect subagent activity ──
-    // sessionKey patterns like agent:<parentAgentId>:subagent:<uuid>
-    if (rawSessionKey && rawSessionKey.includes('subagent')) {
-      // Only track subagent events belonging to the current agent (as parent)
-      const m = rawSessionKey.match(/^agent:([^:]+):/);
-      if (m && m[1] === this.activeAgent.id) {
-        this.lastSubagentEventMs = Date.now();
-        this.activeSubagentCount++;
-        this.startSubagentTimer();
-        // Extract a short label from the sessionKey tail
-        const tail = rawSessionKey.split(':').pop() || 'subagent';
-        const shortLabel = tail.length > 12 ? tail.substring(0, 8) + '…' : tail;
-        this.postToWebview({
-          type: 'subagentState',
-          active: true,
-          label: vscode.l10n.t('Subagent active: {0}', shortLabel),
-          state
+    get agentPrefix() {
+      return `agent:${this.activeAgent.id}:`;
+    }
+    gwSessionKey(localKey) {
+      return this.agentPrefix + (localKey || this.currentSessionKey);
+    }
+    show() {
+      this.view?.webview.postMessage({ type: "show" });
+    }
+    setInputText(text) {
+      this.postToWebview({ type: "setInputText", text });
+    }
+    newChat() {
+      this.messages = [];
+      this.currentSessionKey = "main";
+      this.postToWebview({ type: "clearMessages" });
+    }
+    updateConnectionStatus(connected, serverVersion) {
+      this.serverVersion = serverVersion || this.serverVersion;
+      this.postToWebview({
+        type: "init",
+        sessionKey: this.currentSessionKey,
+        model: this.currentModel,
+        connected,
+        agent: this.activeAgent,
+        gatewayUrl: this.gatewayUrl,
+        thinkingLevel: this.thinkingLevel,
+        verboseLevel: this.verboseLevel,
+        messageHistory: this.messageHistory,
+        supervisionEnabled: this.supervisionEnabled,
+        version: this.serverVersion
+      });
+      this.postToWebview({
+        type: "connectionStatus",
+        connected,
+        agent: this.activeAgent
+      });
+      if (connected) {
+        this.handleRequestModels().catch(() => {
         });
+        this.handleRequestSessions().catch(() => {
+        });
+        this.handleRequestAgents().catch(() => {
+        });
+        this.handleRequestTasks().catch(() => {
+        });
+        this.handleLoadMessages(this.currentSessionKey).catch(() => {
+        });
+      } else {
+        this.busyCount = 0;
+        this.postToWebview({ type: "busyState", busy: false, label: "" });
+        this.activeSubagentCount = 0;
+        this.postToWebview({ type: "subagentState", active: false, label: "", state: "" });
         this.updateYieldState();
       }
-      // Subagent events are never forwarded to the main chat view
-      return;
     }
-
-    // Only forward events for the current active agent
-    if (rawSessionKey) {
-      const m = rawSessionKey.match(/^agent:([^:]+):/);
-      if (m && m[1] !== this.activeAgent.id) {
-        this.log(`chatEvent discarded: agent=${m[1]} != current=${this.activeAgent.id}`);
+    /**
+     * Public method to send text to the chat view
+     * @param text The text to send
+     */
+    async sendText(text) {
+      await this.handleSendMessage(text);
+    }
+    /**
+     * 处理进度卡片更新
+     * @param card 进度卡片对象，null 表示清除
+     */
+    handleProgressCardUpdate(card) {
+      if (!this.view)
+        return;
+      if (card) {
+        this.postToWebview({
+          type: "progressCard",
+          data: {
+            title: card.title,
+            description: card.description,
+            progress: card.progress,
+            status: card.status,
+            steps: card.steps || card.plan,
+            // 优先使用 card.steps，回退到 card.plan
+            plan: card.plan,
+            markdown: card.markdown,
+            revision: card.revision
+          }
+        });
+      } else {
+        this.postToWebview({ type: "progressCard", data: null });
+      }
+    }
+    // Match Obsidian plugin's handleChatEvent
+    async handleChatEvent(payload) {
+      const sessionKey = this.resolveSession(payload?.sessionKey);
+      const rawSessionKey = payload?.sessionKey || "";
+      const state = typeof payload?.state === "string" ? payload.state : "";
+      if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
+        if (state === "delta") {
+          const text = await this.extractDeltaText(payload?.message);
+          if (text) {
+            this.supervisorAccumulated += text;
+            this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
+          }
+        } else if (state === "final") {
+          const finalText = await this.extractDeltaText(payload?.message);
+          const fullReply = finalText || this.supervisorAccumulated;
+          this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
+          if (this.supervisorTimeout) {
+            clearTimeout(this.supervisorTimeout);
+            this.supervisorTimeout = null;
+          }
+          this.supervisorPendingSessionKey = null;
+          const resolver = this.supervisorResponseResolver;
+          this.supervisorResponseResolver = null;
+          this.supervisorAccumulated = "";
+          if (resolver) {
+            resolver(fullReply);
+          }
+          return;
+        } else if (state === "error") {
+          if (this.supervisorTimeout) {
+            clearTimeout(this.supervisorTimeout);
+            this.supervisorTimeout = null;
+          }
+          this.supervisorPendingSessionKey = null;
+          const resolver = this.supervisorResponseResolver;
+          this.supervisorResponseResolver = null;
+          this.supervisorAccumulated = "";
+          if (resolver) {
+            resolver(null);
+          }
+          return;
+        }
+      }
+      if (rawSessionKey && rawSessionKey.includes("subagent")) {
+        const m = rawSessionKey.match(/^agent:([^:]+):/);
+        if (m && m[1] === this.activeAgent.id) {
+          this.lastSubagentEventMs = Date.now();
+          this.activeSubagentCount++;
+          this.startSubagentTimer();
+          const tail = rawSessionKey.split(":").pop() || "subagent";
+          const shortLabel = tail.length > 12 ? tail.substring(0, 8) + "\u2026" : tail;
+          this.postToWebview({
+            type: "subagentState",
+            active: true,
+            label: vscode.l10n.t("Subagent active: {0}", shortLabel),
+            state
+          });
+          this.updateYieldState();
+        }
         return;
       }
-    }
-
-    this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
-
-    if (state === "delta") {
-      const text = await this.extractDeltaText(payload?.message);
-      this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
-      if (text) {
-        this.postToWebview({ type: "streamDelta", sessionKey, text });
-      }
-    } else if (state === "final") {
-      this.log(`stream final`);
-      // Extract final message text and display it
-      const finalMsg = payload?.message;
-      if (finalMsg) {
-        const finalText = await this.extractDeltaText(finalMsg);
-        this.log(`final text len=${finalText.length}`);
-        if (finalText) {
-          // Check if response is an error pattern that needs "Continue"
-          const isErrorResponse = OpenClawChatView.ERROR_PATTERNS.some(
-            pattern => finalText.includes(pattern)
-          );
-          
-          if (isErrorResponse) {
-            this.autoContinueCount++;
-            this.log(`Auto-continue retry ${this.autoContinueCount}/${OpenClawChatView.AUTO_CONTINUE_MAX}`);
-            
-            if (this.autoContinueCount >= OpenClawChatView.AUTO_CONTINUE_MAX) {
-              // Max retries reached, show error to user
-              this.postToWebview({ 
-                type: "autoContinueFailed", 
-                sessionKey, 
-                count: this.autoContinueCount 
-              });
-              this.autoContinueCount = 0;
-            } else {
-              // Send "Continue" to retry (not recorded in history)
-              this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
-              this.postToWebview({ type: "streamDone", sessionKey });
-              this.sendContinueMessage();
-              return;
-            }
-          } else {
-            // Normal response - reset counter
-            if (this.autoContinueCount > 0) {
-              this.autoContinueCount = 0;
-              this.context.globalState.update("openclaw.autoContinueCount", 0);
-            }
-            // Display the final message directly
-            this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
-          }
+      if (rawSessionKey) {
+        const m = rawSessionKey.match(/^agent:([^:]+):/);
+        if (m && m[1] !== this.activeAgent.id) {
+          this.log(`chatEvent discarded: agent=${m[1]} != current=${this.activeAgent.id}`);
+          return;
         }
       }
-      this.postToWebview({ type: "streamDone", sessionKey });
-      this.setBusy(false);
-    } else if (state === "aborted") {
-      this.log(`stream aborted`);
-      this.postToWebview({ type: "streamDone", sessionKey });
-      this.setBusy(false);
-    } else if (state === "error") {
-      const errorMsg = payload?.errorMessage || "unknown error";
-      this.log(`stream error: ${errorMsg}`);
-      this.postToWebview({ type: "streamError", sessionKey, error: errorMsg });
-      this.setBusy(false);
-    } else {
-      this.log(`unknown chat state: ${state}`);
-    }
-  }
-
-  // Match Obsidian plugin's handleStreamEvent
-  public handleStreamEvent(payload: any) {
-    const stream = typeof payload?.stream === "string" ? payload.stream : "";
-    const state = typeof payload?.state === "string" ? payload.state : "";
-    const data = payload?.data || {};
-    const toolName = data.name || data.toolName || payload?.toolName || payload?.name || "";
-    const phase = data.phase || payload?.phase || "";
-
-    this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
-
-    if (toolName && (phase === "start" || state === "tool_use")) {
-      const label = `${toolName}`;
-      this.postToWebview({ type: "toolCall", label, phase: "start" });
-    } else if (toolName && phase === "result") {
-      this.postToWebview({ type: "toolCall", label: toolName, phase: "result" });
-    }
-  }
-
-  private async extractDeltaText(message: any): Promise<string> {
-    if (typeof message === "string") return await this.resolveMediaPaths(message);
-    if (!message) return "";
-
-    const content = message.content ?? message;
-    let text = "";
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        if (typeof item === "string") {
-          text += item;
-        } else if (item && typeof item === "object" && "text" in item) {
-          text += (text ? "\n" : "") + String(item.text);
+      this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
+      if (state === "delta") {
+        const text = await this.extractDeltaText(payload?.message);
+        this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
+        if (text) {
+          this.postToWebview({ type: "streamDelta", sessionKey, text });
         }
-      }
-    } else if (typeof content === "string") {
-      text = content;
-    } else {
-      text = message.text || "";
-    }
-
-    // 提取 openclawDelivery.mediaUrls 中的音频文件并转换为 <audio> 标签
-    const mediaUrls = message.openclawDelivery?.mediaUrls as string[] | undefined;
-    if (mediaUrls && mediaUrls.length > 0) {
-      const audioParts: string[] = [];
-      for (const mediaPath of mediaUrls) {
-        const audioTag = await this.convertMediaToMarkdown(mediaPath);
-        if (audioTag) {
-          audioParts.push(audioTag);
-        }
-      }
-      if (audioParts.length > 0) {
-        text = text + "\n" + audioParts.join("\n");
-      }
-    }
-
-    return await this.resolveMediaPaths(text);
-  }
-
-  private async resolveMediaPaths(text: string): Promise<string> {
-    if (!text || text.indexOf("MEDIA:") === -1) return text;
-    
-    const segments = text.split("\n");
-    const resolvedSegments: string[] = [];
-    
-    for (const segment of segments) {
-      if (segment.indexOf("MEDIA:") === 0) {
-        const rest = segment.slice(6).trim();
-        // 支持带类型前缀的格式：MEDIA:<type>:<path>（如 MEDIA:audio:/api/chat/media/...）
-        const typePrefixMatch = rest.match(/^(audio|video|img|image):(.+)$/);
-        let mediaPath: string;
-        let forcedTag: string | undefined;
-        if (typePrefixMatch) {
-          forcedTag = typePrefixMatch[1] === "image" ? "img" : typePrefixMatch[1];
-          mediaPath = typePrefixMatch[2].trim();
-        } else {
-          mediaPath = rest;
-        }
-        const result = await this.convertMediaToMarkdown(mediaPath, forcedTag);
-        if (result) {
-          resolvedSegments.push(result);
-        }
-      } else {
-        resolvedSegments.push(segment);
-      }
-    }
-    
-    return resolvedSegments.join("\n");
-  }
-
-  private async convertMediaToMarkdown(mediaPath: string, forcedTag?: string): Promise<string | null> {
-    try {
-      if (!mediaPath) return null;
-
-      // ── 远程 URL 支持：http://、https:// 或网关媒体相对路径 /api/chat/media/ ──
-      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
-        const tag = await this.buildRemoteMediaTag(mediaPath);
-        // forcedTag 优先（如 MEDIA:audio: 前缀强制音频），相对路径同样转绝对 HTTP URL
-        if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
-          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
-          return this.buildMediaTag(forcedTag, absoluteUrl);
-        }
-        return tag;
-      }
-
-      // 否则处理本地文件（现有 base64 逻辑）
-      // Normalize path: handle both forward and backward slashes
-      const normalizedPath = mediaPath.replace(/\\/g, "/");
-      
-      // Try to read file as buffer
-      let buffer: Buffer;
-      try {
-        buffer = fs.readFileSync(mediaPath);
-      } catch {
-        // Try with forward slashes
-        try {
-          buffer = fs.readFileSync(normalizedPath);
-        } catch {
-          // Return original path as text
-          return null;
-        }
-      }
-      
-      // Detect MIME type from extension
-      const ext = path.extname(mediaPath).toLowerCase();
-      const mediaInfo = this.getMediaInfo(ext);
-      let mimeType = mediaInfo.mimeType;
-      let tag = mediaInfo.tag;
-      
-      // Convert to base64
-      const base64 = buffer.toString("base64");
-      const dataUrl = `data:${mimeType};base64,${base64}`;
-      
-      // Generate markdown
-      return this.buildMediaTag(tag, dataUrl);
-    } catch {
-      // Return original path if conversion fails
-      return null;
-    }
-  }
-
-  /**
-   * 根据扩展名解析媒体类型信息（MIME 类型与 HTML 标签名）。
-   * 统一用于本地文件与远程 URL 两种路径，保证行为一致。
-   */
-  private getMediaInfo(ext: string): { mimeType: string; tag: string } {
-    switch (ext) {
-      // 图片
-      case ".png":
-        return { mimeType: "image/png", tag: "img" };
-      case ".jpg":
-      case ".jpeg":
-        return { mimeType: "image/jpeg", tag: "img" };
-      case ".gif":
-        return { mimeType: "image/gif", tag: "img" };
-      case ".webp":
-        return { mimeType: "image/webp", tag: "img" };
-      case ".svg":
-        return { mimeType: "image/svg+xml", tag: "img" };
-      // 视频
-      case ".mp4":
-        return { mimeType: "video/mp4", tag: "video" };
-      case ".webm":
-        return { mimeType: "video/webm", tag: "video" };
-      case ".ogv":
-        return { mimeType: "video/ogg", tag: "video" };
-      case ".avi":
-        return { mimeType: "video/x-msvideo", tag: "video" };
-      case ".mov":
-        return { mimeType: "video/quicktime", tag: "video" };
-      // 音频
-      case ".mp3":
-        return { mimeType: "audio/mpeg", tag: "audio" };
-      case ".wav":
-        return { mimeType: "audio/wav", tag: "audio" };
-      case ".ogg":
-      case ".oga":
-        return { mimeType: "audio/ogg", tag: "audio" };
-      case ".m4a":
-        return { mimeType: "audio/mp4", tag: "audio" };
-      case ".flac":
-        return { mimeType: "audio/flac", tag: "audio" };
-      // 默认
-      default:
-        return { mimeType: "application/octet-stream", tag: "video" };
-    }
-  }
-
-  /**
-   * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
-   * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
-   * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
-   * 通过 RPC resolveArtifactDownload 获取包含 mediaTicket 鉴权的完整 URL。
-   */
-  private async toAbsoluteMediaUrl(url: string): Promise<string> {
-    if (!url.startsWith("/api/chat/media/")) return url;
-    
-    // 解析 sessionKey 和 artifactId
-    // 格式：/api/chat/media/outgoing/{sessionKey}/{artifactId}/full
-    const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
-    if (!match) {
-      // 格式不匹配，降级为原始绝对 URL
-      const httpBase = this.gatewayUrl
-        .replace(/^ws:\/\//, "http://")
-        .replace(/^wss:\/\//, "https://")
-        .replace(/\/+$/, "");
-      return `${httpBase}${url}`;
-    }
-    
-    const [, sessionKey, artifactId] = match;
-    
-    try {
-      // 调用 RPC 获取带 mediaTicket 的完整 URL
-      const result = await this.gateway.request("resolveArtifactDownload", {
-        sessionKey,
-        artifactId
-      });
-      
-      if (result?.url) {
-        return result.url;
-      }
-    } catch (err: any) {
-      // RPC 失败/超时：降级为原始绝对 URL，不阻断渲染
-      this.log(`toAbsoluteMediaUrl: resolveArtifactDownload failed for ${sessionKey}/${artifactId}: ${err?.message || err}`);
-    }
-    
-    // 降级：返回原始绝对 URL（无 ticket）
-    const httpBase = this.gatewayUrl
-      .replace(/^ws:\/\//, "http://")
-      .replace(/^wss:\/\//, "https://")
-      .replace(/\/+$/, "");
-    return `${httpBase}${url}`;
-  }
-
-  /**
-   * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
-   * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
-   * 网关媒体相对路径（/api/chat/media/...）自动转绝对 HTTP URL，避免解析到 vscode-webview:// 基址。
-   */
-  private async buildRemoteMediaTag(url: string): Promise<string> {
-    // 去除 URL 中可能携带的查询参数后再取扩展名
-    const cleanUrl = url.split("#")[0].split("?")[0];
-    const ext = path.extname(cleanUrl).toLowerCase();
-    let { tag } = this.getMediaInfo(ext);
-    // 网关媒体 URL 通常无扩展名：/api/chat/media/{incoming|outgoing}/{chatId}/{mediaId}/full
-    // 若 extname 为空，按 URL 路径关键词推断类型
-    if (!ext) {
-      const lower = url.toLowerCase();
-      if (lower.includes("/audio/") || lower.endsWith("/audio")) {
-        tag = "audio";
-      } else if (lower.includes("/video/") || lower.endsWith("/video")) {
-        tag = "video";
-      } else {
-        // 无路径关键词时默认 audio（TTS / 语音消息场景居多）
-        tag = "audio";
-      }
-    }
-    // 相对网关媒体路径转绝对 HTTP URL（webview 中相对路径会解析到 vscode-webview:// 基址，无法加载）
-    const src = await this.toAbsoluteMediaUrl(url);
-    return this.buildMediaTag(tag, src);
-  }
-
-  /**
-   * 根据标签名与数据源生成最终 HTML 标签。
-   * video/audio 添加 controls 属性；img 添加样式限制大小。
-   */
-  private buildMediaTag(tag: string, src: string): string {
-    if (tag === "video") {
-      return `<video src="${src}" controls preload="metadata" style="max-width:100%;max-height:400px;border-radius:6px;"></video>`;
-    } else if (tag === "audio") {
-      return `<audio src="${src}" controls preload="metadata" style="max-width:100%;"></audio>`;
-    } else {
-      return `<img src="${src}" alt="media" style="max-width:100%;max-height:400px;border-radius:6px;" />`;
-    }
-  }
-
-  private async extractHistoryContent(content: any): Promise<string> {
-    if (typeof content === "string") return await this.resolveMediaPaths(content);
-    if (!content) return "";
-    if (Array.isArray(content)) {
-      let text = "";
-      for (const block of content) {
-        if (block.type === "text" && block.text) {
-          text += (text ? "\n" : "") + block.text;
-        } else if (block.type === "tool_result" && block.content) {
-          if (typeof block.content === "string") {
-            text += (text ? "\n" : "") + block.content;
-          } else if (Array.isArray(block.content)) {
-            for (const sub of block.content) {
-              if (sub?.type === "text" && sub.text) {
-                text += (text ? "\n" : "") + sub.text;
+      } else if (state === "final") {
+        this.log(`stream final`);
+        const finalMsg = payload?.message;
+        if (finalMsg) {
+          const finalText = await this.extractDeltaText(finalMsg);
+          this.log(`final text len=${finalText.length}`);
+          if (finalText) {
+            const isErrorResponse = _OpenClawChatView.ERROR_PATTERNS.some(
+              (pattern) => finalText.includes(pattern)
+            );
+            if (isErrorResponse) {
+              this.autoContinueCount++;
+              this.log(`Auto-continue retry ${this.autoContinueCount}/${_OpenClawChatView.AUTO_CONTINUE_MAX}`);
+              if (this.autoContinueCount >= _OpenClawChatView.AUTO_CONTINUE_MAX) {
+                this.postToWebview({
+                  type: "autoContinueFailed",
+                  sessionKey,
+                  count: this.autoContinueCount
+                });
+                this.autoContinueCount = 0;
+              } else {
+                this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+                this.postToWebview({ type: "streamDone", sessionKey });
+                this.sendContinueMessage();
+                return;
               }
-            }
-          }
-        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && (block.content || block.url)) {
-          // 处理音频/文件/媒体块：提取路径并转为 MEDIA: 标记
-          // 兼容 Web UI 实际结构：{type:'audio', url:'/api/chat/media/...'}
-          // 以及旧结构：{type:'audio', content:{path|url}}
-          let mediaPath = "";
-          if (typeof block.url === "string" && block.url) {
-            // 优先读取顶层 url 字段（Web UI 实际音频块结构）
-            mediaPath = block.url;
-          } else if (typeof block.content === "string") {
-            mediaPath = block.content;
-          } else if (block.content && typeof block.content === "object") {
-            mediaPath = block.content.path || block.content.url || "";
-          }
-          if (mediaPath) {
-            // 对于网关媒体 URL（无扩展名），携带 block.type 信息以便准确判断
-            if (mediaPath.startsWith("/api/chat/media/")) {
-              // 格式：MEDIA:<type>:<path>，如 MEDIA:audio:/api/chat/media/outgoing/...
-              text += (text ? "\n" : "") + "MEDIA:" + block.type + ":" + mediaPath;
             } else {
-              text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
+              if (this.autoContinueCount > 0) {
+                this.autoContinueCount = 0;
+                this.context.globalState.update("openclaw.autoContinueCount", 0);
+              }
+              this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
             }
           }
         }
+        this.postToWebview({ type: "streamDone", sessionKey });
+        this.setBusy(false);
+      } else if (state === "aborted") {
+        this.log(`stream aborted`);
+        this.postToWebview({ type: "streamDone", sessionKey });
+        this.setBusy(false);
+      } else if (state === "error") {
+        const errorMsg = payload?.errorMessage || "unknown error";
+        this.log(`stream error: ${errorMsg}`);
+        this.postToWebview({ type: "streamError", sessionKey, error: errorMsg });
+        this.setBusy(false);
+      } else {
+        this.log(`unknown chat state: ${state}`);
       }
-      // 处理顶层 openclawDelivery.mediaUrls（TTS 语音播放条支持）
-      const mediaUrls = (content as any)?.openclawDelivery?.mediaUrls as string[] | undefined;
+    }
+    // Match Obsidian plugin's handleStreamEvent
+    handleStreamEvent(payload) {
+      const stream = typeof payload?.stream === "string" ? payload.stream : "";
+      const state = typeof payload?.state === "string" ? payload.state : "";
+      const data = payload?.data || {};
+      const toolName = data.name || data.toolName || payload?.toolName || payload?.name || "";
+      const phase = data.phase || payload?.phase || "";
+      this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
+      if (toolName && (phase === "start" || state === "tool_use")) {
+        const label = `${toolName}`;
+        this.postToWebview({ type: "toolCall", label, phase: "start" });
+      } else if (toolName && phase === "result") {
+        this.postToWebview({ type: "toolCall", label: toolName, phase: "result" });
+      }
+    }
+    async extractDeltaText(message) {
+      if (typeof message === "string")
+        return await this.resolveMediaPaths(message);
+      if (!message)
+        return "";
+      const content = message.content ?? message;
+      let text = "";
+      if (Array.isArray(content)) {
+        for (const item of content) {
+          if (typeof item === "string") {
+            text += item;
+          } else if (item && typeof item === "object" && "text" in item) {
+            text += (text ? "\n" : "") + String(item.text);
+          }
+        }
+      } else if (typeof content === "string") {
+        text = content;
+      } else {
+        text = message.text || "";
+      }
+      const mediaUrls = message.openclawDelivery?.mediaUrls;
       if (mediaUrls && mediaUrls.length > 0) {
-        const audioParts: string[] = [];
+        const audioParts = [];
         for (const mediaPath of mediaUrls) {
           const audioTag = await this.convertMediaToMarkdown(mediaPath);
-          if (audioTag) audioParts.push(audioTag);
+          if (audioTag) {
+            audioParts.push(audioTag);
+          }
         }
         if (audioParts.length > 0) {
-          text += (text ? "\n" : "") + audioParts.join("\n");
+          text = text + "\n" + audioParts.join("\n");
         }
       }
       return await this.resolveMediaPaths(text);
     }
-    return "";
-  }
-
-  private resolveSession(sessionKey: string): string {
-    if (!sessionKey) return this.currentSessionKey;
-    // Strip agent prefix: "agent:main:main" → "main"
-    const prefix = this.agentPrefix;
-    if (prefix && sessionKey.startsWith(prefix)) {
-      return sessionKey.slice(prefix.length);
-    }
-    // Also handle other agent prefixes
-    const match = sessionKey.match(/^agent:[^:]+:(.+)$/);
-    if (match) return match[1];
-    return sessionKey;
-  }
-
-  resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
-  ) {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: []
-    };
-
-    webviewView.webview.html = this.getHtml();
-
-    webviewView.webview.onDidReceiveMessage(async (msg) => {
-      switch (msg.type) {
-        case "webviewReady":
-          // Load agents first, so resolveActiveAgent can find the correct agent
-          if (this.gateway.connected) {
-            await this.handleRequestAgents();
-            await this.handleRequestModels();
-            await this.handleRequestSessions();
-            await this.handleRequestTasks();  // 新增：webviewReady 时触发任务拉取
-            await this.handleLoadDefaults();
-            await this.handleLoadMessages(this.currentSessionKey);
+    async resolveMediaPaths(text) {
+      if (!text || text.indexOf("MEDIA:") === -1)
+        return text;
+      const segments = text.split("\n");
+      const resolvedSegments = [];
+      for (const segment of segments) {
+        if (segment.indexOf("MEDIA:") === 0) {
+          const rest = segment.slice(6).trim();
+          const typePrefixMatch = rest.match(/^(audio|video|img|image):(.+)$/);
+          let mediaPath;
+          let forcedTag;
+          if (typePrefixMatch) {
+            forcedTag = typePrefixMatch[1] === "image" ? "img" : typePrefixMatch[1];
+            mediaPath = typePrefixMatch[2].trim();
+          } else {
+            mediaPath = rest;
           }
-          // Now send init with the resolved agent and session key
-          // 携带缓存的 serverVersion，避免两条 init 互相覆盖版本号
-          this.postToWebview({
-            type: "init",
-            sessionKey: this.currentSessionKey,
-            model: this.currentModel,
-            connected: this.gateway.connected,
-            agent: this.activeAgent,
-            gatewayUrl: this.gatewayUrl,
-            thinkingLevel: this.thinkingLevel,
-            verboseLevel: this.verboseLevel,
-            messageHistory: this.messageHistory,
-            supervisionEnabled: this.supervisionEnabled,
-            version: this.serverVersion
-          });
-          break;
-        case "sendMessage":
-          await this.handleSendMessage(msg.text, msg.fileRefs, msg.attachments);
-          break;
-        case "stopStream":
-          await this.handleStopStream();
-          break;
-        case "selectModel":
-          this.currentModel = msg.model;
-          break;
-        case "cycleThinking":
-          await this.cycleThinking();
-          break;
-        case "cycleVerbose":
-          await this.cycleVerbose();
-          break;
-        case "requestModels":
-          await this.handleRequestModels();
-          break;
-        case "requestSessions":
-          await this.handleRequestSessions();
-          break;
-        case "requestAgents":
-          await this.handleRequestAgents();
-          break;
-        case "requestTasks":
-          await this.handleRequestTasks();
-          break;
-        case "switchSession":
-          const ssLocalKey = this.resolveSession(msg.sessionKey);
-          this.currentSessionKey = ssLocalKey;
-          await this.handleLoadMessages(ssLocalKey);
-          break;
-        case "switchTab":
-          // 从 sessionKey 解析 agentId（格式: agent:<agentId>:<localKey>）
-          if (msg.sessionKey) {
-            const match = msg.sessionKey.match(/^agent:([^:]+):/);
-            if (match) {
-              const agentId = match[1];
-              const ag = this.agents.find(a => a.id === agentId);
-              if (ag) {
-                this.activeAgent = ag;
+          const result = await this.convertMediaToMarkdown(mediaPath, forcedTag);
+          if (result) {
+            resolvedSegments.push(result);
+          }
+        } else {
+          resolvedSegments.push(segment);
+        }
+      }
+      return resolvedSegments.join("\n");
+    }
+    async convertMediaToMarkdown(mediaPath, forcedTag) {
+      try {
+        if (!mediaPath)
+          return null;
+        if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
+          const tag2 = await this.buildRemoteMediaTag(mediaPath);
+          if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
+            const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
+            return this.buildMediaTag(forcedTag, absoluteUrl);
+          }
+          return tag2;
+        }
+        const normalizedPath = mediaPath.replace(/\\/g, "/");
+        let buffer;
+        try {
+          buffer = fs.readFileSync(mediaPath);
+        } catch {
+          try {
+            buffer = fs.readFileSync(normalizedPath);
+          } catch {
+            return null;
+          }
+        }
+        const ext = path.extname(mediaPath).toLowerCase();
+        const mediaInfo = this.getMediaInfo(ext);
+        let mimeType = mediaInfo.mimeType;
+        let tag = mediaInfo.tag;
+        const base64 = buffer.toString("base64");
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+        return this.buildMediaTag(tag, dataUrl);
+      } catch {
+        return null;
+      }
+    }
+    /**
+     * 根据扩展名解析媒体类型信息（MIME 类型与 HTML 标签名）。
+     * 统一用于本地文件与远程 URL 两种路径，保证行为一致。
+     */
+    getMediaInfo(ext) {
+      switch (ext) {
+        case ".png":
+          return { mimeType: "image/png", tag: "img" };
+        case ".jpg":
+        case ".jpeg":
+          return { mimeType: "image/jpeg", tag: "img" };
+        case ".gif":
+          return { mimeType: "image/gif", tag: "img" };
+        case ".webp":
+          return { mimeType: "image/webp", tag: "img" };
+        case ".svg":
+          return { mimeType: "image/svg+xml", tag: "img" };
+        case ".mp4":
+          return { mimeType: "video/mp4", tag: "video" };
+        case ".webm":
+          return { mimeType: "video/webm", tag: "video" };
+        case ".ogv":
+          return { mimeType: "video/ogg", tag: "video" };
+        case ".avi":
+          return { mimeType: "video/x-msvideo", tag: "video" };
+        case ".mov":
+          return { mimeType: "video/quicktime", tag: "video" };
+        case ".mp3":
+          return { mimeType: "audio/mpeg", tag: "audio" };
+        case ".wav":
+          return { mimeType: "audio/wav", tag: "audio" };
+        case ".ogg":
+        case ".oga":
+          return { mimeType: "audio/ogg", tag: "audio" };
+        case ".m4a":
+          return { mimeType: "audio/mp4", tag: "audio" };
+        case ".flac":
+          return { mimeType: "audio/flac", tag: "audio" };
+        default:
+          return { mimeType: "application/octet-stream", tag: "video" };
+      }
+    }
+    /**
+     * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
+     * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
+     * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
+     * 通过 RPC resolveArtifactDownload 获取包含 mediaTicket 鉴权的完整 URL。
+     */
+    async toAbsoluteMediaUrl(url) {
+      if (!url.startsWith("/api/chat/media/"))
+        return url;
+      const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
+      if (!match) {
+        const httpBase2 = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
+        return `${httpBase2}${url}`;
+      }
+      const [, sessionKey, artifactId] = match;
+      try {
+        const result = await this.gateway.request("resolveArtifactDownload", {
+          sessionKey,
+          artifactId
+        });
+        if (result?.url) {
+          return result.url;
+        }
+      } catch (err) {
+        this.log(`toAbsoluteMediaUrl: resolveArtifactDownload failed for ${sessionKey}/${artifactId}: ${err?.message || err}`);
+      }
+      const httpBase = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
+      return `${httpBase}${url}`;
+    }
+    /**
+     * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
+     * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
+     * 网关媒体相对路径（/api/chat/media/...）自动转绝对 HTTP URL，避免解析到 vscode-webview:// 基址。
+     */
+    async buildRemoteMediaTag(url) {
+      const cleanUrl = url.split("#")[0].split("?")[0];
+      const ext = path.extname(cleanUrl).toLowerCase();
+      let { tag } = this.getMediaInfo(ext);
+      if (!ext) {
+        const lower = url.toLowerCase();
+        if (lower.includes("/audio/") || lower.endsWith("/audio")) {
+          tag = "audio";
+        } else if (lower.includes("/video/") || lower.endsWith("/video")) {
+          tag = "video";
+        } else {
+          tag = "audio";
+        }
+      }
+      const src = await this.toAbsoluteMediaUrl(url);
+      return this.buildMediaTag(tag, src);
+    }
+    /**
+     * 根据标签名与数据源生成最终 HTML 标签。
+     * video/audio 添加 controls 属性；img 添加样式限制大小。
+     */
+    buildMediaTag(tag, src) {
+      if (tag === "video") {
+        return `<video src="${src}" controls preload="metadata" style="max-width:100%;max-height:400px;border-radius:6px;"></video>`;
+      } else if (tag === "audio") {
+        return `<audio src="${src}" controls preload="metadata" style="max-width:100%;"></audio>`;
+      } else {
+        return `<img src="${src}" alt="media" style="max-width:100%;max-height:400px;border-radius:6px;" />`;
+      }
+    }
+    async extractHistoryContent(content) {
+      if (typeof content === "string")
+        return await this.resolveMediaPaths(content);
+      if (!content)
+        return "";
+      if (Array.isArray(content)) {
+        let text = "";
+        for (const block of content) {
+          if (block.type === "text" && block.text) {
+            text += (text ? "\n" : "") + block.text;
+          } else if (block.type === "tool_result" && block.content) {
+            if (typeof block.content === "string") {
+              text += (text ? "\n" : "") + block.content;
+            } else if (Array.isArray(block.content)) {
+              for (const sub of block.content) {
+                if (sub?.type === "text" && sub.text) {
+                  text += (text ? "\n" : "") + sub.text;
+                }
+              }
+            }
+          } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && (block.content || block.url)) {
+            let mediaPath = "";
+            if (typeof block.url === "string" && block.url) {
+              mediaPath = block.url;
+            } else if (typeof block.content === "string") {
+              mediaPath = block.content;
+            } else if (block.content && typeof block.content === "object") {
+              mediaPath = block.content.path || block.content.url || "";
+            }
+            if (mediaPath) {
+              if (mediaPath.startsWith("/api/chat/media/")) {
+                text += (text ? "\n" : "") + "MEDIA:" + block.type + ":" + mediaPath;
+              } else {
+                text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
               }
             }
           }
-          // 也兼容显式传入的 agentId
-          if (msg.agentId && (!this.activeAgent || this.activeAgent.id !== msg.agentId)) {
-            const ag = this.agents.find(a => a.id === msg.agentId);
-            if (ag) {
-              this.activeAgent = ag;
-            } else {
-              const byName = this.agents.find(a => (a.name || "") === msg.agentId);
-              if (byName) this.activeAgent = byName;
-            }
-          }
-          const localSessionKey = this.resolveSession(msg.sessionKey || "main");
-          this.currentSessionKey = localSessionKey;
-          await this.handleLoadMessages(localSessionKey);
-          this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-          break;
-        case "deleteSession":
-          await this.handleDeleteSession(msg.sessionKey);
-          break;
-        case "addChatTabFromSession": {
-          const sessionKey = msg.sessionKey || '';
-          // subagent 会话（sessionKey 含 :subagent:）：创建新 tab 显示该会话历史
-          if (sessionKey.includes(':subagent:')) {
-            const deviceName = msg.deviceName || sessionKey;
-            // 截断设备名称用于 tab 标题
-            const parts = deviceName.split(':');
-            let tabLabel = parts[0].trim();
-            if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
-            // 从 sessionKey 解析 agentId
-            let tabAgentId = 'main';
-            const match = sessionKey.match(/^agent:([^:]+):/);
-            if (match) tabAgentId = match[1];
-            const newTab = {
-              id: 'tab-' + sessionKey + '-' + Date.now(),
-              label: tabLabel,
-              agentId: tabAgentId,
-              sessionKey: sessionKey,
-              messages: []
-            };
-            // 通知 webview 创建 tab（webview 侧会做去重）
-            this.postToWebview({ type: 'addChatTab', tab: newTab });
-            // 加载该 subagent 会话历史
-            this.currentSessionKey = this.resolveSession(sessionKey);
-            await this.handleLoadMessages(this.currentSessionKey);
-          } else {
-            // 普通会话：直接打开该 agent 的默认聊天界面（不创建新 tab）
-            let agentId = 'main';
-            const m = sessionKey.match(/^agent:([^:]+):/);
-            if (m) agentId = m[1];
-            this.postToWebview({ type: 'activateAgentChat', agentId });
-          }
-          break;
         }
-        case "switchAgent":
-          await this.handleSwitchAgent(msg.agentId);
-          break;
-        case "copyCommand":
-          await vscode.env.clipboard.writeText(msg.text);
-          vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
-          break;
-        case "copyImage": {
-          const dataUrl = msg.dataUrl;
-          if (dataUrl && typeof dataUrl === "string") {
-            try {
-              const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-              const os = require("os");
-              const tmpB64 = path.join(os.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
-              fs.writeFileSync(tmpB64, base64Data, "utf8");
-              // base64 经临时文件传入 PowerShell（规避命令行 32KB 限制），
-              // 内存流解码后写入剪贴板；单引号字符串内使用原始单反斜杠路径
-              const psScript =
-                "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); " +
-                "Add-Type -AssemblyName System.Drawing; " +
-                "Add-Type -AssemblyName System.Windows.Forms; " +
-                "$bytes = [Convert]::FromBase64String($b64); " +
-                "$ms = New-Object System.IO.MemoryStream(,$bytes); " +
-                "$img = [System.Drawing.Image]::FromStream($ms); " +
-                "[System.Windows.Forms.Clipboard]::SetImage($img); " +
-                "$img.Dispose(); $ms.Dispose(); " +
-                "Write-Output 'CLIP_SET_OK';";
-              const encoded = Buffer.from(psScript, "utf16le").toString("base64");
-              const child_process = require("child_process");
-              child_process.exec(
-                "powershell -NoProfile -STA -EncodedCommand " + encoded,
-                { timeout: 15000 },
-                (pErr: any, pStdout: any) => {
-                  try { fs.unlinkSync(tmpB64); } catch (e) { /* ignore */ }
-                  if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
-                    console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
-                    vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
-                  } else {
-                    console.log("[copyImage] clipboard write OK");
-                  }
+        const mediaUrls = content?.openclawDelivery?.mediaUrls;
+        if (mediaUrls && mediaUrls.length > 0) {
+          const audioParts = [];
+          for (const mediaPath of mediaUrls) {
+            const audioTag = await this.convertMediaToMarkdown(mediaPath);
+            if (audioTag)
+              audioParts.push(audioTag);
+          }
+          if (audioParts.length > 0) {
+            text += (text ? "\n" : "") + audioParts.join("\n");
+          }
+        }
+        return await this.resolveMediaPaths(text);
+      }
+      return "";
+    }
+    resolveSession(sessionKey) {
+      if (!sessionKey)
+        return this.currentSessionKey;
+      const prefix = this.agentPrefix;
+      if (prefix && sessionKey.startsWith(prefix)) {
+        return sessionKey.slice(prefix.length);
+      }
+      const match = sessionKey.match(/^agent:[^:]+:(.+)$/);
+      if (match)
+        return match[1];
+      return sessionKey;
+    }
+    resolveWebviewView(webviewView, _context, _token) {
+      this.view = webviewView;
+      webviewView.webview.options = {
+        enableScripts: true,
+        localResourceRoots: []
+      };
+      webviewView.webview.html = this.getHtml();
+      webviewView.webview.onDidReceiveMessage(async (msg) => {
+        switch (msg.type) {
+          case "webviewReady":
+            if (this.gateway.connected) {
+              await this.handleRequestAgents();
+              await this.handleRequestModels();
+              await this.handleRequestSessions();
+              await this.handleRequestTasks();
+              await this.handleLoadDefaults();
+              await this.handleLoadMessages(this.currentSessionKey);
+            }
+            this.postToWebview({
+              type: "init",
+              sessionKey: this.currentSessionKey,
+              model: this.currentModel,
+              connected: this.gateway.connected,
+              agent: this.activeAgent,
+              gatewayUrl: this.gatewayUrl,
+              thinkingLevel: this.thinkingLevel,
+              verboseLevel: this.verboseLevel,
+              messageHistory: this.messageHistory,
+              supervisionEnabled: this.supervisionEnabled,
+              version: this.serverVersion
+            });
+            break;
+          case "sendMessage":
+            await this.handleSendMessage(msg.text, msg.fileRefs, msg.attachments);
+            break;
+          case "stopStream":
+            await this.handleStopStream();
+            break;
+          case "selectModel":
+            this.currentModel = msg.model;
+            break;
+          case "cycleThinking":
+            await this.cycleThinking();
+            break;
+          case "cycleVerbose":
+            await this.cycleVerbose();
+            break;
+          case "requestModels":
+            await this.handleRequestModels();
+            break;
+          case "requestSessions":
+            await this.handleRequestSessions();
+            break;
+          case "requestAgents":
+            await this.handleRequestAgents();
+            break;
+          case "requestTasks":
+            await this.handleRequestTasks();
+            break;
+          case "switchSession":
+            const ssLocalKey = this.resolveSession(msg.sessionKey);
+            this.currentSessionKey = ssLocalKey;
+            await this.handleLoadMessages(ssLocalKey);
+            break;
+          case "switchTab":
+            if (msg.sessionKey) {
+              const match = msg.sessionKey.match(/^agent:([^:]+):/);
+              if (match) {
+                const agentId = match[1];
+                const ag = this.agents.find((a) => a.id === agentId);
+                if (ag) {
+                  this.activeAgent = ag;
                 }
-              );
-            } catch (copyErr) {
-              console.error("copyImage failed:", copyErr);
-              vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
+              }
             }
-          }
-          break;
-        }
-        case "exportImage": {
-          const dataUrl = msg.dataUrl;
-          if (!dataUrl || typeof dataUrl !== "string") {
-            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
+            if (msg.agentId && (!this.activeAgent || this.activeAgent.id !== msg.agentId)) {
+              const ag = this.agents.find((a) => a.id === msg.agentId);
+              if (ag) {
+                this.activeAgent = ag;
+              } else {
+                const byName = this.agents.find((a) => (a.name || "") === msg.agentId);
+                if (byName)
+                  this.activeAgent = byName;
+              }
+            }
+            const localSessionKey = this.resolveSession(msg.sessionKey || "main");
+            this.currentSessionKey = localSessionKey;
+            await this.handleLoadMessages(localSessionKey);
+            this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
+            break;
+          case "deleteSession":
+            await this.handleDeleteSession(msg.sessionKey);
+            break;
+          case "addChatTabFromSession": {
+            const sessionKey = msg.sessionKey || "";
+            if (sessionKey.includes(":subagent:")) {
+              const deviceName = msg.deviceName || sessionKey;
+              const parts = deviceName.split(":");
+              let tabLabel = parts[0].trim();
+              if (tabLabel.length > 15)
+                tabLabel = tabLabel.substring(0, 15) + "\u2026";
+              let tabAgentId = "main";
+              const match = sessionKey.match(/^agent:([^:]+):/);
+              if (match)
+                tabAgentId = match[1];
+              const newTab = {
+                id: "tab-" + sessionKey + "-" + Date.now(),
+                label: tabLabel,
+                agentId: tabAgentId,
+                sessionKey,
+                messages: []
+              };
+              this.postToWebview({ type: "addChatTab", tab: newTab });
+              this.currentSessionKey = this.resolveSession(sessionKey);
+              await this.handleLoadMessages(this.currentSessionKey);
+            } else {
+              let agentId = "main";
+              const m = sessionKey.match(/^agent:([^:]+):/);
+              if (m)
+                agentId = m[1];
+              this.postToWebview({ type: "activateAgentChat", agentId });
+            }
             break;
           }
-          try {
-            const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-            const ts = Date.now();
-            const defaultName = "mermaid-" + ts + ".png";
-            const saveUri = await vscode.window.showSaveDialog({
-              title: vscode.l10n.t("Export Mermaid diagram as PNG"),
-              defaultUri: vscode.Uri.file(path.join(require("os").homedir(), "Downloads", defaultName)),
-              filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
-            });
-            if (!saveUri) {
-              console.log("[exportImage] user cancelled save dialog");
+          case "switchAgent":
+            await this.handleSwitchAgent(msg.agentId);
+            break;
+          case "copyCommand":
+            await vscode.env.clipboard.writeText(msg.text);
+            vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
+            break;
+          case "copyImage": {
+            const dataUrl = msg.dataUrl;
+            if (dataUrl && typeof dataUrl === "string") {
+              try {
+                const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+                const os = __require("os");
+                const tmpB64 = path.join(os.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+                fs.writeFileSync(tmpB64, base64Data, "utf8");
+                const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
+                const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+                const child_process = __require("child_process");
+                child_process.exec(
+                  "powershell -NoProfile -STA -EncodedCommand " + encoded,
+                  { timeout: 15e3 },
+                  (pErr, pStdout) => {
+                    try {
+                      fs.unlinkSync(tmpB64);
+                    } catch (e) {
+                    }
+                    if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
+                      console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
+                      vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
+                    } else {
+                      console.log("[copyImage] clipboard write OK");
+                    }
+                  }
+                );
+              } catch (copyErr) {
+                console.error("copyImage failed:", copyErr);
+                vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
+              }
+            }
+            break;
+          }
+          case "exportImage": {
+            const dataUrl = msg.dataUrl;
+            if (!dataUrl || typeof dataUrl !== "string") {
+              vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
               break;
             }
-            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
-            console.log("[exportImage] file written:", saveUri.fsPath);
-            vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
-          } catch (exportErr) {
-            console.error("exportImage failed:", exportErr);
-            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
+            try {
+              const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+              const ts = Date.now();
+              const defaultName = "mermaid-" + ts + ".png";
+              const saveUri = await vscode.window.showSaveDialog({
+                title: vscode.l10n.t("Export Mermaid diagram as PNG"),
+                defaultUri: vscode.Uri.file(path.join(__require("os").homedir(), "Downloads", defaultName)),
+                filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
+              });
+              if (!saveUri) {
+                console.log("[exportImage] user cancelled save dialog");
+                break;
+              }
+              await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
+              console.log("[exportImage] file written:", saveUri.fsPath);
+              vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
+            } catch (exportErr) {
+              console.error("exportImage failed:", exportErr);
+              vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
+            }
+            break;
           }
-          break;
+          case "notify":
+            if (msg && typeof msg.text === "string" && msg.text) {
+              vscode.window.showInformationMessage(msg.text);
+            }
+            break;
+          case "mermaidError":
+            if (msg.text) {
+              vscode.window.showWarningMessage(
+                vscode.l10n.t("Mermaid diagram render failed: {0}", msg.text)
+              );
+            }
+            break;
+          case "openSettings":
+            vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
+            break;
+          case "openModelPicker":
+            vscode.commands.executeCommand("openclaw.settings");
+            break;
+          case "searchFiles":
+            await this.handleSearchFiles(msg.query, msg.requestId);
+            break;
+          case "openWorkdir":
+            await this.handleOpenWorkdir();
+            break;
+          case "toggleSupervision":
+            await this.handleToggleSupervision(msg.enabled);
+            break;
+          case "reconnect":
+            vscode.commands.executeCommand("openclaw.reconnect");
+            break;
         }
-        case "notify":
-          if (msg && typeof msg.text === "string" && msg.text) {
-            vscode.window.showInformationMessage(msg.text);
-          }
-          break;
-        case "mermaidError":
-          // Mermaid渲染失败时通过VSCode通知提示用户，不污染webview UI
-          if (msg.text) {
-            vscode.window.showWarningMessage(
-              vscode.l10n.t('Mermaid diagram render failed: {0}', msg.text)
-            );
-          }
-          break;
-        case "openSettings":
-          vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
-          break;
-        case "openModelPicker":
-          vscode.commands.executeCommand("openclaw.settings");
-          break;
-        case "searchFiles":
-          await this.handleSearchFiles(msg.query, msg.requestId);
-          break;
-        case "openWorkdir":
-          await this.handleOpenWorkdir();
-          break;
-        case "toggleSupervision":
-          await this.handleToggleSupervision(msg.enabled);
-          break;
-        case "reconnect":
-          vscode.commands.executeCommand('openclaw.reconnect');
-          break;
+      });
+    }
+    async handleSendMessage(text, fileRefs, webviewAttachments) {
+      if (!text.trim())
+        return;
+      if (!this.gateway.connected) {
+        vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Not connected to gateway"));
+        return;
       }
-    });
-  }
-
-  private async handleSendMessage(text: string, fileRefs?: string[], webviewAttachments?: any[]) {
-    if (!text.trim()) return;
-    if (!this.gateway.connected) {
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Not connected to gateway"));
-      return;
-    }
-    
-    // Reset auto-continue counter when user sends a new message
-    if (this.autoContinueCount > 0) {
-      this.autoContinueCount = 0;
-      this.context.globalState.update("openclaw.autoContinueCount", 0);
-    }
-
-    const userMsg: ChatMessage = {
-      role: "user",
-      text,
-      timestamp: Date.now()
-    };
-    
-    // 先初始化 attachments
-    let attachments: any[] = [];
-    if (webviewAttachments && webviewAttachments.length > 0) {
-      // Convert webview format {name, size, mimeType, data} to OpenClaw format
-      attachments = webviewAttachments.map(a => ({
-        type: 'file',
-        mimeType: a.mimeType,
-        fileName: a.name,
-        content: a.data
-      }));
-    } else if (fileRefs) {
-      attachments = await this.buildAttachments(fileRefs);
-    }
-    
-    this.messages.push(userMsg);
-    this.messageHistory.push(text);
-    if (this.messageHistory.length > 200) {
-      this.messageHistory = this.messageHistory.slice(-200);
-    }
-    this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
-    // Send user message with attachments for rendering
-    const msgWithAttachments = (webviewAttachments && webviewAttachments.length > 0) || attachments.length > 0 ? {
-      ...userMsg,
-      attachments: webviewAttachments || []
-    } : userMsg;
-    this.postToWebview({ type: "userMessage", message: msgWithAttachments });
-    this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
-
-    const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
-
-    try {
-      let res: any;
+      if (this.autoContinueCount > 0) {
+        this.autoContinueCount = 0;
+        this.context.globalState.update("openclaw.autoContinueCount", 0);
+      }
+      const userMsg = {
+        role: "user",
+        text,
+        timestamp: Date.now()
+      };
+      let attachments = [];
+      if (webviewAttachments && webviewAttachments.length > 0) {
+        attachments = webviewAttachments.map((a) => ({
+          type: "file",
+          mimeType: a.mimeType,
+          fileName: a.name,
+          content: a.data
+        }));
+      } else if (fileRefs) {
+        attachments = await this.buildAttachments(fileRefs);
+      }
+      this.messages.push(userMsg);
+      this.messageHistory.push(text);
+      if (this.messageHistory.length > 200) {
+        this.messageHistory = this.messageHistory.slice(-200);
+      }
+      this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
+      const msgWithAttachments = webviewAttachments && webviewAttachments.length > 0 || attachments.length > 0 ? {
+        ...userMsg,
+        attachments: webviewAttachments || []
+      } : userMsg;
+      this.postToWebview({ type: "userMessage", message: msgWithAttachments });
+      this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
+      const runId = this.genId();
+      this.postToWebview({ type: "streamStart", runId });
       try {
-        res = await this.gateway.request("chat.send", {
-          sessionKey: this.gwSessionKey(),
-          message: text,
-          deliver: false,
-          idempotencyKey: runId,
-          ...(attachments.length > 0 ? { attachments } : {})
-        });
-      } catch (sendErr: any) {
-        const errMsg = sendErr?.message || "";
-        if (errMsg.includes("ended during restart recovery")) {
-          this.log(`Session ended, sending /new to create replacement...`);
-          try {
-            await this.gateway.request("chat.send", {
-              sessionKey: this.gwSessionKey(),
-              message: "/new",
-              deliver: false,
-              idempotencyKey: this.genId()
-            });
-            await new Promise(r => setTimeout(r, 1000));
-            this.log(`Retrying send after /new...`);
-            res = await this.gateway.request("chat.send", {
-              sessionKey: this.gwSessionKey(),
-              message: text,
-              deliver: false,
-              idempotencyKey: runId,
-              ...(attachments.length > 0 ? { attachments } : {})
-            });
-          } catch (retryErr: any) {
-            this.log(`Retry after /new failed: ${retryErr?.message}`);
+        let res;
+        try {
+          res = await this.gateway.request("chat.send", {
+            sessionKey: this.gwSessionKey(),
+            message: text,
+            deliver: false,
+            idempotencyKey: runId,
+            ...attachments.length > 0 ? { attachments } : {}
+          });
+        } catch (sendErr) {
+          const errMsg = sendErr?.message || "";
+          if (errMsg.includes("ended during restart recovery")) {
+            this.log(`Session ended, sending /new to create replacement...`);
+            try {
+              await this.gateway.request("chat.send", {
+                sessionKey: this.gwSessionKey(),
+                message: "/new",
+                deliver: false,
+                idempotencyKey: this.genId()
+              });
+              await new Promise((r) => setTimeout(r, 1e3));
+              this.log(`Retrying send after /new...`);
+              res = await this.gateway.request("chat.send", {
+                sessionKey: this.gwSessionKey(),
+                message: text,
+                deliver: false,
+                idempotencyKey: runId,
+                ...attachments.length > 0 ? { attachments } : {}
+              });
+            } catch (retryErr) {
+              this.log(`Retry after /new failed: ${retryErr?.message}`);
+              throw sendErr;
+            }
+          } else {
             throw sendErr;
           }
-        } else {
-          throw sendErr;
         }
-      }
-      this.setBusy(true);
-      // If gateway didn't start a stream (e.g. /stop returns aborted:false, runIds:[]),
-      // clear the "Thinking" state and show the gateway's reply as assistant message
-      if (res && typeof res === 'object' && 
-          res.aborted === false && 
-          (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
-        this.postToWebview({ type: "streamDone", runId });
-        // Format slash command response for display
-        const replyText = this.formatCommandResponse(text, res);
-        const assistantMsg: ChatMessage = {
+        this.setBusy(true);
+        if (res && typeof res === "object" && res.aborted === false && (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
+          this.postToWebview({ type: "streamDone", runId });
+          const replyText = this.formatCommandResponse(text, res);
+          const assistantMsg = {
+            role: "assistant",
+            text: replyText,
+            timestamp: Date.now()
+          };
+          this.messages.push(assistantMsg);
+          this.postToWebview({ type: "userMessage", message: assistantMsg });
+          this.setBusy(false);
+        }
+      } catch (err) {
+        this.messages.push({
           role: "assistant",
-          text: replyText,
+          text: `Error: ${err}`,
           timestamp: Date.now()
-        };
-        this.messages.push(assistantMsg);
-        this.postToWebview({ type: "userMessage", message: assistantMsg });
-        this.setBusy(false);  // fix: close busy state for slash commands that don't produce streaming runs
-      }
-    } catch (err: any) {
-      this.messages.push({
-        role: "assistant",
-        text: `Error: ${err}`,
-        timestamp: Date.now()
-      });
-      this.postToWebview({ type: "streamDone", runId });
-      this.setBusy(false);
-    }
-  }
-
-  /**
-   * Send a message without adding it to local history (used for auto-continue).
-   * Note: do NOT call setBusy(true) here -- the parent send is already busy.
-   * The parent busyCount will be decremented when the final/aborted/error state arrives.
-   */
-  private async sendContinueMessage() {
-    if (!this.gateway.connected) return;
-    const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
-    try {
-      try {
-        await this.gateway.request("chat.send", {
-          sessionKey: this.gwSessionKey(),
-          message: "Continue",
-          deliver: false,
-          idempotencyKey: runId
         });
-      } catch (sendErr: any) {
-        const errMsg = sendErr?.message || "";
-        if (errMsg.includes("ended during restart recovery")) {
-          this.log(`Continue: session ended, sending /new...`);
-          await this.gateway.request("chat.send", {
-            sessionKey: this.gwSessionKey(),
-            message: "/new",
-            deliver: false,
-            idempotencyKey: this.genId()
-          });
-          await new Promise(r => setTimeout(r, 1000));
+        this.postToWebview({ type: "streamDone", runId });
+        this.setBusy(false);
+      }
+    }
+    /**
+     * Send a message without adding it to local history (used for auto-continue).
+     * Note: do NOT call setBusy(true) here -- the parent send is already busy.
+     * The parent busyCount will be decremented when the final/aborted/error state arrives.
+     */
+    async sendContinueMessage() {
+      if (!this.gateway.connected)
+        return;
+      const runId = this.genId();
+      this.postToWebview({ type: "streamStart", runId });
+      try {
+        try {
           await this.gateway.request("chat.send", {
             sessionKey: this.gwSessionKey(),
             message: "Continue",
             deliver: false,
             idempotencyKey: runId
           });
-        } else {
-          throw sendErr;
-        }
-      }
-    } catch {
-      this.postToWebview({ type: "streamDone", runId });
-      this.setBusy(false);
-    }
-  }
-
-  private async buildAttachments(fileRefs?: string[]): Promise<any[]> {
-    if (!fileRefs || fileRefs.length === 0) return [];
-    const attachments: any[] = [];
-    const MAX_TOTAL = 20 * 1024 * 1024;
-    let totalSize = 0;
-    const folders = vscode.workspace.workspaceFolders;
-    const rootUri = folders && folders.length > 0 ? folders[0].uri : undefined;
-
-    for (const relPath of fileRefs) {
-      if (totalSize >= MAX_TOTAL) break;
-      try {
-        if (!rootUri) continue;
-        const fileUri = vscode.Uri.joinPath(rootUri, relPath);
-        const stat = await vscode.workspace.fs.stat(fileUri);
-        if (stat.size > MAX_TOTAL) continue;
-        if (totalSize + stat.size > MAX_TOTAL) continue;
-
-        const bytes = await vscode.workspace.fs.readFile(fileUri);
-        const mimeType = getMimeType(relPath);
-        const content = Buffer.from(bytes).toString("base64");
-
-        attachments.push({
-          type: "file",
-          mimeType,
-          fileName: relPath.split("/").pop() || relPath,
-          content
-        });
-        totalSize += stat.size;
-      } catch {}
-    }
-    return attachments;
-  }
-
-  private formatCommandResponse(command: string, response: any): string {
-    const cmd = command.trim().toLowerCase();
-    if (!response) return 'No response';
-    
-    // Handle specific command responses
-    if (cmd === '/stop') {
-      if (response.aborted === true) {
-        return 'Stream stopped successfully';
-      } else {
-        return 'No active stream to stop';
-      }
-    }
-    
-    // Handle other common slash commands
-    if (cmd === '/new') {
-      return 'New chat session started';
-    }
-    
-    if (cmd === '/models') {
-      if (response.models && Array.isArray(response.models)) {
-        return `Available models: ${response.models.join(', ')}`;
-      }
-      return 'Models list retrieved';
-    }
-    
-    if (cmd === '/help') {
-      return 'Available commands: /stop /new /models /help';
-    }
-    
-    // Fallback: show meaningful fields or JSON
-    if (response.message) return response.message;
-    if (response.ok !== undefined) {
-      const okStr = response.ok === true ? 'Success' : 'Failed';
-      if (response.aborted !== undefined) {
-        return `${okStr}${response.aborted ? ' (aborted)' : ''}`;
-      }
-      return okStr;
-    }
-    
-    return JSON.stringify(response);
-  }
-
-  private async handleStopStream() {
-    try {
-      await this.gateway.request("chat.abort", {
-        sessionKey: this.gwSessionKey()
-      });
-    } catch {}
-  }
-
-  private async handleSearchFiles(query: string, requestId: string) {
-    try {
-      const folders = vscode.workspace.workspaceFolders;
-      if (!folders || folders.length === 0) {
-        this.postToWebview({ type: "fileResults", requestId, files: [] });
-        return;
-      }
-
-      let pattern: string = '**/*';
-      // 清理 query：去掉末尾的路径分隔符，用于过滤匹配
-      const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
-      
-      // isRootFolder 提升到外层作用域，供二次过滤使用
-      let isRootFolder = false;
-      
-      if (!query) {
-        pattern = "**/*";
-      } else {
-        // Check if query contains path separator (directory prefix)
-        const lastSlashIndex = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
-        if (lastSlashIndex > 0) {
-          // Query has directory prefix: split into dirPrefix and fileKeyword
-          let dirPrefix = query.substring(0, lastSlashIndex).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-          const fileKeyword = query.substring(lastSlashIndex + 1);
-          
-          // 检查 dirPrefix 是否是工作区根目录名
-          const rootFolderNames = folders.map(f => f.name.toLowerCase());
-          isRootFolder = rootFolderNames.includes(dirPrefix.toLowerCase());
-          
-          if (isRootFolder) {
-            // dirPrefix 是工作区根目录名：只搜索该工作区文件夹下的文件
-            // 使用 RelativePattern 限制搜索范围到指定工作区
-            const targetFolder = folders.find(f => f.name.toLowerCase() === dirPrefix.toLowerCase());
-            if (!targetFolder) {
-              // 如果找不到目标文件夹，返回空结果
-              return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
-            }
-            const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
-            const relativePattern = new vscode.RelativePattern(targetFolder, basePattern);
-            const uris = await vscode.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
-            
-            // 直接处理结果并返回
-            return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
-          } else if (fileKeyword) {
-            // Search for files matching keyword under the specified directory
-            pattern = `${dirPrefix}/**/*${fileKeyword}*`;
-          } else if (lastSlashIndex === query.length - 1) {
-            // Query ends with '/' (e.g., "src/components/"): list all files in that directory
-            pattern = `${dirPrefix}/**/*`;
-          }
-        } else {
-          // No directory prefix: global fuzzy search (original behavior)
-          pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
-        }
-      }
-      const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
-      return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
-    } catch {
-      this.postToWebview({ type: "fileResults", requestId, files: [] });
-    }
-  }
-
-  private async processSearchResults(uris: vscode.Uri[], folders: vscode.WorkspaceFolder[], cleanQuery: string, requestId: string, isRootFolder: boolean): Promise<void> {
-    const files: { path: string; isDir: boolean }[] = [];
-    const seen = new Set<string>();
-
-    // 读取当前浏览目录的直接子目录和文件（用于目录导航）
-    if (cleanQuery) {
-      let browseUri: vscode.Uri | undefined;
-      let displayPrefix: string = '';
-      if (folders.length === 1) {
-        const folder = folders[0];
-        if (isRootFolder) {
-          browseUri = folder.uri;
-          displayPrefix = '';
-        } else {
-          browseUri = vscode.Uri.joinPath(folder.uri, cleanQuery);
-          displayPrefix = cleanQuery;
-        }
-      } else {
-        const sep = cleanQuery.indexOf('/');
-        if (sep > 0) {
-          const folderName = cleanQuery.substring(0, sep);
-          const folder = folders.find(f => f.name.toLowerCase() === folderName.toLowerCase());
-          if (folder) {
-            const relPath = cleanQuery.substring(sep + 1);
-            browseUri = vscode.Uri.joinPath(folder.uri, relPath);
-            displayPrefix = cleanQuery; // 已包含 folderName/relPath
-          }
-        } else if (isRootFolder) {
-          const folder = folders.find(f => f.name.toLowerCase() === cleanQuery.toLowerCase());
-          if (folder) {
-            browseUri = folder.uri;
-            displayPrefix = folder.name;
-          }
-        }
-      }
-      if (browseUri) {
-        try {
-          const entries = await vscode.workspace.fs.readDirectory(browseUri);
-          for (const [name, type] of entries) {
-            if (name.startsWith('.')) continue; // 跳过隐藏目录
-            const isDir = (type & vscode.FileType.Directory) !== 0;
-            const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
-            if (!seen.has(fullPath)) {
-              seen.add(fullPath);
-              files.push({ path: fullPath, isDir });
-            }
-          }
-        } catch {
-          // 忽略读取目录错误
-        }
-      }
-    }
-
-    for (const uri of uris) {
-      // Get workspace folder to support multi-root workspaces
-      const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
-      const relativePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
-      
-      // In multi-root workspaces, prepend workspace folder name for uniqueness
-      let fullPath: string;
-      if (folders.length > 1 && workspaceFolder) {
-        fullPath = `${workspaceFolder.name}/${relativePath}`;
-      } else {
-        fullPath = relativePath;
-      }
-      
-      if (seen.has(fullPath)) continue;
-      seen.add(fullPath);
-
-      const parts = fullPath.split("/");
-      let isDir = false;
-      try {
-        const stat = await vscode.workspace.fs.stat(uri);
-        isDir = (stat.type & vscode.FileType.Directory) !== 0;
-      } catch {
-        // Ignore stat errors (e.g., file deleted during search)
-        isDir = false;
-      }
-
-      // 当查询是工作区根目录名时，跳过二次过滤（显示所有文件）
-      if (cleanQuery && !isRootFolder) {
-        const q = cleanQuery.toLowerCase();
-        const name = parts[parts.length - 1].toLowerCase();
-        const full = fullPath.toLowerCase();
-        if (!name.includes(q) && !full.includes(q)) continue;
-      }
-
-      files.push({ path: fullPath, isDir });
-      if (files.length >= 30) break;
-    }
-
-    // 当 isRootFolder 时，不显示工作区文件夹名本身（它不是自己的子目录）
-    const folders2: { path: string; isDir: boolean }[] = [];
-    if (!isRootFolder) {
-      for (const folder of folders) {
-        const folderName = folder.name;
-        if (cleanQuery && !folderName.toLowerCase().includes(cleanQuery.toLowerCase())) continue;
-        folders2.push({ path: folderName, isDir: true });
-      }
-    }
-
-    this.postToWebview({
-      type: "fileResults",
-      requestId,
-      files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
-    });
-  }
-
-  private async handleRequestModels() {
-    try {
-      const res = await this.gateway.request("models.list", {});
-      this.postToWebview({ type: "modelsList", models: res?.models || [] });
-    } catch {
-      this.postToWebview({ type: "modelsList", models: [] });
-    }
-  }
-
-  private async handleRequestSessions() {
-    try {
-      // 获取未归档会话（活跃会话）
-      const res = await this.gateway.request("sessions.list", {
-        archived: false,
-        includeGlobal: true,
-        includeUnknown: true,
-        includeDerivedTitles: true,
-        limit: 100
-      });
-      this.sessions = res?.sessions || [];
-      this.log(`sessions.list: ${this.sessions.length} 条`);
-      // 发送完整会话数据给 webview，包含 device-info 等字段
-      this.postToWebview({ type: "sessionsList", sessions: this.sessions });
-    } catch (err: any) {
-      this.log(`sessions.list error: ${err.message}`);
-      this.postToWebview({ type: "sessionsList", sessions: [] });
-    }
-  }
-
-  private resolveActiveAgent() {
-    if (!this.agents || this.agents.length === 0) return;
-    const currentId = this.activeAgent?.id;
-    if (!currentId) return;
-    // 1. Exact id match (original behavior)
-    let match = this.agents.find(a => a.id === currentId);
-    // 2. Fallback: match by name (e.g. configured "OpenClaw VSCode" matches node:<deviceId> whose name is "OpenClaw VSCode")
-    if (!match) {
-      match = this.agents.find(a => (a.name || "") === currentId);
-    }
-    if (match) {
-      this.activeAgent = {
-        id: match.id,
-        name: match.name || match.id,
-        emoji: match.emoji || "🤖"
-      };
-    }
-  }
-
-  private async handleRequestAgents() {
-    try {
-      const res = await this.gateway.request("agents.list", {});
-      this.agents = res?.agents || [];
-      if (this.agents.length === 0) this.agents = [{ id: "main", name: "Agent" }];
-      this.resolveActiveAgent();
-      this.postToWebview({ type: "agentsList", agents: this.agents });
-      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-    } catch {
-      this.postToWebview({ type: "agentsList", agents: [] });
-    }
-  }
-
-  private async handleRequestTasks() {
-    try {
-      // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
-      const res = await this.gateway.request("tasks.list", {
-        limit: 500
-      });
-      // 后端过滤：只保留 queued 和 running 状态的任务
-      const allTasks = res?.tasks || [];
-      
-      const activeTasks = allTasks.filter((t: any) => t.status === "queued" || t.status === "running");
-      this.log(`tasks.list: ${activeTasks.length} 条 (总 ${allTasks.length} 条)`);
-      this.postToWebview({ type: "tasksList", tasks: activeTasks });
-    } catch (err: any) {
-      this.log(`tasks.list error: ${err.message}`);
-      this.postToWebview({ type: "tasksList", tasks: [] });
-    }
-  }
-
-  private async handleLoadDefaults() {
-    try {
-      const res = await this.gateway.request("config.get", {});
-      const config = res?.config || res || {};
-      const agentDefaults = config?.agents?.defaults || {};
-      this.thinkingLevel = agentDefaults.thinkingDefault || "";
-      this.verboseLevel = agentDefaults.verboseDefault || "";
-      this.postToWebview({
-        type: "defaultsLoaded",
-        thinkingLevel: this.thinkingLevel,
-        verboseLevel: this.verboseLevel
-      });
-    } catch {}
-  }
-
-  private async cycleThinking() {
-    const levels = ["", "off", "low", "medium", "high"];
-    const idx = levels.indexOf(this.thinkingLevel);
-    this.thinkingLevel = levels[(idx + 1) % levels.length];
-    this.postToWebview({ type: "thinkingChanged", level: this.thinkingLevel });
-  }
-
-  private async cycleVerbose() {
-    const levels = ["", "off", "on", "full"];
-    const idx = levels.indexOf(this.verboseLevel);
-    this.verboseLevel = levels[(idx + 1) % levels.length];
-    this.postToWebview({ type: "verboseChanged", level: this.verboseLevel });
-  }
-
-  private async handleOpenWorkdir() {
-    try {
-      const agentListRes = await this.gateway.request("agents.list", {});
-      const agents = agentListRes?.agents || [];
-      const agent = agents.find((a: any) => a.id === this.activeAgent.id);
-      let workspace = agent?.workspace || "";
-      
-      if (!workspace) {
-        const configRes = await this.gateway.request("config.get", {});
-        const config = configRes?.config || configRes || {};
-        workspace = config?.agents?.defaults?.workspace || config?.workspace || "";
-      }
-      
-      if (!workspace) {
-        vscode.window.showWarningMessage(vscode.l10n.t("Could not determine working directory"));
-        return;
-      }
-      
-      // Normalize path: uppercase drive letter for Windows (e.g. l:\ → L:\)
-      const normalizedPath = workspace.replace(/^[a-z]:/i, (match: string) => match.toUpperCase());
-      const workspaceUri = vscode.Uri.file(normalizedPath);
-      const folders = vscode.workspace.workspaceFolders;
-      
-      // Check if the folder is already in the workspace
-      let alreadyExists = false;
-      if (folders) {
-        for (const folder of folders) {
-          if (folder.uri.fsPath.toLowerCase() === workspaceUri.fsPath.toLowerCase()) {
-            alreadyExists = true;
-            break;
-          }
-        }
-      }
-      
-      if (alreadyExists) {
-        // 文件夹已存在，聚焦并在 Explorer 中展开该文件夹
-        await vscode.commands.executeCommand('workbench.view.explorer');
-        await vscode.commands.executeCommand('revealInExplorer', workspaceUri);
-        // 展开当前选中的树节点（显示子内容）
-        await vscode.commands.executeCommand('list.expand');
-        vscode.window.showInformationMessage(vscode.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
-        return;
-      }
-      
-      // 统一逻辑：无论单根、多根还是无工作区，都以友好方式添加 agent 工作目录
-      const currentFolders = vscode.workspace.workspaceFolders;
-      const replaceFolders = currentFolders ? currentFolders.map(f => ({ uri: f.uri })) : [];
-      replaceFolders.push({ uri: workspaceUri });
-
-      const success = vscode.workspace.updateWorkspaceFolders(
-        0,
-        currentFolders ? currentFolders.length : 0,
-        ...replaceFolders
-      );
-      
-      if (success) {
-        vscode.window.showInformationMessage(vscode.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
-      } else {
-        vscode.window.showErrorMessage(
-          `Failed to add folder to workspace: ${workspaceUri.fsPath}. ` +
-          `You may need to open a workspace (.code-workspace) file first.`
-        );
-      }
-    } catch (err: any) {
-      this.log(`openWorkdir error: ${err.message}`);
-      vscode.window.showErrorMessage(vscode.l10n.t("Failed to open working directory: {0}", err.message));
-    }
-  }
-
-  private async handleToggleSupervision(enabled: boolean) {
-    this.log(`handleToggleSupervision called with enabled=${enabled}`);
-    this.supervisionEnabled = enabled;
-    this.log(`Supervision ${enabled ? 'enabled' : 'disabled'}`);
-    // Notify webview of the new state
-    this.postToWebview({ type: 'supervisionState', enabled });
-    
-    if (enabled) {
-      this.log("About to call startSupervision()");
-      await this.startSupervision();
-      this.log("startSupervision() returned");
-    } else {
-      this.log("About to call stopSupervision()");
-      this.stopSupervision();
-      this.log("stopSupervision() returned");
-    }
-  }
-
-  private async startSupervision() {
-    this.log(`startSupervision called, supervisionEnabled=${this.supervisionEnabled}, timer=${this.supervisionTimer !== null}`);
-    if (this.supervisionTimer) {
-      this.log("Timer already running, skipping start");
-      return;
-    }
-    
-    const config = vscode.workspace.getConfiguration("openclaw");
-    const intervalMinutes = config.get<number>("supervisor.intervalMinutes", 5) || 5;
-    const reminderMessage = config.get<string>("supervisor.reminderMessage", "") || "";
-    const agentId = config.get<string>("supervisor.agentId", "") || "";
-    const stopInquiryMethod = config.get<string>("supervisor.stopInquiryMethod", "") || "";
-    const stopSignalReply = config.get<string>("supervisor.stopSignalReply", "yes") || "yes";
-    const stopSignalContent = config.get<string>("supervisor.stopSignalContent", "") || "";
-    
-    this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
-    
-    if (!agentId) {
-      this.log("ERROR: agentId is empty! Cannot start supervision.");
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Supervisor agent ID not configured"));
-      this.supervisionEnabled = false;
-      return;
-    }
-    
-    this.log(`Starting supervision with interval ${intervalMinutes}min, agent=${agentId}`);
-    
-    // --- Hello handshake: connect the supervisor agent (one-time) ---
-    const supervisorSessionKey = `agent:${agentId}:main`;
-    const HELLO_MESSAGE = "hello， Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
-    this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
-    try {
-      const runId = this.genId();
-      await this.gateway.request("chat.send", {
-        sessionKey: supervisorSessionKey,
-        message: HELLO_MESSAGE,
-        deliver: false,
-        idempotencyKey: runId
-      });
-      const handshakeReply = await this.waitForSupervisorResponse(supervisorSessionKey, 30000);
-      this.log(`Supervisor handshake completed. Supervisor agent reply: ${handshakeReply ? handshakeReply : "(no reply within timeout)"}`);
-    } catch (err: any) {
-      this.log(`Supervisor handshake failed: ${err?.message || err}`);
-    }
-    
-    // Run immediately, then on interval
-    this.supervisionTimer = setInterval(async () => {
-      this.log("Interval timer fired, calling runSupervisionCheck...");
-      await this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent);
-      this.log("runSupervisionCheck completed");
-    }, intervalMinutes * 60 * 1000);
-    
-    // Also run once immediately
-    this.log("Running immediate supervision check...");
-    this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent).then(() => {
-      this.log("Immediate supervision check completed");
-    }).catch((err) => {
-      this.log(`Immediate supervision check error: ${err.message}`);
-    });
-  }
-
-  private stopSupervision() {
-    this.log(`stopSupervision called, timer=${this.supervisionTimer !== null}`);
-    if (this.supervisionTimer) {
-      clearInterval(this.supervisionTimer);
-      this.supervisionTimer = null;
-      this.log("Supervision timer cleared");
-    }
-    if (this.supervisorBusy) {
-      this.log("WARNING: supervisorBusy is still true, clearing it");
-      this.supervisorBusy = false;
-    }
-    // Always clear the pending request timeout to prevent stale resolves
-    if (this.supervisorTimeout) {
-      clearTimeout(this.supervisorTimeout);
-      this.supervisorTimeout = null;
-      this.log("Supervisor request timeout cleared");
-    }
-    this.supervisorPendingSessionKey = null;
-    this.supervisorResponseResolver = null;
-    this.supervisorAccumulated = "";
-    this.log("Supervision stopped");
-  }
-
-  private async runSupervisionCheck(intervalMinutes: number, reminderMessage: string, agentId: string, stopInquiryMethod: string, stopSignalReply: string, stopSignalContent: string) {
-    this.log(`runSupervisionCheck called: supervisionEnabled=${this.supervisionEnabled}, supervisorBusy=${this.supervisorBusy}`);
-    if (!this.supervisionEnabled) {
-      this.log("Supervision not enabled, returning");
-      return;
-    }
-    
-    try {
-      this.log(`Fetching chat history for session: ${this.gwSessionKey()}`);
-      // Get the last assistant message from the current session
-      const res = await this.gateway.request("chat.history", {
-        sessionKey: this.gwSessionKey(),
-        limit: 10
-      });
-      const msgs = res?.messages || [];
-      this.log(`chat.history returned ${msgs.length} messages`);
-      
-      // Find the last assistant message
-      let lastContent = "";
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
-        if (m.role === "assistant") {
-          const text = await this.extractHistoryContent(m.content);
-          this.log(`  Assistant message text length: ${text?.length || 0}`);
-          if (text && !text.startsWith("HEARTBEAT")) {
-            lastContent = text;
-            this.log(`  Found last assistant content (length=${lastContent.length}), breaking`);
-            break;
-          }
-        }
-      }
-      
-      this.log(`Supervision check: last content length=${lastContent.length}, previous=${this.lastSupervisedContent.length}`);
-      
-      const isFirstCheck = this.lastSupervisedContent.length === 0;
-      
-      // --- Every check performs supervisor inquiry ---
-      // Guard against concurrent inquiries
-      if (this.supervisorBusy) {
-        this.log(`Supervisor inquiry skipped: already busy`);
-        return;
-      }
-      
-      this.supervisorBusy = true;
-      this.log(`Inquiring supervisor every check: ${agentId}`);
-      const inquiry = `${stopInquiryMethod}：${lastContent}`;
-      const supervisorSessionKey = `agent:${agentId}:main`;
-      this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
-      
-      const runId = this.genId();
-      try {
-        // Send inquiry to supervisor agent via chat.send to its session
-        await this.gateway.request("chat.send", {
-          sessionKey: supervisorSessionKey,
-          message: inquiry,
-          deliver: false,
-          idempotencyKey: runId
-        });
-        
-        // Wait for supervisor response via chat event listener
-        this.log(`Waiting for supervisor response (timeout 120s)...`);
-        const reply = await this.waitForSupervisorResponse(supervisorSessionKey);
-        
-        if (reply && reply.toLowerCase().trim() === stopSignalReply.toLowerCase().trim()) {
-          this.log(`Supervisor replied with stop signal: "${reply}"`);
-          this.supervisionEnabled = false;
-          this.stopSupervision();
-          this.postToWebview({ type: 'supervisionState', enabled: false });
-          vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped by supervisor agent"));
-          this.supervisorBusy = false;
-          return;
-        } else {
-          this.log(`Supervisor replied: ${reply?.substring(0, 50)}... (not stop signal, continuing)`);
-        }
-        this.supervisorBusy = false;
-      } catch (err: any) {
-        this.log(`Supervisor inquiry failed: ${err.message}`);
-        this.supervisorBusy = false;
-      }
-      
-      // First check: store baseline, skip comparison (no previous content)
-      if (isFirstCheck) {
-        this.log(`First check, storing content baseline (length=${lastContent.length})`);
-        this.lastSupervisedContent = lastContent;
-        return;
-      }
-      
-      // --- Content comparison ---
-      if (lastContent === this.lastSupervisedContent && lastContent.length > 0) {
-        // Content unchanged, send reminder
-        this.log(`Content SAME (length=${lastContent.length}) → sending reminder`);
-        if (reminderMessage) {
-          this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
-          const runId = this.genId();
-          try {
+        } catch (sendErr) {
+          const errMsg = sendErr?.message || "";
+          if (errMsg.includes("ended during restart recovery")) {
+            this.log(`Continue: session ended, sending /new...`);
             await this.gateway.request("chat.send", {
               sessionKey: this.gwSessionKey(),
-              message: reminderMessage,
+              message: "/new",
+              deliver: false,
+              idempotencyKey: this.genId()
+            });
+            await new Promise((r) => setTimeout(r, 1e3));
+            await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: "Continue",
               deliver: false,
               idempotencyKey: runId
             });
-            this.log(`Reminder sent successfully`);
-          } catch (err: any) {
-            this.log(`Reminder send failed: ${err.message}`);
+          } else {
+            throw sendErr;
+          }
+        }
+      } catch {
+        this.postToWebview({ type: "streamDone", runId });
+        this.setBusy(false);
+      }
+    }
+    async buildAttachments(fileRefs) {
+      if (!fileRefs || fileRefs.length === 0)
+        return [];
+      const attachments = [];
+      const MAX_TOTAL = 20 * 1024 * 1024;
+      let totalSize = 0;
+      const folders = vscode.workspace.workspaceFolders;
+      const rootUri = folders && folders.length > 0 ? folders[0].uri : void 0;
+      for (const relPath of fileRefs) {
+        if (totalSize >= MAX_TOTAL)
+          break;
+        try {
+          if (!rootUri)
+            continue;
+          const fileUri = vscode.Uri.joinPath(rootUri, relPath);
+          const stat = await vscode.workspace.fs.stat(fileUri);
+          if (stat.size > MAX_TOTAL)
+            continue;
+          if (totalSize + stat.size > MAX_TOTAL)
+            continue;
+          const bytes = await vscode.workspace.fs.readFile(fileUri);
+          const mimeType = getMimeType(relPath);
+          const content = Buffer.from(bytes).toString("base64");
+          attachments.push({
+            type: "file",
+            mimeType,
+            fileName: relPath.split("/").pop() || relPath,
+            content
+          });
+          totalSize += stat.size;
+        } catch {
+        }
+      }
+      return attachments;
+    }
+    formatCommandResponse(command, response) {
+      const cmd = command.trim().toLowerCase();
+      if (!response)
+        return "No response";
+      if (cmd === "/stop") {
+        if (response.aborted === true) {
+          return "Stream stopped successfully";
+        } else {
+          return "No active stream to stop";
+        }
+      }
+      if (cmd === "/new") {
+        return "New chat session started";
+      }
+      if (cmd === "/models") {
+        if (response.models && Array.isArray(response.models)) {
+          return `Available models: ${response.models.join(", ")}`;
+        }
+        return "Models list retrieved";
+      }
+      if (cmd === "/help") {
+        return "Available commands: /stop /new /models /help";
+      }
+      if (response.message)
+        return response.message;
+      if (response.ok !== void 0) {
+        const okStr = response.ok === true ? "Success" : "Failed";
+        if (response.aborted !== void 0) {
+          return `${okStr}${response.aborted ? " (aborted)" : ""}`;
+        }
+        return okStr;
+      }
+      return JSON.stringify(response);
+    }
+    async handleStopStream() {
+      try {
+        await this.gateway.request("chat.abort", {
+          sessionKey: this.gwSessionKey()
+        });
+      } catch {
+      }
+    }
+    async handleSearchFiles(query, requestId) {
+      try {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+          this.postToWebview({ type: "fileResults", requestId, files: [] });
+          return;
+        }
+        let pattern = "**/*";
+        const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
+        let isRootFolder = false;
+        if (!query) {
+          pattern = "**/*";
+        } else {
+          const lastSlashIndex = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
+          if (lastSlashIndex > 0) {
+            let dirPrefix = query.substring(0, lastSlashIndex).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+            const fileKeyword = query.substring(lastSlashIndex + 1);
+            const rootFolderNames = folders.map((f) => f.name.toLowerCase());
+            isRootFolder = rootFolderNames.includes(dirPrefix.toLowerCase());
+            if (isRootFolder) {
+              const targetFolder = folders.find((f) => f.name.toLowerCase() === dirPrefix.toLowerCase());
+              if (!targetFolder) {
+                return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
+              }
+              const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
+              const relativePattern = new vscode.RelativePattern(targetFolder, basePattern);
+              const uris2 = await vscode.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
+              return this.processSearchResults(uris2, [...folders], cleanQuery, requestId, isRootFolder);
+            } else if (fileKeyword) {
+              pattern = `${dirPrefix}/**/*${fileKeyword}*`;
+            } else if (lastSlashIndex === query.length - 1) {
+              pattern = `${dirPrefix}/**/*`;
+            }
+          } else {
+            pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
+          }
+        }
+        const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
+        return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
+      } catch {
+        this.postToWebview({ type: "fileResults", requestId, files: [] });
+      }
+    }
+    async processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder) {
+      const files = [];
+      const seen = /* @__PURE__ */ new Set();
+      if (cleanQuery) {
+        let browseUri;
+        let displayPrefix = "";
+        if (folders.length === 1) {
+          const folder = folders[0];
+          if (isRootFolder) {
+            browseUri = folder.uri;
+            displayPrefix = "";
+          } else {
+            browseUri = vscode.Uri.joinPath(folder.uri, cleanQuery);
+            displayPrefix = cleanQuery;
           }
         } else {
-          this.log(`WARNING: reminderMessage is empty, skip sending`);
-        }
-      } else if (lastContent !== this.lastSupervisedContent && lastContent.length > 0) {
-        // Content changed, check for stop signal content
-        this.log(`Content DIFFERENT: previous=${this.lastSupervisedContent.length}, current=${lastContent.length}`);
-        if (stopSignalContent) {
-          const stopSignals = stopSignalContent.split("|").map(s => s.trim()).filter(s => s.length > 0);
-          if (stopSignals.some(signal => lastContent.includes(signal))) {
-            this.log(`stopSignalContent matched in changed content: "${stopSignalContent.substring(0, 30)}"`);
-            this.supervisionEnabled = false;
-            this.stopSupervision();
-            this.postToWebview({ type: 'supervisionState', enabled: false });
-            vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped: stop signal content detected"));
-            return;
-          } else {
-            this.log(`stopSignalContent not matched (or empty), continuing`);
+          const sep = cleanQuery.indexOf("/");
+          if (sep > 0) {
+            const folderName = cleanQuery.substring(0, sep);
+            const folder = folders.find((f) => f.name.toLowerCase() === folderName.toLowerCase());
+            if (folder) {
+              const relPath = cleanQuery.substring(sep + 1);
+              browseUri = vscode.Uri.joinPath(folder.uri, relPath);
+              displayPrefix = cleanQuery;
+            }
+          } else if (isRootFolder) {
+            const folder = folders.find((f) => f.name.toLowerCase() === cleanQuery.toLowerCase());
+            if (folder) {
+              browseUri = folder.uri;
+              displayPrefix = folder.name;
+            }
           }
         }
-      } else {
-        // Empty content, just update
-        this.log(`Last content is empty, updating baseline`);
+        if (browseUri) {
+          try {
+            const entries = await vscode.workspace.fs.readDirectory(browseUri);
+            for (const [name, type] of entries) {
+              if (name.startsWith("."))
+                continue;
+              const isDir = (type & vscode.FileType.Directory) !== 0;
+              const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
+              if (!seen.has(fullPath)) {
+                seen.add(fullPath);
+                files.push({ path: fullPath, isDir });
+              }
+            }
+          } catch {
+          }
+        }
       }
-      
-      // Update last supervised content
-      this.lastSupervisedContent = lastContent;
-    } catch (err: any) {
-      this.log(`Supervision check error: ${err.message}`);
-    }
-  }
-
-  private waitForSupervisorResponse(supervisorSessionKey: string, timeoutMs = 120000): Promise<string | null> {
-    return new Promise((resolve) => {
-      // Set up state for intercepting the supervisor's reply
-      this.supervisorPendingSessionKey = supervisorSessionKey;
-      this.supervisorResponseResolver = resolve;
-      this.supervisorAccumulated = "";
-      
-      const timeout = setTimeout(() => {
-        this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
-        this.supervisorTimeout = null;
-        this.supervisorPendingSessionKey = null;
-        this.supervisorResponseResolver = null;
-        resolve(this.supervisorAccumulated || null);
-      }, timeoutMs);
-      
-      this.supervisorTimeout = timeout;
-    });
-  }
-
-  private async handleLoadMessages(sessionKey: string) {
-    try {
-      const res = await this.gateway.request("chat.history", {
-        sessionKey: this.gwSessionKey(sessionKey),
-        limit: 200
+      for (const uri of uris) {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+        const relativePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+        let fullPath;
+        if (folders.length > 1 && workspaceFolder) {
+          fullPath = `${workspaceFolder.name}/${relativePath}`;
+        } else {
+          fullPath = relativePath;
+        }
+        if (seen.has(fullPath))
+          continue;
+        seen.add(fullPath);
+        const parts = fullPath.split("/");
+        let isDir = false;
+        try {
+          const stat = await vscode.workspace.fs.stat(uri);
+          isDir = (stat.type & vscode.FileType.Directory) !== 0;
+        } catch {
+          isDir = false;
+        }
+        if (cleanQuery && !isRootFolder) {
+          const q = cleanQuery.toLowerCase();
+          const name = parts[parts.length - 1].toLowerCase();
+          const full = fullPath.toLowerCase();
+          if (!name.includes(q) && !full.includes(q))
+            continue;
+        }
+        files.push({ path: fullPath, isDir });
+        if (files.length >= 30)
+          break;
+      }
+      const folders2 = [];
+      if (!isRootFolder) {
+        for (const folder of folders) {
+          const folderName = folder.name;
+          if (cleanQuery && !folderName.toLowerCase().includes(cleanQuery.toLowerCase()))
+            continue;
+          folders2.push({ path: folderName, isDir: true });
+        }
+      }
+      this.postToWebview({
+        type: "fileResults",
+        requestId,
+        files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
       });
-      const msgs = res?.messages || [];
-      this.log(`history: ${msgs.length} messages`);
-      const parsed: ChatMessage[] = await Promise.all(
-        msgs
-          .filter((m: any) => m.role === "user" || m.role === "assistant")
-          .map(async (m: any) => ({
+    }
+    async handleRequestModels() {
+      try {
+        const res = await this.gateway.request("models.list", {});
+        this.postToWebview({ type: "modelsList", models: res?.models || [] });
+      } catch {
+        this.postToWebview({ type: "modelsList", models: [] });
+      }
+    }
+    async handleRequestSessions() {
+      try {
+        const res = await this.gateway.request("sessions.list", {
+          archived: false,
+          includeGlobal: true,
+          includeUnknown: true,
+          includeDerivedTitles: true,
+          limit: 100
+        });
+        this.sessions = res?.sessions || [];
+        this.log(`sessions.list: ${this.sessions.length} \u6761`);
+        this.postToWebview({ type: "sessionsList", sessions: this.sessions });
+      } catch (err) {
+        this.log(`sessions.list error: ${err.message}`);
+        this.postToWebview({ type: "sessionsList", sessions: [] });
+      }
+    }
+    resolveActiveAgent() {
+      if (!this.agents || this.agents.length === 0)
+        return;
+      const currentId = this.activeAgent?.id;
+      if (!currentId)
+        return;
+      let match = this.agents.find((a) => a.id === currentId);
+      if (!match) {
+        match = this.agents.find((a) => (a.name || "") === currentId);
+      }
+      if (match) {
+        this.activeAgent = {
+          id: match.id,
+          name: match.name || match.id,
+          emoji: match.emoji || "\u{1F916}"
+        };
+      }
+    }
+    async handleRequestAgents() {
+      try {
+        const res = await this.gateway.request("agents.list", {});
+        this.agents = res?.agents || [];
+        if (this.agents.length === 0)
+          this.agents = [{ id: "main", name: "Agent" }];
+        this.resolveActiveAgent();
+        this.postToWebview({ type: "agentsList", agents: this.agents });
+        this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
+      } catch {
+        this.postToWebview({ type: "agentsList", agents: [] });
+      }
+    }
+    async handleRequestTasks() {
+      try {
+        const res = await this.gateway.request("tasks.list", {
+          limit: 500
+        });
+        const allTasks = res?.tasks || [];
+        const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
+        this.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
+        this.postToWebview({ type: "tasksList", tasks: activeTasks });
+      } catch (err) {
+        this.log(`tasks.list error: ${err.message}`);
+        this.postToWebview({ type: "tasksList", tasks: [] });
+      }
+    }
+    async handleLoadDefaults() {
+      try {
+        const res = await this.gateway.request("config.get", {});
+        const config = res?.config || res || {};
+        const agentDefaults = config?.agents?.defaults || {};
+        this.thinkingLevel = agentDefaults.thinkingDefault || "";
+        this.verboseLevel = agentDefaults.verboseDefault || "";
+        this.postToWebview({
+          type: "defaultsLoaded",
+          thinkingLevel: this.thinkingLevel,
+          verboseLevel: this.verboseLevel
+        });
+      } catch {
+      }
+    }
+    async cycleThinking() {
+      const levels = ["", "off", "low", "medium", "high"];
+      const idx = levels.indexOf(this.thinkingLevel);
+      this.thinkingLevel = levels[(idx + 1) % levels.length];
+      this.postToWebview({ type: "thinkingChanged", level: this.thinkingLevel });
+    }
+    async cycleVerbose() {
+      const levels = ["", "off", "on", "full"];
+      const idx = levels.indexOf(this.verboseLevel);
+      this.verboseLevel = levels[(idx + 1) % levels.length];
+      this.postToWebview({ type: "verboseChanged", level: this.verboseLevel });
+    }
+    async handleOpenWorkdir() {
+      try {
+        const agentListRes = await this.gateway.request("agents.list", {});
+        const agents = agentListRes?.agents || [];
+        const agent = agents.find((a) => a.id === this.activeAgent.id);
+        let workspace2 = agent?.workspace || "";
+        if (!workspace2) {
+          const configRes = await this.gateway.request("config.get", {});
+          const config = configRes?.config || configRes || {};
+          workspace2 = config?.agents?.defaults?.workspace || config?.workspace || "";
+        }
+        if (!workspace2) {
+          vscode.window.showWarningMessage(vscode.l10n.t("Could not determine working directory"));
+          return;
+        }
+        const normalizedPath = workspace2.replace(/^[a-z]:/i, (match) => match.toUpperCase());
+        const workspaceUri = vscode.Uri.file(normalizedPath);
+        const folders = vscode.workspace.workspaceFolders;
+        let alreadyExists = false;
+        if (folders) {
+          for (const folder of folders) {
+            if (folder.uri.fsPath.toLowerCase() === workspaceUri.fsPath.toLowerCase()) {
+              alreadyExists = true;
+              break;
+            }
+          }
+        }
+        if (alreadyExists) {
+          await vscode.commands.executeCommand("workbench.view.explorer");
+          await vscode.commands.executeCommand("revealInExplorer", workspaceUri);
+          await vscode.commands.executeCommand("list.expand");
+          vscode.window.showInformationMessage(vscode.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
+          return;
+        }
+        const currentFolders = vscode.workspace.workspaceFolders;
+        const replaceFolders = currentFolders ? currentFolders.map((f) => ({ uri: f.uri })) : [];
+        replaceFolders.push({ uri: workspaceUri });
+        const success = vscode.workspace.updateWorkspaceFolders(
+          0,
+          currentFolders ? currentFolders.length : 0,
+          ...replaceFolders
+        );
+        if (success) {
+          vscode.window.showInformationMessage(vscode.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
+        } else {
+          vscode.window.showErrorMessage(
+            `Failed to add folder to workspace: ${workspaceUri.fsPath}. You may need to open a workspace (.code-workspace) file first.`
+          );
+        }
+      } catch (err) {
+        this.log(`openWorkdir error: ${err.message}`);
+        vscode.window.showErrorMessage(vscode.l10n.t("Failed to open working directory: {0}", err.message));
+      }
+    }
+    async handleToggleSupervision(enabled) {
+      this.log(`handleToggleSupervision called with enabled=${enabled}`);
+      this.supervisionEnabled = enabled;
+      this.log(`Supervision ${enabled ? "enabled" : "disabled"}`);
+      this.postToWebview({ type: "supervisionState", enabled });
+      if (enabled) {
+        this.log("About to call startSupervision()");
+        await this.startSupervision();
+        this.log("startSupervision() returned");
+      } else {
+        this.log("About to call stopSupervision()");
+        this.stopSupervision();
+        this.log("stopSupervision() returned");
+      }
+    }
+    async startSupervision() {
+      this.log(`startSupervision called, supervisionEnabled=${this.supervisionEnabled}, timer=${this.supervisionTimer !== null}`);
+      if (this.supervisionTimer) {
+        this.log("Timer already running, skipping start");
+        return;
+      }
+      const config = vscode.workspace.getConfiguration("openclaw");
+      const intervalMinutes = config.get("supervisor.intervalMinutes", 5) || 5;
+      const reminderMessage = config.get("supervisor.reminderMessage", "") || "";
+      const agentId = config.get("supervisor.agentId", "") || "";
+      const stopInquiryMethod = config.get("supervisor.stopInquiryMethod", "") || "";
+      const stopSignalReply = config.get("supervisor.stopSignalReply", "yes") || "yes";
+      const stopSignalContent = config.get("supervisor.stopSignalContent", "") || "";
+      this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
+      if (!agentId) {
+        this.log("ERROR: agentId is empty! Cannot start supervision.");
+        vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Supervisor agent ID not configured"));
+        this.supervisionEnabled = false;
+        return;
+      }
+      this.log(`Starting supervision with interval ${intervalMinutes}min, agent=${agentId}`);
+      const supervisorSessionKey = `agent:${agentId}:main`;
+      const HELLO_MESSAGE = "hello\uFF0C Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
+      this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
+      try {
+        const runId = this.genId();
+        await this.gateway.request("chat.send", {
+          sessionKey: supervisorSessionKey,
+          message: HELLO_MESSAGE,
+          deliver: false,
+          idempotencyKey: runId
+        });
+        const handshakeReply = await this.waitForSupervisorResponse(supervisorSessionKey, 3e4);
+        this.log(`Supervisor handshake completed. Supervisor agent reply: ${handshakeReply ? handshakeReply : "(no reply within timeout)"}`);
+      } catch (err) {
+        this.log(`Supervisor handshake failed: ${err?.message || err}`);
+      }
+      this.supervisionTimer = setInterval(async () => {
+        this.log("Interval timer fired, calling runSupervisionCheck...");
+        await this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent);
+        this.log("runSupervisionCheck completed");
+      }, intervalMinutes * 60 * 1e3);
+      this.log("Running immediate supervision check...");
+      this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent).then(() => {
+        this.log("Immediate supervision check completed");
+      }).catch((err) => {
+        this.log(`Immediate supervision check error: ${err.message}`);
+      });
+    }
+    stopSupervision() {
+      this.log(`stopSupervision called, timer=${this.supervisionTimer !== null}`);
+      if (this.supervisionTimer) {
+        clearInterval(this.supervisionTimer);
+        this.supervisionTimer = null;
+        this.log("Supervision timer cleared");
+      }
+      if (this.supervisorBusy) {
+        this.log("WARNING: supervisorBusy is still true, clearing it");
+        this.supervisorBusy = false;
+      }
+      if (this.supervisorTimeout) {
+        clearTimeout(this.supervisorTimeout);
+        this.supervisorTimeout = null;
+        this.log("Supervisor request timeout cleared");
+      }
+      this.supervisorPendingSessionKey = null;
+      this.supervisorResponseResolver = null;
+      this.supervisorAccumulated = "";
+      this.log("Supervision stopped");
+    }
+    async runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent) {
+      this.log(`runSupervisionCheck called: supervisionEnabled=${this.supervisionEnabled}, supervisorBusy=${this.supervisorBusy}`);
+      if (!this.supervisionEnabled) {
+        this.log("Supervision not enabled, returning");
+        return;
+      }
+      try {
+        this.log(`Fetching chat history for session: ${this.gwSessionKey()}`);
+        const res = await this.gateway.request("chat.history", {
+          sessionKey: this.gwSessionKey(),
+          limit: 10
+        });
+        const msgs = res?.messages || [];
+        this.log(`chat.history returned ${msgs.length} messages`);
+        let lastContent = "";
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
+          if (m.role === "assistant") {
+            const text = await this.extractHistoryContent(m.content);
+            this.log(`  Assistant message text length: ${text?.length || 0}`);
+            if (text && !text.startsWith("HEARTBEAT")) {
+              lastContent = text;
+              this.log(`  Found last assistant content (length=${lastContent.length}), breaking`);
+              break;
+            }
+          }
+        }
+        this.log(`Supervision check: last content length=${lastContent.length}, previous=${this.lastSupervisedContent.length}`);
+        const isFirstCheck = this.lastSupervisedContent.length === 0;
+        if (this.supervisorBusy) {
+          this.log(`Supervisor inquiry skipped: already busy`);
+          return;
+        }
+        this.supervisorBusy = true;
+        this.log(`Inquiring supervisor every check: ${agentId}`);
+        const inquiry = `${stopInquiryMethod}\uFF1A${lastContent}`;
+        const supervisorSessionKey = `agent:${agentId}:main`;
+        this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
+        const runId = this.genId();
+        try {
+          await this.gateway.request("chat.send", {
+            sessionKey: supervisorSessionKey,
+            message: inquiry,
+            deliver: false,
+            idempotencyKey: runId
+          });
+          this.log(`Waiting for supervisor response (timeout 120s)...`);
+          const reply = await this.waitForSupervisorResponse(supervisorSessionKey);
+          if (reply && reply.toLowerCase().trim() === stopSignalReply.toLowerCase().trim()) {
+            this.log(`Supervisor replied with stop signal: "${reply}"`);
+            this.supervisionEnabled = false;
+            this.stopSupervision();
+            this.postToWebview({ type: "supervisionState", enabled: false });
+            vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped by supervisor agent"));
+            this.supervisorBusy = false;
+            return;
+          } else {
+            this.log(`Supervisor replied: ${reply?.substring(0, 50)}... (not stop signal, continuing)`);
+          }
+          this.supervisorBusy = false;
+        } catch (err) {
+          this.log(`Supervisor inquiry failed: ${err.message}`);
+          this.supervisorBusy = false;
+        }
+        if (isFirstCheck) {
+          this.log(`First check, storing content baseline (length=${lastContent.length})`);
+          this.lastSupervisedContent = lastContent;
+          return;
+        }
+        if (lastContent === this.lastSupervisedContent && lastContent.length > 0) {
+          this.log(`Content SAME (length=${lastContent.length}) \u2192 sending reminder`);
+          if (reminderMessage) {
+            this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
+            const runId2 = this.genId();
+            try {
+              await this.gateway.request("chat.send", {
+                sessionKey: this.gwSessionKey(),
+                message: reminderMessage,
+                deliver: false,
+                idempotencyKey: runId2
+              });
+              this.log(`Reminder sent successfully`);
+            } catch (err) {
+              this.log(`Reminder send failed: ${err.message}`);
+            }
+          } else {
+            this.log(`WARNING: reminderMessage is empty, skip sending`);
+          }
+        } else if (lastContent !== this.lastSupervisedContent && lastContent.length > 0) {
+          this.log(`Content DIFFERENT: previous=${this.lastSupervisedContent.length}, current=${lastContent.length}`);
+          if (stopSignalContent) {
+            const stopSignals = stopSignalContent.split("|").map((s) => s.trim()).filter((s) => s.length > 0);
+            if (stopSignals.some((signal) => lastContent.includes(signal))) {
+              this.log(`stopSignalContent matched in changed content: "${stopSignalContent.substring(0, 30)}"`);
+              this.supervisionEnabled = false;
+              this.stopSupervision();
+              this.postToWebview({ type: "supervisionState", enabled: false });
+              vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped: stop signal content detected"));
+              return;
+            } else {
+              this.log(`stopSignalContent not matched (or empty), continuing`);
+            }
+          }
+        } else {
+          this.log(`Last content is empty, updating baseline`);
+        }
+        this.lastSupervisedContent = lastContent;
+      } catch (err) {
+        this.log(`Supervision check error: ${err.message}`);
+      }
+    }
+    waitForSupervisorResponse(supervisorSessionKey, timeoutMs = 12e4) {
+      return new Promise((resolve) => {
+        this.supervisorPendingSessionKey = supervisorSessionKey;
+        this.supervisorResponseResolver = resolve;
+        this.supervisorAccumulated = "";
+        const timeout = setTimeout(() => {
+          this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
+          this.supervisorTimeout = null;
+          this.supervisorPendingSessionKey = null;
+          this.supervisorResponseResolver = null;
+          resolve(this.supervisorAccumulated || null);
+        }, timeoutMs);
+        this.supervisorTimeout = timeout;
+      });
+    }
+    async handleLoadMessages(sessionKey) {
+      try {
+        const res = await this.gateway.request("chat.history", {
+          sessionKey: this.gwSessionKey(sessionKey),
+          limit: 200
+        });
+        const msgs = res?.messages || [];
+        this.log(`history: ${msgs.length} messages`);
+        const parsed = await Promise.all(
+          msgs.filter((m) => m.role === "user" || m.role === "assistant").map(async (m) => ({
             role: m.role,
             text: await this.extractHistoryContent(m.content),
             timestamp: m.timestamp || Date.now(),
-            contentBlocks: Array.isArray(m.content) ? m.content : undefined
+            contentBlocks: Array.isArray(m.content) ? m.content : void 0
           }))
-      );
-      const filtered = parsed.filter((m: ChatMessage) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
-      // Remove leading orphan user message (from failed send)
-      if (filtered.length > 0 && filtered[0].role === "user") {
-        filtered.shift();
+        );
+        const filtered = parsed.filter((m) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
+        if (filtered.length > 0 && filtered[0].role === "user") {
+          filtered.shift();
+        }
+        this.postToWebview({ type: "loadMessages", sessionKey, messages: filtered });
+      } catch (err) {
+        this.log(`history error: ${err.message}`);
+        this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
       }
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: filtered });
-    } catch (err: any) {
-      this.log(`history error: ${err.message}`);
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
     }
-  }
-
-  private async handleDeleteSession(sessionKey: string) {
-    try {
-      await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
-      await this.handleRequestSessions();
-    } catch {}
-  }
-
-  private async handleSwitchAgent(agentId: string) {
-    const agent = this.agents.find(a => a.id === agentId);
-    if (agent) {
-      this.activeAgent = agent;
-      this.currentSessionKey = "main";
-      this.postToWebview({
-        type: "agentSwitched",
-        agent: this.activeAgent
-      });
-      await this.handleLoadMessages("main");
-      await this.handleRequestSessions();
+    async handleDeleteSession(sessionKey) {
+      try {
+        await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
+        await this.handleRequestSessions();
+      } catch {
+      }
     }
-  }
-
-  private postToWebview(msg: any) {
-    this.view?.webview.postMessage(msg);
-  }
-
-  private setBusy(active: boolean) {
-    if (active) this.busyCount = Math.max(1, this.busyCount + 1);
-    else this.busyCount = Math.max(0, this.busyCount - 1);
-    const n = this.busyCount;
-    this.postToWebview({
-      type: "busyState",
-      busy: n > 0,
-      label: n > 1
-        ? vscode.l10n.t("Processing ({0} queued)", n)
-        : vscode.l10n.t("Processing...")
-    });
-    this.updateYieldState();
-  }
-
-  /**
-   * Start (or reset) the subagent activity timeout timer.
-   * When no subagent event arrives within SUBAGENT_ACTIVITY_TIMEOUT_MS,
-   * the indicator is hidden automatically.
-   */
-  private startSubagentTimer() {
-    if (this.subagentTimer) clearTimeout(this.subagentTimer);
-    this.subagentTimer = setTimeout(() => {
-      this.subagentTimer = null;
-      this.activeSubagentCount = 0;
+    async handleSwitchAgent(agentId) {
+      const agent = this.agents.find((a) => a.id === agentId);
+      if (agent) {
+        this.activeAgent = agent;
+        this.currentSessionKey = "main";
+        this.postToWebview({
+          type: "agentSwitched",
+          agent: this.activeAgent
+        });
+        await this.handleLoadMessages("main");
+        await this.handleRequestSessions();
+      }
+    }
+    postToWebview(msg) {
+      this.view?.webview.postMessage(msg);
+    }
+    setBusy(active) {
+      if (active)
+        this.busyCount = Math.max(1, this.busyCount + 1);
+      else
+        this.busyCount = Math.max(0, this.busyCount - 1);
+      const n = this.busyCount;
       this.postToWebview({
-        type: 'subagentState',
-        active: false,
-        label: '',
-        state: ''
+        type: "busyState",
+        busy: n > 0,
+        label: n > 1 ? vscode.l10n.t("Processing ({0} queued)", n) : vscode.l10n.t("Processing...")
       });
       this.updateYieldState();
-    }, OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS);
-  }
-
-  /**
-   * Requirement B: heuristic sessions_yield detection.
-   * Yield state = busyCount > 0 AND there is recent subagent activity.
-   */
-  private updateYieldState() {
-    const shouldYield = this.busyCount > 0 &&
-      (Date.now() - this.lastSubagentEventMs) < OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS &&
-      this.activeSubagentCount > 0;
-    if (shouldYield === this.yieldState) return;
-    this.yieldState = shouldYield;
-    this.postToWebview({
-      type: 'yieldState',
-      active: shouldYield,
-      label: shouldYield ? vscode.l10n.t('Waiting for subagent…') : ''
-    });
-  }
-
-  private genId(): string {
-    return Math.random().toString(36).substring(2, 12);
-  }
-
-  private getHtml(): string {
-    const nonce = getNonce();
-    return /*html*/ `<!DOCTYPE html>
+    }
+    /**
+     * Start (or reset) the subagent activity timeout timer.
+     * When no subagent event arrives within SUBAGENT_ACTIVITY_TIMEOUT_MS,
+     * the indicator is hidden automatically.
+     */
+    startSubagentTimer() {
+      if (this.subagentTimer)
+        clearTimeout(this.subagentTimer);
+      this.subagentTimer = setTimeout(() => {
+        this.subagentTimer = null;
+        this.activeSubagentCount = 0;
+        this.postToWebview({
+          type: "subagentState",
+          active: false,
+          label: "",
+          state: ""
+        });
+        this.updateYieldState();
+      }, _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS);
+    }
+    /**
+     * Requirement B: heuristic sessions_yield detection.
+     * Yield state = busyCount > 0 AND there is recent subagent activity.
+     */
+    updateYieldState() {
+      const shouldYield = this.busyCount > 0 && Date.now() - this.lastSubagentEventMs < _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS && this.activeSubagentCount > 0;
+      if (shouldYield === this.yieldState)
+        return;
+      this.yieldState = shouldYield;
+      this.postToWebview({
+        type: "yieldState",
+        active: shouldYield,
+        label: shouldYield ? vscode.l10n.t("Waiting for subagent\u2026") : ""
+      });
+    }
+    genId() {
+      return Math.random().toString(36).substring(2, 12);
+    }
+    getHtml() {
+      const nonce = getNonce();
+      return (
+        /*html*/
+        `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1942,9 +1701,9 @@ body {
   overflow: hidden;
 }
 
-/* ═══════════════════════════════════════════
-   HUD PANEL (top) — Agent Card + Sessions
-   ═══════════════════════════════════════════ */
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+   HUD PANEL (top) \u2014 Agent Card + Sessions
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 #hud-panel {
   flex-shrink: 0;
   max-height: 45vh;
@@ -1983,7 +1742,7 @@ body {
 .agent-status { font-size: 12px; color: var(--text-muted); line-height: 1.3; }
 .agent-status.online { color: #4ade80; }
 
-/* Reconnect 按钮样式：位于 agent-status 右侧，离线时显示 */
+/* Reconnect \u6309\u94AE\u6837\u5F0F\uFF1A\u4F4D\u4E8E agent-status \u53F3\u4FA7\uFF0C\u79BB\u7EBF\u65F6\u663E\u793A */
 .btn-reconnect {
   font-size: 11px;
   padding: 2px 8px;
@@ -2171,9 +1930,9 @@ body {
 .hud-footer { padding: 4px 10px 8px; display: flex; align-items: center; }
 .hud-footer-badge { display: inline-flex; font-size: 11px; color: var(--text-muted); border: 1px solid rgba(128, 128, 128, 0.18); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.02em; }
 
-/* ═══════════════════════════════════════════
-   CHAT PANEL (bottom) — Messages + Input
-   ═══════════════════════════════════════════ */
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+   CHAT PANEL (bottom) \u2014 Messages + Input
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 #chat-panel {
   flex: 1;
   display: flex;
@@ -2260,11 +2019,11 @@ body {
 .progress-resize-handle:hover { background: var(--accent); opacity: 0.5; }
 .progress-resize-handle.dragging { background: var(--accent); opacity: 0.7; }
 #progress-note-panel.collapsed + .progress-resize-handle { width: 4px; cursor: ew-resize; background: var(--accent); opacity: 0.3; }
-/* 右侧 overlay 样式 */
+/* \u53F3\u4FA7 overlay \u6837\u5F0F */
 #progress-note-panel.right-overlay { position: absolute; right: 0; top: 0; bottom: 0; z-index: 1000; }
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
 
-/* Panel Tab 栏 */
+/* Panel Tab \u680F */
 .panel-tabs {
   display: flex;
   gap: 0;
@@ -2287,7 +2046,7 @@ body {
   font-weight: 600;
 }
 
-/* Panel Tab 内容区 */
+/* Panel Tab \u5185\u5BB9\u533A */
 .panel-tab-content {
   flex: 1;
   display: flex;
@@ -2419,7 +2178,7 @@ body {
 .msg-assistant .msg-bubble video { max-width: 100%; max-height: 400px; border-radius: 4px; display: block; margin: 4px 0; }
 .msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
 
-/* 语音消息样式 */
+/* \u8BED\u97F3\u6D88\u606F\u6837\u5F0F */
 .msg-audio-bubble { display: flex; flex-direction: column; gap: 8px; }
 .msg-audio { display: flex; align-items: center; gap: 10px; background: rgba(128,128,128,0.08); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 4px 0; }
 .msg-audio-play { font-size: 16px; color: var(--accent); cursor: pointer; flex-shrink: 0; width: 20px; text-align: center; }
@@ -2467,7 +2226,7 @@ body {
   align-items: center;
   gap: 4px;
 }
-/* 通用 Mermaid 按钮样式（图像/源码/复制/导出 统一） */
+/* \u901A\u7528 Mermaid \u6309\u94AE\u6837\u5F0F\uFF08\u56FE\u50CF/\u6E90\u7801/\u590D\u5236/\u5BFC\u51FA \u7EDF\u4E00\uFF09 */
 .msg-assistant .msg-bubble .mermaid-btn,
 .msg-assistant .msg-bubble .mermaid-copy-btn {
   font-size: 11px;
@@ -2496,7 +2255,7 @@ body {
   text-align: center;
   overflow-x: auto;
 }
-/* 让含 Mermaid 的 bubble 不受 msg-bubble 全局 max-width 限制，自动撑满 */
+/* \u8BA9\u542B Mermaid \u7684 bubble \u4E0D\u53D7 msg-bubble \u5168\u5C40 max-width \u9650\u5236\uFF0C\u81EA\u52A8\u6491\u6EE1 */
 .msg-assistant .msg-bubble:has(.mermaid-full-width) {
   max-width: 100%;
 }
@@ -2768,16 +2527,16 @@ body {
 </head>
 <body>
 
-<!-- ═══ HUD PANEL ═══ -->
+<!-- \u2550\u2550\u2550 HUD PANEL \u2550\u2550\u2550 -->
 <div id="hud-panel">
   <div class="agent-card" id="agentCard">
     <div class="agent-identity">
-      <div class="agent-orb" id="agentOrb">🤖</div>
+      <div class="agent-orb" id="agentOrb">\u{1F916}</div>
       <div class="agent-info">
         <div class="agent-name" id="agentName">Agent</div>
         <div style="display:flex;align-items:center;">
           <div class="agent-status" id="agentStatus">Connecting...</div>
-          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode.l10n.t('Reconnect')}</button>
+          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode.l10n.t("Reconnect")}</button>
         </div>
       </div>
     </div>
@@ -2787,17 +2546,17 @@ body {
       <button class="hud-section-toggle" id="btnModel">
         <span class="hud-section-label">AI MODEL</span>
         <span class="hud-section-value" id="modelValue">default</span>
-        <span class="hud-section-chevron">›</span>
+        <span class="hud-section-chevron">\u203A</span>
       </button>
       <button class="hud-section-toggle" id="btnReliability">
         <span class="hud-section-label">RELIABILITY</span>
         <span class="hud-section-value" id="reliabilityValue">default</span>
-        <span class="hud-section-chevron">›</span>
+        <span class="hud-section-chevron">\u203A</span>
       </button>
       <button class="hud-section-toggle" id="btnServer">
         <span class="hud-section-label">SERVER</span>
         <span class="hud-section-value" id="serverValue">127.0.0.1:18789</span>
-        <span class="hud-section-chevron">›</span>
+        <span class="hud-section-chevron">\u203A</span>
       </button>
     </div>
     <div class="hud-group-label">SESSIONS</div>
@@ -2825,58 +2584,58 @@ body {
   </div>
 </div>
 
-<!-- ═══ CHAT PANEL ═══ -->
+<!-- \u2550\u2550\u2550 CHAT PANEL \u2550\u2550\u2550 -->
 <div id="chat-panel">
   <div id="top-row">
     <div id="messages-container">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
-    <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t('Toggle HUD Panel')}">
+    <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t("Toggle HUD Panel")}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
     <div class="tab-item active" data-session="main">Chat</div>
-    <button class="tab-add" id="btnAddTab" title="${vscode.l10n.t('New chat')}">+</button>
+    <button class="tab-add" id="btnAddTab" title="${vscode.l10n.t("New chat")}">+</button>
   </div>
   <div class="messages" id="messages">
     <div class="empty-state" id="emptyState">
-      <div class="empty-icon">💬</div>
-      <div class="empty-text">${vscode.l10n.t('Start a conversation with your AI agent')}</div>
+      <div class="empty-icon">\u{1F4AC}</div>
+      <div class="empty-text">${vscode.l10n.t("Start a conversation with your AI agent")}</div>
     </div>
   </div>
   <div class="typing" id="typing">
     <div class="typing-dots"><span></span><span></span><span></span></div>
-    <span id="typingText">${vscode.l10n.t('Thinking...')}</span>
+    <span id="typingText">${vscode.l10n.t("Thinking...")}</span>
   </div>
   <div id="busyIndicator" class="busy-indicator hidden"></div>
   <div id="subagentIndicator" class="subagent-indicator hidden"></div>
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
-  <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t('Drag to resize')}"></div>
+  <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t("Drag to resize")}"></div>
   </div> <!-- /messages-container -->
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('Progress Notes')}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('Tasks')}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('Sessions')}</div>
-        <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">◀▶</button>
+        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t("Progress Notes")}</div>
+        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t("Tasks")}</div>
+        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t("Sessions")}</div>
+        <button id="progress-note-panel-toggle" title="${vscode.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode.l10n.t('Progress Notes')}</span>
+            <span id="progress-note-panel-title">${vscode.l10n.t("Progress Notes")}</span>
           </div>
           <div id="progress-note-panel-content">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("Progress notes will appear here")}</div>
           </div>
         </div>
         <div id="tab-tasks" class="tab-pane">
           <div id="tasksListContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('No tasks')}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("No tasks")}</div>
           </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
           <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('No sessions')}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("No sessions")}</div>
           </div>
         </div>
       </div>
@@ -2885,35 +2644,35 @@ body {
   <div id="input-area" class="input-area">
     <div class="input-meta">
       <span class="bar-chip" id="thinkingChip">think: default</span>
-      <span class="bar-sep">·</span>
+      <span class="bar-sep">\xB7</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
-      <label class="supervision-check" title="${vscode.l10n.t('Automatic supervision agent.\nAutomatically disable after task execution is completed')}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" id="supervisionCheck" title="${vscode.l10n.t('Supervision')}">
-        <span>${vscode.l10n.t('Supervision')}</span>
+      <label class="supervision-check" title="${vscode.l10n.t("Automatic supervision agent.\nAutomatically disable after task execution is completed")}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="supervisionCheck" title="${vscode.l10n.t("Supervision")}">
+        <span>${vscode.l10n.t("Supervision")}</span>
       </label>
-      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode.l10n.t('Open the current agent workspace')}" style="display:none;">📁</button>
+      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode.l10n.t("Open the current agent workspace")}" style="display:none;">\u{1F4C1}</button>
     </div>
     <div class="attachment-preview" id="attachmentPreview"></div>
     <div class="input-row" style="position:relative;">
-      <button class="stop-btn" id="stopBtn" title="${vscode.l10n.t('Stop')}">
+      <button class="stop-btn" id="stopBtn" title="${vscode.l10n.t("Stop")}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="attach-btn" id="attachBtn" title="${vscode.l10n.t('Attach files')}">📎</button>
+      <button class="attach-btn" id="attachBtn" title="${vscode.l10n.t("Attach files")}">\u{1F4CE}</button>
       <input type="file" id="attachInput" multiple style="visibility:hidden;position:absolute;left:-9999px;top:-9999px;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
-        <textarea class="input-box" id="inputBox" placeholder="${vscode.l10n.t('Message OpenClaw...')}" rows="1" style="width:100%;"></textarea>
+        <textarea class="input-box" id="inputBox" placeholder="${vscode.l10n.t("Message OpenClaw...")}" rows="1" style="width:100%;"></textarea>
       </div>
-      <button class="send-btn" id="sendBtn" title="${vscode.l10n.t('Send')}">
+      <button class="send-btn" id="sendBtn" title="${vscode.l10n.t("Send")}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
     </div>
   </div>
 </div>
 
-<script nonce="${nonce}" src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
-<script nonce="${nonce}" src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script nonce="${nonce}" src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"><\/script>
+<script nonce="${nonce}" src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"><\/script>
 <script nonce="${nonce}">
 (function() {
   const vscode = acquireVsCodeApi();
@@ -2943,7 +2702,7 @@ body {
   let sessions = [];
   let agents = [];
   let currentSession = 'main';
-  let agent = { id: 'main', name: 'Agent', emoji: '🤖' };
+  let agent = { id: 'main', name: 'Agent', emoji: '\u{1F916}' };
   let currentModel = '';
   let thinkingLevel = '';
   let verboseLevel = '';
@@ -3031,7 +2790,7 @@ body {
       chip.innerHTML = '<span class="attachment-chip-icon">' + getFileIcon(a.mimeType) + '</span>' +
         '<div class="attachment-chip-info"><div class="attachment-chip-name">' + a.name + '</div>' +
         '<div class="attachment-chip-size">' + formatFileSize(a.size) + '</div></div>' +
-        '<button class="attachment-chip-remove" data-index="' + i + '" title="Remove">×</button>';
+        '<button class="attachment-chip-remove" data-index="' + i + '" title="Remove">\xD7</button>';
       attachmentPreview.appendChild(chip);
     }
   }
@@ -3165,13 +2924,13 @@ body {
     progressNoteToggle.addEventListener('click', () => {
       if (!progressNotePanel) return;
       const isCollapsed = progressNotePanel.classList.toggle('collapsed');
-      progressNoteToggle.textContent = isCollapsed ? '◀' : '▶';
+      progressNoteToggle.textContent = isCollapsed ? '\u25C0' : '\u25B6';
       localStorage.setItem('openclaw.progressNoteCollapsed', isCollapsed.toString());
       updatePanelPosition();
     });
   }
 
-  // 检测是否在最右侧（容器右边距 < 50px 视为右边界）
+  // \u68C0\u6D4B\u662F\u5426\u5728\u6700\u53F3\u4FA7\uFF08\u5BB9\u5668\u53F3\u8FB9\u8DDD < 50px \u89C6\u4E3A\u53F3\u8FB9\u754C\uFF09
   function updatePanelPosition() {
     if (!progressNotePanel) return;
     const rect = progressNotePanel.getBoundingClientRect();
@@ -3182,10 +2941,10 @@ body {
       progressNotePanel.classList.remove('right-overlay');
     }
   }
-  // 在 panel 展开/折叠、窗口 resize 时调用
+  // \u5728 panel \u5C55\u5F00/\u6298\u53E0\u3001\u7A97\u53E3 resize \u65F6\u8C03\u7528
   window.addEventListener('resize', updatePanelPosition);
 
-  // Tab 切换
+  // Tab \u5207\u6362
   document.querySelectorAll('.panel-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
@@ -3193,7 +2952,7 @@ body {
       tab.classList.add('active');
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
       
-      // 刷新对应面板数据
+      // \u5237\u65B0\u5BF9\u5E94\u9762\u677F\u6570\u636E
       if (tab.dataset.tab === 'tasks') {
         vscode.postMessage({ type: 'requestTasks' });
       } else if (tab.dataset.tab === 'sessions') {
@@ -3234,13 +2993,13 @@ if (resizeHandle) {
     });
   }
 
-  // 面板拖拽调整宽度
+  // \u9762\u677F\u62D6\u62FD\u8C03\u6574\u5BBD\u5EA6
   if (progressResizeHandle && progressNotePanel) {
     progressResizeHandle.addEventListener('mousedown', (e) => {
-      // 如果面板是折叠状态，先展开面板
+      // \u5982\u679C\u9762\u677F\u662F\u6298\u53E0\u72B6\u6001\uFF0C\u5148\u5C55\u5F00\u9762\u677F
       if (progressNotePanel.classList.contains('collapsed')) {
         progressNotePanel.classList.remove('collapsed');
-        progressNoteToggle.textContent = '▶';
+        progressNoteToggle.textContent = '\u25B6';
         localStorage.setItem('openclaw.progressNoteCollapsed', 'false');
         updatePanelPosition();
       }
@@ -3255,11 +3014,11 @@ if (resizeHandle) {
       e.preventDefault();
     });
 
-    // 双击展开面板
+    // \u53CC\u51FB\u5C55\u5F00\u9762\u677F
     progressResizeHandle.addEventListener('dblclick', (e) => {
       if (progressNotePanel.classList.contains('collapsed')) {
         progressNotePanel.classList.remove('collapsed');
-        progressNoteToggle.textContent = '▶';
+        progressNoteToggle.textContent = '\u25B6';
         localStorage.setItem('openclaw.progressNoteCollapsed', 'false');
         updatePanelPosition();
       }
@@ -3513,14 +3272,14 @@ if (resizeHandle) {
         gatewayUrl = msg.gatewayUrl || '';
         messageHistory = msg.messageHistory || [];
         historyIndex = -1;
-        // 动态更新页脚版本号（服务器返回了版本信息时）
+        // \u52A8\u6001\u66F4\u65B0\u9875\u811A\u7248\u672C\u53F7\uFF08\u670D\u52A1\u5668\u8FD4\u56DE\u4E86\u7248\u672C\u4FE1\u606F\u65F6\uFF09
         if (msg.version) {
           const footerVersion = document.getElementById('footerVersion');
           if (footerVersion) footerVersion.textContent = 'OPENCLAW v' + msg.version;
         }
         updateAgentCard();
         updateChips();
-        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t('not configured')}';
+        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t("not configured")}';
         if (msg.sessionKey) currentSession = msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
@@ -3607,7 +3366,7 @@ if (resizeHandle) {
         for (const m of (msg.messages || [])) appendMessage(m);
         break;
       case 'activateAgentChat':
-        // 切换到该 agent 的默认聊天界面（复用 agent 按钮切换逻辑）
+        // \u5207\u6362\u5230\u8BE5 agent \u7684\u9ED8\u8BA4\u804A\u5929\u754C\u9762\uFF08\u590D\u7528 agent \u6309\u94AE\u5207\u6362\u903B\u8F91\uFF09
         if (msg.agentId) {
           let tab = tabs.find(t => t.agentId === msg.agentId);
           if (!tab) {
@@ -3626,7 +3385,7 @@ if (resizeHandle) {
         break;
       case 'addChatTab':
         if (msg.tab) {
-          // 去重：同一 sessionKey 已有 tab 则直接切换
+          // \u53BB\u91CD\uFF1A\u540C\u4E00 sessionKey \u5DF2\u6709 tab \u5219\u76F4\u63A5\u5207\u6362
           const existing = tabs.find(t => t.sessionKey === msg.tab.sessionKey);
           if (existing) {
             switchToTab(existing.id);
@@ -3650,7 +3409,7 @@ if (resizeHandle) {
           streamEl = null;
         }
         streaming = true;
-        showTyping(true, '${vscode.l10n.t('Thinking...')}');
+        showTyping(true, '${vscode.l10n.t("Thinking...")}');
         sendBtn.style.display = 'none';
         stopBtn.classList.add('active');
         attachBtnEl.style.display = 'none';
@@ -3692,7 +3451,7 @@ if (resizeHandle) {
         }
         // Clear the streamEl reference (but not the DOM content)
         streamEl = null;
-        // 流式输出完成后渲染 Mermaid 图表（否则需要刷新才能渲染）
+        // \u6D41\u5F0F\u8F93\u51FA\u5B8C\u6210\u540E\u6E32\u67D3 Mermaid \u56FE\u8868\uFF08\u5426\u5219\u9700\u8981\u5237\u65B0\u624D\u80FD\u6E32\u67D3\uFF09
         renderMermaidBlocks();
         break;
       case 'streamError':
@@ -3707,7 +3466,7 @@ if (resizeHandle) {
         break;
       case 'toolCall':
         emptyState.style.display = 'none';
-        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t('Thinking...')}');
+        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t("Thinking...")}');
         break;
       case 'historyUpdated':
         messageHistory = msg.messageHistory || [];
@@ -3721,12 +3480,12 @@ if (resizeHandle) {
         break;
       case 'autoContinueFailed':
         streaming = false;
-        appendMessage({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
+        appendMessage({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
         attachBtnEl.style.display = '';
-        activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
+        activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         this.setBusy(false);
         break;
       case 'busyState': {
@@ -3770,11 +3529,11 @@ if (resizeHandle) {
   function sendMessage() {
     const text = inputBox.value.trim();
     if (!text || !connected) return;
-    // 解析 fileRefs 中的 #L行号 或 #L行号-#K行号 格式
+    // \u89E3\u6790 fileRefs \u4E2D\u7684 #L\u884C\u53F7 \u6216 #L\u884C\u53F7-#K\u884C\u53F7 \u683C\u5F0F
     const refs = atFileRefs.map(ref => {
-      const rangeMatch = ref.match(/^(.+?)#L(\d+)-#L?(\d+)$/);
+      const rangeMatch = ref.match(/^(.+?)#L(d+)-#L?(d+)$/);
       if (rangeMatch) return { path: rangeMatch[1], startLine: parseInt(rangeMatch[2]), endLine: parseInt(rangeMatch[3]) };
-      const singleMatch = ref.match(/^(.+?)#L(\d+)$/);
+      const singleMatch = ref.match(/^(.+?)#L(d+)$/);
       if (singleMatch) return { path: singleMatch[1], line: parseInt(singleMatch[2]) };
       return { path: ref };
     });
@@ -3796,10 +3555,10 @@ if (resizeHandle) {
     const atIndex = before.lastIndexOf('@');
     if (atIndex >= 0) {
       const rawQuery = before.slice(atIndex + 1);
-      // 去掉 #L行号 或 #L行号-#K行号 后缀用于搜索
+      // \u53BB\u6389 #L\u884C\u53F7 \u6216 #L\u884C\u53F7-#K\u884C\u53F7 \u540E\u7F00\u7528\u4E8E\u641C\u7D22
       const hashIndex = rawQuery.indexOf('#L');
       const query = hashIndex > 0 ? rawQuery.substring(0, hashIndex) : rawQuery;
-      if (query.indexOf(' ') === -1 && query.indexOf('\t') === -1) {
+      if (query.indexOf(' ') === -1 && query.indexOf('	') === -1) {
         atTriggerPos = atIndex;
         atQuery = query;
         atRequestId = Math.random().toString(36).substring(2, 10);
@@ -3824,7 +3583,7 @@ if (resizeHandle) {
   function renderAtDropdown() {
     if (!atVisible) return;
     if (atFiles.length === 0) {
-      atDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t('No matching files')}</div>';
+      atDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t("No matching files")}</div>';
       return;
     }
     atDropdown.innerHTML = '';
@@ -3835,7 +3594,7 @@ if (resizeHandle) {
       div.className = 'at-item' + (i === atSelectedIndex ? ' active' : '');
       const icon = document.createElement('span');
       icon.className = 'at-icon';
-      icon.textContent = f.isDir ? '📁' : '📄';
+      icon.textContent = f.isDir ? '\u{1F4C1}' : '\u{1F4C4}';
       const label = document.createElement('span');
       label.className = 'at-label';
       label.textContent = f.path;
@@ -3855,9 +3614,9 @@ if (resizeHandle) {
     const pos = inputBox.selectionStart;
     const before = val.substring(0, atTriggerPos);
     const after = val.substring(pos);
-    // 检查用户是否已输入 #L行号 或 #L行号-#K行号
+    // \u68C0\u67E5\u7528\u6237\u662F\u5426\u5DF2\u8F93\u5165 #L\u884C\u53F7 \u6216 #L\u884C\u53F7-#K\u884C\u53F7
     const currentQuery = val.substring(atTriggerPos + 1, pos);
-    const hashMatch = currentQuery.match(/#L(\d+)(?:-#L?(\d+))?$/);
+    const hashMatch = currentQuery.match(/#L(d+)(?:-#L?(d+))?$/);
     let lineSuffix = '';
     if (hashMatch) {
       lineSuffix = '#L' + hashMatch[1];
@@ -3872,8 +3631,8 @@ if (resizeHandle) {
     inputBox.setSelectionRange(newPos, newPos);
     inputBox.focus();
     
-    // 目录选择后不隐藏下拉框，而是触发 checkAtTrigger 显示子目录内容
-    // 隐藏逻辑移到 checkAtTrigger 中处理
+    // \u76EE\u5F55\u9009\u62E9\u540E\u4E0D\u9690\u85CF\u4E0B\u62C9\u6846\uFF0C\u800C\u662F\u89E6\u53D1 checkAtTrigger \u663E\u793A\u5B50\u76EE\u5F55\u5185\u5BB9
+    // \u9690\u85CF\u903B\u8F91\u79FB\u5230 checkAtTrigger \u4E2D\u5904\u7406
     if (!file.isDir) {
       const refPath = lineSuffix ? file.path + lineSuffix : file.path;
       if (!atFileRefs.includes(refPath)) atFileRefs.push(refPath);
@@ -3881,15 +3640,15 @@ if (resizeHandle) {
       inputBox.style.height = 'auto';
       inputBox.style.height = Math.max(inputBox.scrollHeight, 40) + 'px';
     } else {
-      // 目录：手动触发 checkAtTrigger 以搜索子目录内容
-      // JS 设置 value 不会自动触发 input 事件
+      // \u76EE\u5F55\uFF1A\u624B\u52A8\u89E6\u53D1 checkAtTrigger \u4EE5\u641C\u7D22\u5B50\u76EE\u5F55\u5185\u5BB9
+      // JS \u8BBE\u7F6E value \u4E0D\u4F1A\u81EA\u52A8\u89E6\u53D1 input \u4E8B\u4EF6
       atVisible = false;
       atDropdown.classList.remove('visible');
       checkAtTrigger();
     }
   }
 
-  // ─── / Command Dropdown ───
+  // \u2500\u2500\u2500 / Command Dropdown \u2500\u2500\u2500
   function getFilteredSlashCommands() {
     if (!slashFilter) return SLASH_COMMANDS;
     const q = slashFilter.toLowerCase();
@@ -3917,7 +3676,7 @@ if (resizeHandle) {
     const slashIndex = before.lastIndexOf('/');
     if (slashIndex === 0) {
       const query = before.slice(1);
-      if (query.indexOf(' ') === -1 && query.indexOf('\t') === -1) {
+      if (query.indexOf(' ') === -1 && query.indexOf('	') === -1) {
         slashFilter = query;
         slashSelectedIndex = 0;
         slashVisible = true;
@@ -3939,7 +3698,7 @@ if (resizeHandle) {
     if (!slashVisible) return;
     const filtered = getFilteredSlashCommands();
     if (filtered.length === 0) {
-      slashDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t('No matching commands')}</div>';
+      slashDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t("No matching commands")}</div>';
       return;
     }
     slashDropdown.innerHTML = '';
@@ -3959,7 +3718,7 @@ if (resizeHandle) {
       const div = document.createElement('div');
       div.className = 'at-item' + (cmdIdx === slashSelectedIndex ? ' active' : '');
       div.dataset.cmd = c.cmd;
-      div.innerHTML = '<span class="at-icon">⚡</span><span class="at-label">' + c.cmd + '</span><span style="font-size:11px;color:var(--text-muted);margin-left:8px;white-space:nowrap;">' + c.desc + '</span>';
+      div.innerHTML = '<span class="at-icon">\u26A1</span><span class="at-label">' + c.cmd + '</span><span style="font-size:11px;color:var(--text-muted);margin-left:8px;white-space:nowrap;">' + c.desc + '</span>';
       slashDropdown.appendChild(div);
       cmdIdx++;
     }
@@ -4016,7 +3775,7 @@ if (resizeHandle) {
     }).catch(function() {});
   }
 
-  /** 将 HTML 元素递归转换为 Markdown 文本 */
+  /** \u5C06 HTML \u5143\u7D20\u9012\u5F52\u8F6C\u6362\u4E3A Markdown \u6587\u672C */
   function htmlToMarkdown(el) {
     if (!el) return '';
     var BT = String.fromCharCode(96);
@@ -4109,7 +3868,7 @@ if (resizeHandle) {
     return result.replace(/\\n{3,}/g, '\\n\\n').trim();
   }
 
-  // 复制 Notes 面板全部内容
+  // \u590D\u5236 Notes \u9762\u677F\u5168\u90E8\u5185\u5BB9
   const progressCopyAllBtn = document.getElementById('progressCopyAllBtn');
   if (progressCopyAllBtn) {
     progressCopyAllBtn.addEventListener('click', () => {
@@ -4127,7 +3886,7 @@ if (resizeHandle) {
     });
   }
 
-  // 📝 按钮：复制 Markdown 格式
+  // \u{1F4DD} \u6309\u94AE\uFF1A\u590D\u5236 Markdown \u683C\u5F0F
   const progressCopyMarkdownBtn = document.getElementById('progressCopyMarkdownBtn');
   if (progressCopyMarkdownBtn) {
     progressCopyMarkdownBtn.addEventListener('click', () => {
@@ -4159,11 +3918,11 @@ if (resizeHandle) {
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
       // webview fallback dictionary (zh-CN)
-      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904' };
       return dict[str] || str;
     };
 
-    // ── 清除分支：data 为 null/undefined 时清空 Notes 面板 ──
+    // \u2500\u2500 \u6E05\u9664\u5206\u652F\uFF1Adata \u4E3A null/undefined \u65F6\u6E05\u7A7A Notes \u9762\u677F \u2500\u2500
     if (!data) {
         if (noteContent) {
             noteContent.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + t('Progress notes will appear here') + '</div>';
@@ -4171,19 +3930,19 @@ if (resizeHandle) {
         return;
     }
 
-    // ── 优先支持纯 markdown 格式（Gateway 返回只有 markdown 字段的情况）──
+    // \u2500\u2500 \u4F18\u5148\u652F\u6301\u7EAF markdown \u683C\u5F0F\uFF08Gateway \u8FD4\u56DE\u53EA\u6709 markdown \u5B57\u6BB5\u7684\u60C5\u51B5\uFF09\u2500\u2500
     if (noteContent && data && data.markdown) {
-      // 移除占位提示文本
+      // \u79FB\u9664\u5360\u4F4D\u63D0\u793A\u6587\u672C
       const placeholder = noteContent.querySelector('div[style*="text-align:center"]');
       if (placeholder && placeholder.textContent.includes('Progress notes will appear here')) {
         placeholder.remove();
       }
-      // 使用 marked.parse() 将 markdown 转为 HTML，否则回退为 <pre> 文本
+      // \u4F7F\u7528 marked.parse() \u5C06 markdown \u8F6C\u4E3A HTML\uFF0C\u5426\u5219\u56DE\u9000\u4E3A <pre> \u6587\u672C
       const noteHTML = '<div class="progress-card" style="margin:8px 0;">' +
         (typeof marked !== 'undefined' ? marked.parse(data.markdown) : '<pre>' + data.markdown + '</pre>') +
         '</div>';
       noteContent.innerHTML = noteHTML;
-      // 渲染 plan 列表（若 plan 字段存在且非空，优先于 steps）
+      // \u6E32\u67D3 plan \u5217\u8868\uFF08\u82E5 plan \u5B57\u6BB5\u5B58\u5728\u4E14\u975E\u7A7A\uFF0C\u4F18\u5148\u4E8E steps\uFF09
       const stepList = (data.steps && data.steps.length > 0) ? data.steps : (data.plan && data.plan.length > 0 ? data.plan : null);
       if (stepList) {
         const stepsHTML = '<div style="margin-top:8px;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;">' +
@@ -4198,7 +3957,7 @@ if (resizeHandle) {
           '</div>';
         noteContent.insertAdjacentHTML('beforeend', stepsHTML);
       }
-      // 添加复制按钮和存储原始 Markdown
+      // \u6DFB\u52A0\u590D\u5236\u6309\u94AE\u548C\u5B58\u50A8\u539F\u59CB Markdown
       const mdCard = noteContent.querySelector('.progress-card');
       if (mdCard) {
         mdCard.setAttribute('data-raw-markdown', data.markdown);
@@ -4207,12 +3966,12 @@ if (resizeHandle) {
         copyBtn.textContent = '\u{1F4CB}';
         copyBtn.title = 'Copy content';
         copyBtn.onclick = function() { copyProgressCard(this); };
-        // 创建 copy-bar 容器包裹两个按钮
+        // \u521B\u5EFA copy-bar \u5BB9\u5668\u5305\u88F9\u4E24\u4E2A\u6309\u94AE
         const bar = document.createElement('div');
         bar.className = 'copy-bar';
         mdCard.prepend(bar);
         bar.appendChild(copyBtn);
-        // 添加 Copy as Markdown 按钮
+        // \u6DFB\u52A0 Copy as Markdown \u6309\u94AE
         const mdCopyBtn = document.createElement('button');
         mdCopyBtn.className = 'progress-card-md-btn';
         mdCopyBtn.textContent = '\u{1F4DD}';
@@ -4224,7 +3983,7 @@ if (resizeHandle) {
       return;
     }
 
-    // ── 原有结构化字段逻辑（保留向后兼容）──
+    // \u2500\u2500 \u539F\u6709\u7ED3\u6784\u5316\u5B57\u6BB5\u903B\u8F91\uFF08\u4FDD\u7559\u5411\u540E\u517C\u5BB9\uFF09\u2500\u2500
     const { title, description, progress, status, steps: stepListFromData } = data || {};
     const steps = stepListFromData || data.steps || data.plan;
     const cardHTML = 
@@ -4235,7 +3994,7 @@ if (resizeHandle) {
       '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
       '  </div>' +
       '  <div class="status">' +
-      '    ' + (status || t('In progress')) + ' • ' + (progress || 0) + '%' +
+      '    ' + (status || t('In progress')) + ' \u2022 ' + (progress || 0) + '%' +
       '  </div>' +
       (steps && steps.length ? '  <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">' + t('Steps') + ' ' + steps.map((s, i) => {
             const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
@@ -4255,7 +4014,7 @@ if (resizeHandle) {
         '    <div class="progress-fill" style="width: ' + (progress || 0) + '%"></div>' +
         '  </div>' +
         '  <div class="status" style="font-size:12px;">' +
-        '    ' + (status || t('In progress')) + ' • ' + (progress || 0) + '%' +
+        '    ' + (status || t('In progress')) + ' \u2022 ' + (progress || 0) + '%' +
         '  </div>' +
         (steps && steps.length ? '  <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">' + t('Steps') + ' ' + steps.map((s, i) => {
             const stepText = (typeof s === 'object' && s !== null) ? (s.step || JSON.stringify(s)) : String(s);
@@ -4270,12 +4029,12 @@ if (resizeHandle) {
         placeholder2.remove();
       }
       noteContent.insertAdjacentHTML('beforeend', noteHTML);
-      // 为最后一张结构化卡片添加 Copy as Markdown 按钮
+      // \u4E3A\u6700\u540E\u4E00\u5F20\u7ED3\u6784\u5316\u5361\u7247\u6DFB\u52A0 Copy as Markdown \u6309\u94AE
       const lastCard = noteContent.querySelector('.progress-card:last-child');
       if (lastCard) {
         const existingBtn = lastCard.querySelector('.progress-card-copy-btn');
         if (existingBtn) {
-          // 创建 copy-bar 容器包裹两个按钮
+          // \u521B\u5EFA copy-bar \u5BB9\u5668\u5305\u88F9\u4E24\u4E2A\u6309\u94AE
           const bar2 = document.createElement('div');
           bar2.className = 'copy-bar';
           existingBtn.parentNode.insertBefore(bar2, existingBtn);
@@ -4305,24 +4064,24 @@ if (resizeHandle) {
     }
     div.appendChild(bubble);
     
-    // 处理助手消息中的音频附件（TTS 语音回复）
-    // 直接在 bubble 中查找 <audio> 元素（msg.text 已经过 resolveMediaPaths 转换，MEDIA: 已被替换为 <audio>）
+    // \u5904\u7406\u52A9\u624B\u6D88\u606F\u4E2D\u7684\u97F3\u9891\u9644\u4EF6\uFF08TTS \u8BED\u97F3\u56DE\u590D\uFF09
+    // \u76F4\u63A5\u5728 bubble \u4E2D\u67E5\u627E <audio> \u5143\u7D20\uFF08msg.text \u5DF2\u7ECF\u8FC7 resolveMediaPaths \u8F6C\u6362\uFF0CMEDIA: \u5DF2\u88AB\u66FF\u6362\u4E3A <audio>\uFF09
     if (msg.role === 'assistant') {
       const audioElements = bubble.querySelectorAll('audio');
       if (audioElements.length > 0) {
-        // 将带有音频的消息标记为语音消息样式
+        // \u5C06\u5E26\u6709\u97F3\u9891\u7684\u6D88\u606F\u6807\u8BB0\u4E3A\u8BED\u97F3\u6D88\u606F\u6837\u5F0F
         bubble.classList.add('msg-audio-bubble');
-        // 在所有 <audio> 元素外层包裹语音消息容器
+        // \u5728\u6240\u6709 <audio> \u5143\u7D20\u5916\u5C42\u5305\u88F9\u8BED\u97F3\u6D88\u606F\u5BB9\u5668
         for (let i = 0; i < audioElements.length; i++) {
           const audio = audioElements[i];
           const audioContainer = document.createElement('div');
           audioContainer.className = 'msg-audio';
-          // 创建播放按钮图标
+          // \u521B\u5EFA\u64AD\u653E\u6309\u94AE\u56FE\u6807
           const playIcon = document.createElement('span');
           playIcon.className = 'msg-audio-play';
-          playIcon.textContent = '\u25B6'; // ▶
+          playIcon.textContent = '\u25B6'; // \u25B6
           audioContainer.appendChild(playIcon);
-          // 创建可显示的 audio 播放器
+          // \u521B\u5EFA\u53EF\u663E\u793A\u7684 audio \u64AD\u653E\u5668
           const audioDisplay = document.createElement('audio');
           audioDisplay.src = audio.src;
           audioDisplay.controls = true;
@@ -4330,10 +4089,10 @@ if (resizeHandle) {
           audioDisplay.preload = 'metadata';
           audioContainer.appendChild(audioDisplay);
           
-          // 验证 src 有效性，防止 CSP 拦截或空 src
+          // \u9A8C\u8BC1 src \u6709\u6548\u6027\uFF0C\u9632\u6B62 CSP \u62E6\u622A\u6216\u7A7A src
           if (!audioDisplay.src || audioDisplay.src === window.location.href) {
             console.warn('[Audio] Invalid src detected, attempting recovery...');
-            // 尝试从原始 audio 元素的其他属性恢复
+            // \u5C1D\u8BD5\u4ECE\u539F\u59CB audio \u5143\u7D20\u7684\u5176\u4ED6\u5C5E\u6027\u6062\u590D
             const originalSrc = audio.getAttribute('src') || audio.dataset?.src;
             if (originalSrc) {
               audioDisplay.src = originalSrc;
@@ -4341,35 +4100,35 @@ if (resizeHandle) {
             }
           }
           
-          // 添加音频加载错误处理
+          // \u6DFB\u52A0\u97F3\u9891\u52A0\u8F7D\u9519\u8BEF\u5904\u7406
           audioDisplay.onerror = (e) => {
             console.error('[Audio] Load error:', e);
-            playIcon.textContent = '❌';
-            playIcon.title = '音频加载失败，请检查权限或网络';
+            playIcon.textContent = '\u274C';
+            playIcon.title = '\u97F3\u9891\u52A0\u8F7D\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6743\u9650\u6216\u7F51\u7EDC';
           };
           
-          // 音频加载完成后验证状态
+          // \u97F3\u9891\u52A0\u8F7D\u5B8C\u6210\u540E\u9A8C\u8BC1\u72B6\u6001
           audioDisplay.onloadeddata = () => {
             console.log('[Audio] Loaded successfully, duration:', audioDisplay.duration);
-            playIcon.title = '点击播放';
+            playIcon.title = '\u70B9\u51FB\u64AD\u653E';
           };
           
-          // 添加点击事件处理
+          // \u6DFB\u52A0\u70B9\u51FB\u4E8B\u4EF6\u5904\u7406
           playIcon.onclick = () => {
             if (audioDisplay.paused) {
               audioDisplay.play().catch(err => {
                 console.error('[Audio] Play failed:', err);
-                playIcon.textContent = '❌';
-                playIcon.title = '播放失败';
+                playIcon.textContent = '\u274C';
+                playIcon.title = '\u64AD\u653E\u5931\u8D25';
               });
-              playIcon.textContent = '\u23F8'; // ⏸ 暂停图标
+              playIcon.textContent = '\u23F8'; // \u23F8 \u6682\u505C\u56FE\u6807
             } else {
               audioDisplay.pause();
-              playIcon.textContent = '\u25B6'; // ▶ 播放图标
+              playIcon.textContent = '\u25B6'; // \u25B6 \u64AD\u653E\u56FE\u6807
             }
           };
           
-          // 替换原 audio 元素
+          // \u66FF\u6362\u539F audio \u5143\u7D20
           audio.parentNode.replaceChild(audioContainer, audio);
         }
       }
@@ -4384,12 +4143,12 @@ if (resizeHandle) {
           const img = document.createElement('img');
           img.src = 'data:' + att.mimeType + ';base64,' + att.data;
           img.className = 'msg-attachment-img';
-          img.alt = att.name || '${vscode.l10n.t('attachment')}';
+          img.alt = att.name || '${vscode.l10n.t("attachment")}';
           attachDiv.appendChild(img);
         } else if (att.data) {
           const link = document.createElement('a');
           link.href = 'data:' + att.mimeType + ';base64,' + att.data;
-          link.textContent = att.name || '${vscode.l10n.t('attachment')}';
+          link.textContent = att.name || '${vscode.l10n.t("attachment")}';
           link.download = att.name || 'download';
           attachDiv.appendChild(link);
         }
@@ -4416,7 +4175,7 @@ if (resizeHandle) {
     emptyState.style.display = '';
   }
 
-  // 复制纯文本到剪贴板（带“已复制”反馈）
+  // \u590D\u5236\u7EAF\u6587\u672C\u5230\u526A\u8D34\u677F\uFF08\u5E26\u201C\u5DF2\u590D\u5236\u201D\u53CD\u9988\uFF09
   async function copyTextToClipboard(text, btnEl) {
     try {
       await navigator.clipboard.writeText(text);
@@ -4426,20 +4185,20 @@ if (resizeHandle) {
     }
   }
 
-  // 将渲染后的 SVG 转为 PNG dataUrl，交给宿主弹出保存对话框写入本地文件
+  // \u5C06\u6E32\u67D3\u540E\u7684 SVG \u8F6C\u4E3A PNG dataUrl\uFF0C\u4EA4\u7ED9\u5BBF\u4E3B\u5F39\u51FA\u4FDD\u5B58\u5BF9\u8BDD\u6846\u5199\u5165\u672C\u5730\u6587\u4EF6
   async function exportSvgToPng(svgContainer, btnEl) {
     const svgEl = svgContainer ? svgContainer.querySelector('svg') : null;
     console.log('[Mermaid Export] start, svgEl=', !!svgEl);
     if (!svgEl) {
       console.error('[Mermaid Export] No SVG found');
-      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('SVG not found, cannot export')}' });
+      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("SVG not found, cannot export")}' });
       return;
     }
     try {
       const xml = new XMLSerializer().serializeToString(svgEl);
       const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
       let dataUrl;
-      // 复用与复制相同的 createImageBitmap 优先 + DOMParser 兜底逻辑
+      // \u590D\u7528\u4E0E\u590D\u5236\u76F8\u540C\u7684 createImageBitmap \u4F18\u5148 + DOMParser \u515C\u5E95\u903B\u8F91
       const rect = svgEl.getBoundingClientRect();
       const w = Math.max(1, Math.round(rect.width));
       const h = Math.max(1, Math.round(rect.height));
@@ -4498,7 +4257,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t('Exported')}';
+        btnEl.textContent = '${vscode.l10n.t("Exported")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -4507,15 +4266,15 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t('Export failed')}';
+        btnEl.textContent = '${vscode.l10n.t("Export failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
-      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('Export failed')}: ' + (err && err.message ? err.message : String(err)) });
+      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("Export failed")}: ' + (err && err.message ? err.message : String(err)) });
     }
   }
 
-  // 将渲染后的 SVG 转为 PNG，经扩展宿主写入系统剪贴板（webview 无法直接写图片剪贴板）
+  // \u5C06\u6E32\u67D3\u540E\u7684 SVG \u8F6C\u4E3A PNG\uFF0C\u7ECF\u6269\u5C55\u5BBF\u4E3B\u5199\u5165\u7CFB\u7EDF\u526A\u8D34\u677F\uFF08webview \u65E0\u6CD5\u76F4\u63A5\u5199\u56FE\u7247\u526A\u8D34\u677F\uFF09
   async function copySvgToClipboard(svgContainer, btnEl) {
     const svgEl = svgContainer ? svgContainer.querySelector('svg') : null;
     console.log('[Mermaid Copy] start, svgEl=', !!svgEl);
@@ -4524,7 +4283,7 @@ if (resizeHandle) {
       return;
     }
     try {
-      // 诊断：检测 SVG 是否含会导致 canvas 污染的节点
+      // \u8BCA\u65AD\uFF1A\u68C0\u6D4B SVG \u662F\u5426\u542B\u4F1A\u5BFC\u81F4 canvas \u6C61\u67D3\u7684\u8282\u70B9
       const hasForeign = svgEl.querySelector('foreignObject') !== null;
       const hasImage = svgEl.querySelector('image') !== null;
       const styleCount = svgEl.querySelectorAll('style').length;
@@ -4538,7 +4297,7 @@ if (resizeHandle) {
         const h = Math.max(1, Math.round(rect.height));
         console.log('[Mermaid Copy] rect=', JSON.stringify({w, h}));
         
-        // 方案A：尝试 createImageBitmap（绕过 CSP blob: 限制）
+        // \u65B9\u6848A\uFF1A\u5C1D\u8BD5 createImageBitmap\uFF08\u7ED5\u8FC7 CSP blob: \u9650\u5236\uFF09
         try {
           const bitmap = await createImageBitmap(svgBlob);
           const canvas = document.createElement('canvas');
@@ -4555,7 +4314,7 @@ if (resizeHandle) {
         } catch (bmpErr) {
           console.log('[Mermaid Copy] createImageBitmap failed:', bmpErr.message);
           
-          // 方案B：DOMParser 解析 SVG → foreignObject 转 g 组渲染
+          // \u65B9\u6848B\uFF1ADOMParser \u89E3\u6790 SVG \u2192 foreignObject \u8F6C g \u7EC4\u6E32\u67D3
           const parser = new DOMParser();
           const svgDoc = parser.parseFromString(xml, 'image/svg+xml');
           const foNodes = svgDoc.querySelectorAll('foreignObject');
@@ -4607,7 +4366,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t('Copy failed')}';
+        btnEl.textContent = '${vscode.l10n.t("Copy failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -4618,7 +4377,7 @@ if (resizeHandle) {
     if (!btnEl) return;
     const originalText = btnEl.dataset.originalText || btnEl.textContent;
     btnEl.dataset.originalText = originalText;
-    btnEl.textContent = '${vscode.l10n.t('Copied')}';
+    btnEl.textContent = '${vscode.l10n.t("Copied")}';
     btnEl.classList.add('copied');
     setTimeout(() => {
       btnEl.textContent = originalText;
@@ -4628,33 +4387,33 @@ if (resizeHandle) {
 
   function renderMermaidBlocks() {
     if (typeof mermaid === 'undefined') return;
-    // 使用 requestAnimationFrame 确保 DOM 已渲染
+    // \u4F7F\u7528 requestAnimationFrame \u786E\u4FDD DOM \u5DF2\u6E32\u67D3
     requestAnimationFrame(() => {
       setTimeout(() => {
-        // 匹配所有 code 块（包括 user 和 assistant 消息）
+        // \u5339\u914D\u6240\u6709 code \u5757\uFF08\u5305\u62EC user \u548C assistant \u6D88\u606F\uFF09
         const allBlocks = document.querySelectorAll('pre code');
         allBlocks.forEach((block) => {
           const codeText = (block.textContent || '').trim();
           console.log('[Mermaid] Block content preview:', JSON.stringify(codeText.substring(0, 80)));
-          // 检测 mermaid 语法关键字
+          // \u68C0\u6D4B mermaid \u8BED\u6CD5\u5173\u952E\u5B57
           if (!codeText.match(/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|C4|requirements|gitGraph|mindmap|quadrantChart)/m)) return;
           const pre = block.parentElement;
-          // 防止重复渲染：渲染过的 pre 会加 mermaid-source 类
+          // \u9632\u6B62\u91CD\u590D\u6E32\u67D3\uFF1A\u6E32\u67D3\u8FC7\u7684 pre \u4F1A\u52A0 mermaid-source \u7C7B
           if (!pre || pre.classList.contains('mermaid-source')) return;
           const svgId = 'mermaid-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
           mermaid.render(svgId, codeText)
           .then(svgResult => {
-            // v11.4.1: render 返回 {id, svg} 对象，用 svgResult.svg 获取 SVG 字符串
+            // v11.4.1: render \u8FD4\u56DE {id, svg} \u5BF9\u8C61\uFF0C\u7528 svgResult.svg \u83B7\u53D6 SVG \u5B57\u7B26\u4E32
             const svgCode = svgResult.svg;
-            // Mermaid v11.x 在语法错误时会 resolve 返回含错误文本的 SVG 而非 reject，
-            // 需在 .then() 中过滤，避免错误文本污染 UI
+            // Mermaid v11.x \u5728\u8BED\u6CD5\u9519\u8BEF\u65F6\u4F1A resolve \u8FD4\u56DE\u542B\u9519\u8BEF\u6587\u672C\u7684 SVG \u800C\u975E reject\uFF0C
+            // \u9700\u5728 .then() \u4E2D\u8FC7\u6EE4\uFF0C\u907F\u514D\u9519\u8BEF\u6587\u672C\u6C61\u67D3 UI
             if (svgCode && (svgCode.includes('Syntax error') || svgCode.includes('Error:'))) {
               if (typeof vscode !== 'undefined') {
                 vscode.postMessage({ type: 'mermaidError', text: 'Mermaid syntax error' });
               }
               return;
             }
-            // 保留原始代码块，并在其上方插入渲染结果 + 复制按钮
+            // \u4FDD\u7559\u539F\u59CB\u4EE3\u7801\u5757\uFF0C\u5E76\u5728\u5176\u4E0A\u65B9\u63D2\u5165\u6E32\u67D3\u7ED3\u679C + \u590D\u5236\u6309\u94AE
             const wrapper = document.createElement('div');
             wrapper.className = 'mermaid-wrapper mermaid-full-width';
             
@@ -4662,25 +4421,25 @@ if (resizeHandle) {
             header.className = 'mermaid-header';
             const label = document.createElement('span');
             label.className = 'mermaid-label';
-            label.textContent = '${vscode.l10n.t('Mermaid')}';
+            label.textContent = '${vscode.l10n.t("Mermaid")}';
             
             const svgContainer = document.createElement('div');
             svgContainer.className = 'mermaid-container';
             svgContainer.innerHTML = svgCode;
             
-            // 视图切换按钮组
+            // \u89C6\u56FE\u5207\u6362\u6309\u94AE\u7EC4
             const viewToggle = document.createElement('div');
             viewToggle.className = 'mermaid-view-toggle';
             const btnGraphic = document.createElement('button');
             btnGraphic.className = 'mermaid-btn mermaid-btn-graphic active';
-            btnGraphic.textContent = '${vscode.l10n.t('Image')}';
+            btnGraphic.textContent = '${vscode.l10n.t("Image")}';
             btnGraphic.type = 'button';
             const btnSource = document.createElement('button');
             btnSource.className = 'mermaid-btn mermaid-btn-source';
-            btnSource.textContent = '${vscode.l10n.t('Source')}';
+            btnSource.textContent = '${vscode.l10n.t("Source")}';
             btnSource.type = 'button';
             
-            // 切换显示逻辑
+            // \u5207\u6362\u663E\u793A\u903B\u8F91
             function toggleView(showGraphic) {
               svgContainer.style.display = showGraphic ? '' : 'none';
               pre.style.display = showGraphic ? 'none' : '';
@@ -4691,10 +4450,10 @@ if (resizeHandle) {
             btnGraphic.addEventListener('click', () => toggleView(true));
             btnSource.addEventListener('click', () => toggleView(false));
             
-            // 复制按钮（根据当前激活视图复制对应内容）
+            // \u590D\u5236\u6309\u94AE\uFF08\u6839\u636E\u5F53\u524D\u6FC0\u6D3B\u89C6\u56FE\u590D\u5236\u5BF9\u5E94\u5185\u5BB9\uFF09
             const copyBtn = document.createElement('button');
             copyBtn.className = 'mermaid-btn mermaid-copy-btn';
-            copyBtn.textContent = '${vscode.l10n.t('Copy')}';
+            copyBtn.textContent = '${vscode.l10n.t("Copy")}';
             copyBtn.type = 'button';
             copyBtn.addEventListener('click', () => {
               if (btnGraphic.classList.contains('active')) {
@@ -4704,15 +4463,15 @@ if (resizeHandle) {
               }
             });
             
-            // 导出按钮（图模式 → PNG 导出为本地文件；源码模式禁用）
+            // \u5BFC\u51FA\u6309\u94AE\uFF08\u56FE\u6A21\u5F0F \u2192 PNG \u5BFC\u51FA\u4E3A\u672C\u5730\u6587\u4EF6\uFF1B\u6E90\u7801\u6A21\u5F0F\u7981\u7528\uFF09
             const exportBtn = document.createElement('button');
             exportBtn.className = 'mermaid-btn mermaid-export-btn';
-            exportBtn.textContent = '${vscode.l10n.t('Export')}';
+            exportBtn.textContent = '${vscode.l10n.t("Export")}';
             exportBtn.type = 'button';
-            exportBtn.title = '${vscode.l10n.t('Export current Mermaid diagram as PNG file')}';
+            exportBtn.title = '${vscode.l10n.t("Export current Mermaid diagram as PNG file")}';
             exportBtn.addEventListener('click', () => {
               if (!btnGraphic.classList.contains('active')) {
-                vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t('Please switch to diagram mode before exporting')}' });
+                vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("Please switch to diagram mode before exporting")}' });
                 return;
               }
               exportSvgToPng(svgContainer, exportBtn);
@@ -4723,7 +4482,7 @@ if (resizeHandle) {
             viewToggle.appendChild(btnSource);
             header.appendChild(viewToggle);
             
-            // 按钮组（复制 + 导出）
+            // \u6309\u94AE\u7EC4\uFF08\u590D\u5236 + \u5BFC\u51FA\uFF09
             const btnGroup = document.createElement('div');
             btnGroup.className = 'mermaid-btn-group';
             btnGroup.appendChild(copyBtn);
@@ -4733,7 +4492,7 @@ if (resizeHandle) {
             wrapper.appendChild(header);
             wrapper.appendChild(svgContainer);
             
-            // 用 wrapper 包裹，保留原 pre 在下方（默认显示图，源码可通过按钮切换）
+            // \u7528 wrapper \u5305\u88F9\uFF0C\u4FDD\u7559\u539F pre \u5728\u4E0B\u65B9\uFF08\u9ED8\u8BA4\u663E\u793A\u56FE\uFF0C\u6E90\u7801\u53EF\u901A\u8FC7\u6309\u94AE\u5207\u6362\uFF09
             pre.parentNode.insertBefore(wrapper, pre);
             pre.classList.add('mermaid-source');
             pre.style.display = 'none';
@@ -4741,7 +4500,7 @@ if (resizeHandle) {
           .catch(err => {
             console.error('Mermaid render error:', err);
             const errMsg = String(err && err.message ? err.message : (typeof err === 'string' ? err : JSON.stringify(err)));
-            // 不再在webview中创建错误div，改为发送通知给扩展宿主
+            // \u4E0D\u518D\u5728webview\u4E2D\u521B\u5EFA\u9519\u8BEFdiv\uFF0C\u6539\u4E3A\u53D1\u9001\u901A\u77E5\u7ED9\u6269\u5C55\u5BBF\u4E3B
             if (typeof vscode !== 'undefined') {
               vscode.postMessage({ 
                 type: 'mermaidError', 
@@ -4750,7 +4509,7 @@ if (resizeHandle) {
             }
           });
       });
-    }, 100);  // 增加延迟，确保 DOM 完全渲染
+    }, 100);  // \u589E\u52A0\u5EF6\u8FDF\uFF0C\u786E\u4FDD DOM \u5B8C\u5168\u6E32\u67D3
     });
   }
 
@@ -4789,15 +4548,15 @@ if (resizeHandle) {
   }
 
   function updateAgentCard() {
-    agentOrb.textContent = agent.emoji || '🤖';
+    agentOrb.textContent = agent.emoji || '\u{1F916}';
     agentOrb.className = 'agent-orb' + (connected ? ' online' : '');
-    agentNameEl.textContent = agent.name || agent.id || '${vscode.l10n.t('Agent')}';
-    agentStatusEl.textContent = connected ? '${vscode.l10n.t('online')}' : '${vscode.l10n.t('disconnected')}';
+    agentNameEl.textContent = agent.name || agent.id || '${vscode.l10n.t("Agent")}';
+    agentStatusEl.textContent = connected ? '${vscode.l10n.t("online")}' : '${vscode.l10n.t("disconnected")}';
     agentStatusEl.className = 'agent-status' + (connected ? ' online' : '');
     const btnReconnectEl = document.getElementById('btnReconnect');
     if (btnReconnectEl) {
       btnReconnectEl.style.display = connected ? 'none' : '';
-      // 点击重连：向 extension 发送 reconnect 消息（idempotent，重复赋值安全）
+      // \u70B9\u51FB\u91CD\u8FDE\uFF1A\u5411 extension \u53D1\u9001 reconnect \u6D88\u606F\uFF08idempotent\uFF0C\u91CD\u590D\u8D4B\u503C\u5B89\u5168\uFF09
       btnReconnectEl.onclick = () => {
         if (typeof vscode !== 'undefined') {
           vscode.postMessage({ type: 'reconnect' });
@@ -4807,13 +4566,13 @@ if (resizeHandle) {
   }
 
   function updateChips() {
-    thinkingChip.textContent = '${vscode.l10n.t('think: ')}' + (thinkingLevel || '${vscode.l10n.t('default')}');
-    verboseChip.textContent = '${vscode.l10n.t('steps: ')}' + (verboseLevel || '${vscode.l10n.t('default')}');
-    reliabilityValue.textContent = (thinkingLevel || '${vscode.l10n.t('default')}') + ' · ' + (verboseLevel || '${vscode.l10n.t('default')}');
+    thinkingChip.textContent = '${vscode.l10n.t("think: ")}' + (thinkingLevel || '${vscode.l10n.t("default")}');
+    verboseChip.textContent = '${vscode.l10n.t("steps: ")}' + (verboseLevel || '${vscode.l10n.t("default")}');
+    reliabilityValue.textContent = (thinkingLevel || '${vscode.l10n.t("default")}') + ' \xB7 ' + (verboseLevel || '${vscode.l10n.t("default")}');
   }
 
   function renderModels(models) {
-    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode.l10n.t('default')}';
+    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode.l10n.t("default")}';
   }
 
   function renderTasks(tasks) {
@@ -4822,7 +4581,7 @@ if (resizeHandle) {
     // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
-      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务' };
+      const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904', 'Running': '\u8FD0\u884C\u4E2D', 'Queued': '\u6392\u961F\u4E2D', 'Succeeded': '\u5DF2\u5B8C\u6210', 'Failed': '\u5931\u8D25', 'Cancelled': '\u5DF2\u53D6\u6D88', 'Timed out': '\u8D85\u65F6', 'Blocked': '\u963B\u585E', 'Lost': '\u4E22\u5931', 'Unknown': '\u672A\u77E5', 'Agent': '\u667A\u80FD\u4F53', 'Just now': '\u521A\u521A', '{0}m ago': '{0}\u5206\u949F\u524D', '{0}h ago': '{0}\u5C0F\u65F6\u524D', '{0}d ago': '{0}\u5929\u524D', 'Subagent': '\u5B50\u667A\u80FD\u4F53', 'Cron job': '\u5B9A\u65F6\u4EFB\u52A1' };
       return dict[str] || str;
     };
     if (!tasks || tasks.length === 0) {
@@ -4841,7 +4600,7 @@ if (resizeHandle) {
     };
     function truncate(str, maxLen) {
       if (!str) return '';
-      return str.length > maxLen ? str.substring(0, maxLen) + '…' : str;
+      return str.length > maxLen ? str.substring(0, maxLen) + '\u2026' : str;
     }
     function relTime(ts) {
       if (!ts) return '';
@@ -4858,22 +4617,22 @@ if (resizeHandle) {
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
       const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('Unknown') };
-      // 优先级：label > task（截断50字符）> sourceId
+      // \u4F18\u5148\u7EA7\uFF1Alabel > task\uFF08\u622A\u65AD50\u5B57\u7B26\uFF09> sourceId
       const displayName = task.label || truncate(task.task, 50) || task.sourceId || task.taskId;
       const timeText = relTime(task.endedAt || task.createdAt);
       html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
-      // 第一行：名称 + 相对时间
+      // \u7B2C\u4E00\u884C\uFF1A\u540D\u79F0 + \u76F8\u5BF9\u65F6\u95F4
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
       html += '<span style="font-weight:500;">' + displayName + '</span>';
       html += '<span style="color:var(--text-muted);font-size:11px;">' + timeText + '</span>';
       html += '</div>';
-      // 第二行：● 状态 + runtime标签 + 智能体（同一行）
+      // \u7B2C\u4E8C\u884C\uFF1A\u25CF \u72B6\u6001 + runtime\u6807\u7B7E + \u667A\u80FD\u4F53\uFF08\u540C\u4E00\u884C\uFF09
       const runtimeLabel = { cli: 'CLI', subagent: t('Subagent'), cron: t('Cron job'), acp: 'ACP' }[task.runtime] || task.runtime || '';
-      let metaLine = '<span style="color:' + statusInfo.color + ';font-size:11px;">● ' + statusInfo.text + '</span>';
+      let metaLine = '<span style="color:' + statusInfo.color + ';font-size:11px;">\u25CF ' + statusInfo.text + '</span>';
       if (runtimeLabel) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + runtimeLabel + '</span>';
       if (task.agentId) metaLine += '<span style="color:var(--text-muted);font-size:11px;margin-left:8px;">' + t('Agent') + ': ' + task.agentId + '</span>';
       html += '<div style="display:flex;align-items:center;margin-bottom:2px;">' + metaLine + '</div>';
-      // 第三行：摘要 = terminalSummary || progressSummary
+      // \u7B2C\u4E09\u884C\uFF1A\u6458\u8981 = terminalSummary || progressSummary
       const summaryText = task.terminalSummary || task.progressSummary || '';
       if (summaryText) {
         html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(summaryText, 120) + '</div>';
@@ -4885,24 +4644,24 @@ if (resizeHandle) {
     container.innerHTML = html;
   }
 
-  // 简化设备名称：从完整字符串中提取有意义的部分
-  // 格式示例："hostname:macaddress:pid" → 取冒号分隔的第一段
-  // 如果太短（< 5字符），直接返回原值
+  // \u7B80\u5316\u8BBE\u5907\u540D\u79F0\uFF1A\u4ECE\u5B8C\u6574\u5B57\u7B26\u4E32\u4E2D\u63D0\u53D6\u6709\u610F\u4E49\u7684\u90E8\u5206
+  // \u683C\u5F0F\u793A\u4F8B\uFF1A"hostname:macaddress:pid" \u2192 \u53D6\u5192\u53F7\u5206\u9694\u7684\u7B2C\u4E00\u6BB5
+  // \u5982\u679C\u592A\u77ED\uFF08< 5\u5B57\u7B26\uFF09\uFF0C\u76F4\u63A5\u8FD4\u56DE\u539F\u503C
   function simplifyDeviceName(name) {
     if (!name) return '';
-    // 优先取冒号分隔的第一段（hostname 部分）
+    // \u4F18\u5148\u53D6\u5192\u53F7\u5206\u9694\u7684\u7B2C\u4E00\u6BB5\uFF08hostname \u90E8\u5206\uFF09
     const parts = name.split(':');
     const firstPart = parts[0].trim();
-    // 如果第一段有意义（至少2个字符且不超过15个字符），使用它
+    // \u5982\u679C\u7B2C\u4E00\u6BB5\u6709\u610F\u4E49\uFF08\u81F3\u5C112\u4E2A\u5B57\u7B26\u4E14\u4E0D\u8D85\u8FC715\u4E2A\u5B57\u7B26\uFF09\uFF0C\u4F7F\u7528\u5B83
     if (firstPart.length >= 2 && firstPart.length <= 15) return firstPart;
-    // 否则使用整个字符串，但截断到20字符
-    return name.length > 20 ? name.substring(0, 20) + '…' : name;
+    // \u5426\u5219\u4F7F\u7528\u6574\u4E2A\u5B57\u7B26\u4E32\uFF0C\u4F46\u622A\u65AD\u523020\u5B57\u7B26
+    return name.length > 20 ? name.substring(0, 20) + '\u2026' : name;
   }
 
   function renderSessions() {
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
-      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
+      const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904' };
       return dict[str] || str;
     };
     // Build a single shared HTML list so both panels stay in sync
@@ -4911,14 +4670,14 @@ if (resizeHandle) {
       for (const session of sessions) {
         const cls = 'device-item' + (session.key === activeKey ? ' active' : '');
         const dotCls = 'device-dot' + (session.key === activeKey ? ' active' : '');
-        // 提取 device-info.device-name 用于显示
+        // \u63D0\u53D6 device-info.device-name \u7528\u4E8E\u663E\u793A
         const deviceName = session['device-info']?.['device-name'] || session.displayName || session.key;
         const simplifiedName = simplifyDeviceName(deviceName);
         html += '<div class="' + cls + '" data-key="' + session.key + '" data-device-name="' + deviceName + '">';
         html += '<div class="' + dotCls + '"></div>';
         html += '<div class="device-info"><div class="device-name">' + simplifiedName + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + '</div></div>';
         if (session.totalTokens) html += '<div class="device-tokens">' + formatTokens(session.totalTokens) + '</div>';
-        html += '<button class="device-delete">×</button>';
+        html += '<button class="device-delete">\xD7</button>';
         html += '</div>';
       }
       return html;
@@ -4953,7 +4712,7 @@ if (resizeHandle) {
           el.addEventListener('click', () => {
             const sessionKey = el.getAttribute('data-key');
             const deviceName = el.getAttribute('data-device-name') || '';
-            // 点击 tabSessionsContent 中的会话时，添加新的 chat tab 并加载历史
+            // \u70B9\u51FB tabSessionsContent \u4E2D\u7684\u4F1A\u8BDD\u65F6\uFF0C\u6DFB\u52A0\u65B0\u7684 chat tab \u5E76\u52A0\u8F7D\u5386\u53F2
             vscode.postMessage({
               type: 'addChatTabFromSession',
               sessionKey: sessionKey,
@@ -4991,7 +4750,7 @@ if (resizeHandle) {
       btn.className = 'agent-btn' + (a.id === agent.id ? ' active' : '');
       const emoji = document.createElement('span');
       emoji.className = 'agent-btn-emoji';
-      emoji.textContent = a.emoji || '🤖';
+      emoji.textContent = a.emoji || '\u{1F916}';
       const name = document.createElement('span');
       name.textContent = a.name || a.id;
       btn.appendChild(emoji);
@@ -5023,7 +4782,7 @@ if (resizeHandle) {
       const div = document.createElement('div');
       div.className = 'tab-item' + (t.id === activeTabId ? ' active' : '');
       div.dataset.tabId = t.id;
-      // 添加 tooltip 显示会话信息
+      // \u6DFB\u52A0 tooltip \u663E\u793A\u4F1A\u8BDD\u4FE1\u606F
       let tooltipText = t.label;
       if (t.sessionKey) {
         const agentObj = agents.find(a => a.id === t.agentId);
@@ -5039,7 +4798,7 @@ if (resizeHandle) {
       if (t.id !== 'tab-main') {
         const close = document.createElement('span');
         close.className = 'tab-close';
-        close.textContent = '\u00d7';
+        close.textContent = '\xD7';
         close.addEventListener('click', (e) => {
           e.stopPropagation();
           closeTab(t.id);
@@ -5090,55 +4849,114 @@ if (resizeHandle) {
     return n.toString();
   }
 })();
-</script>
+<\/script>
 </body>
-</html>`;
+</html>`
+      );
+    }
+  };
+  _OpenClawChatView.viewType = "openclaw.chatView";
+  _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS = 6e4;
+  _OpenClawChatView.AUTO_CONTINUE_MAX = 3;
+  _OpenClawChatView.ERROR_PATTERNS = [
+    "The agent run failed before producing a reply",
+    // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
+    "Agent run ended before producing a complete result",
+    // ✅ formatAbandonedLivenessError 产出
+    "Agent run blocked before producing a usable result",
+    // ✅ formatBlockedLivenessError 产出
+    "Agent failed before reply",
+    // ✅ AGENT_FAILED_BEFORE_REPLY_TEXT
+    "Agent run failed",
+    // ✅ 通用后备文本
+    "ACP turn failed before completion"
+    // ✅ ACP 轮次失败
+  ];
+  var OpenClawChatView = _OpenClawChatView;
+  var MIME_MAP = {
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".js": "application/javascript",
+    ".ts": "application/typescript",
+    ".jsx": "application/javascript",
+    ".tsx": "application/typescript",
+    ".py": "text/x-python",
+    ".rb": "text/x-ruby",
+    ".go": "text/x-go",
+    ".rs": "text/x-rust",
+    ".java": "text/x-java",
+    ".c": "text/x-c",
+    ".cpp": "text/x-c++",
+    ".h": "text/x-c",
+    ".hpp": "text/x-c++",
+    ".cs": "text/x-csharp",
+    ".php": "text/x-php",
+    ".swift": "text/x-swift",
+    ".kt": "text/x-kotlin",
+    ".scala": "text/x-scala",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".css": "text/css",
+    ".scss": "text/x-scss",
+    ".less": "text/x-less",
+    ".xml": "application/xml",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".toml": "application/toml",
+    ".ini": "text/plain",
+    ".cfg": "text/plain",
+    ".sh": "text/x-shellscript",
+    ".bash": "text/x-shellscript",
+    ".zsh": "text/x-shellscript",
+    ".fish": "text/x-shellscript",
+    ".bat": "text/plain",
+    ".cmd": "text/plain",
+    ".ps1": "text/plain",
+    ".sql": "text/x-sql",
+    ".graphql": "text/x-graphql",
+    ".env": "text/plain",
+    ".gitignore": "text/plain",
+    ".dockerignore": "text/plain",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".log": "text/plain",
+    ".conf": "text/plain",
+    ".config": "text/plain",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".tiff": "image/tiff",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".gz": "application/gzip",
+    ".tar": "application/x-tar",
+    ".mp3": "audio/mpeg",
+    ".mp4": "video/mp4",
+    ".wav": "audio/wav",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm"
+  };
+  function getMimeType(filePath) {
+    const dot = filePath.lastIndexOf(".");
+    if (dot === -1)
+      return "text/plain";
+    const ext = filePath.substring(dot).toLowerCase();
+    return MIME_MAP[ext] || "text/plain";
   }
-}
-
-const MIME_MAP: Record<string, string> = {
-  ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json",
-  ".js": "application/javascript", ".ts": "application/typescript",
-  ".jsx": "application/javascript", ".tsx": "application/typescript",
-  ".py": "text/x-python", ".rb": "text/x-ruby", ".go": "text/x-go",
-  ".rs": "text/x-rust", ".java": "text/x-java", ".c": "text/x-c",
-  ".cpp": "text/x-c++", ".h": "text/x-c", ".hpp": "text/x-c++",
-  ".cs": "text/x-csharp", ".php": "text/x-php", ".swift": "text/x-swift",
-  ".kt": "text/x-kotlin", ".scala": "text/x-scala",
-  ".html": "text/html", ".htm": "text/html", ".css": "text/css",
-  ".scss": "text/x-scss", ".less": "text/x-less",
-  ".xml": "application/xml", ".yaml": "application/yaml", ".yml": "application/yaml",
-  ".toml": "application/toml", ".ini": "text/plain", ".cfg": "text/plain",
-  ".sh": "text/x-shellscript", ".bash": "text/x-shellscript",
-  ".zsh": "text/x-shellscript", ".fish": "text/x-shellscript",
-  ".bat": "text/plain", ".cmd": "text/plain", ".ps1": "text/plain",
-  ".sql": "text/x-sql", ".graphql": "text/x-graphql",
-  ".env": "text/plain", ".gitignore": "text/plain", ".dockerignore": "text/plain",
-  ".csv": "text/csv", ".tsv": "text/tab-separated-values",
-  ".log": "text/plain", ".conf": "text/plain", ".config": "text/plain",
-  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-  ".bmp": "image/bmp", ".ico": "image/x-icon", ".tiff": "image/tiff",
-  ".pdf": "application/pdf", ".zip": "application/zip",
-  ".gz": "application/gzip", ".tar": "application/x-tar",
-  ".mp3": "audio/mpeg", ".mp4": "video/mp4", ".wav": "audio/wav",
-  ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
-  ".wasm": "application/wasm",
-};
-
-function getMimeType(filePath: string): string {
-  const dot = filePath.lastIndexOf(".");
-  if (dot === -1) return "text/plain";
-  const ext = filePath.substring(dot).toLowerCase();
-  return MIME_MAP[ext] || "text/plain";
-}
-
-function getNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  function getNonce() {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let result = "";
+    for (let i = 0; i < 32; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   }
-  return result;
-}
-
+})();
