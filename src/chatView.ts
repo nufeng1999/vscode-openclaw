@@ -377,7 +377,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   private async extractDeltaText(message: any): Promise<string> {
-    if (typeof message === "string") return this.resolveMediaPaths(message);
+    if (typeof message === "string") return await this.resolveMediaPaths(message);
     if (!message) return "";
 
     const content = message.content ?? message;
@@ -411,7 +411,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
     }
 
-    return this.resolveMediaPaths(text);
+    return await this.resolveMediaPaths(text);
   }
 
   private async resolveMediaPaths(text: string): Promise<string> {
@@ -632,7 +632,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   private async extractHistoryContent(content: any): Promise<string> {
-    if (typeof content === "string") return this.resolveMediaPaths(content);
+    if (typeof content === "string") return await this.resolveMediaPaths(content);
     if (!content) return "";
     if (Array.isArray(content)) {
       let text = "";
@@ -685,7 +685,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           text += (text ? "\n" : "") + audioParts.join("\n");
         }
       }
-      return this.resolveMediaPaths(text);
+      return await this.resolveMediaPaths(text);
     }
     return "";
   }
@@ -1808,20 +1808,22 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       });
       const msgs = res?.messages || [];
       this.log(`history: ${msgs.length} messages`);
-      const parsed: ChatMessage[] = msgs
-        .filter((m: any) => m.role === "user" || m.role === "assistant")
-        .map((m: any) => ({
-          role: m.role,
-          text: this.extractHistoryContent(m.content),
-          timestamp: m.timestamp || Date.now(),
-          contentBlocks: Array.isArray(m.content) ? m.content : undefined
-        }))
-        .filter((m: ChatMessage) => m.text.trim() && !m.text.startsWith("HEARTBEAT"));
+      const parsed: ChatMessage[] = await Promise.all(
+        msgs
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map(async (m: any) => ({
+            role: m.role,
+            text: await this.extractHistoryContent(m.content),
+            timestamp: m.timestamp || Date.now(),
+            contentBlocks: Array.isArray(m.content) ? m.content : undefined
+          }))
+      );
+      const filtered = parsed.filter((m: ChatMessage) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
       // Remove leading orphan user message (from failed send)
-      if (parsed.length > 0 && parsed[0].role === "user") {
-        parsed.shift();
+      if (filtered.length > 0 && filtered[0].role === "user") {
+        filtered.shift();
       }
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: parsed });
+      this.postToWebview({ type: "loadMessages", sessionKey, messages: filtered });
     } catch (err: any) {
       this.log(`history error: ${err.message}`);
       this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
