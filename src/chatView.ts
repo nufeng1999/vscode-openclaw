@@ -381,8 +381,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (!message) return "";
 
     const content = message.content ?? message;
+    let text = "";
     if (Array.isArray(content)) {
-      let text = "";
       for (const item of content) {
         if (typeof item === "string") {
           text += item;
@@ -390,11 +390,28 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           text += (text ? "\n" : "") + String(item.text);
         }
       }
-      return this.resolveMediaPaths(text);
+    } else if (typeof content === "string") {
+      text = content;
+    } else {
+      text = message.text || "";
     }
 
-    if (typeof content === "string") return this.resolveMediaPaths(content);
-    return message.text || "";
+    // 提取 openclawDelivery.mediaUrls 中的音频文件并转换为 <audio> 标签
+    const mediaUrls = message.openclawDelivery?.mediaUrls as string[] | undefined;
+    if (mediaUrls && mediaUrls.length > 0) {
+      const audioParts: string[] = [];
+      for (const mediaPath of mediaUrls) {
+        const audioTag = this.convertMediaToMarkdown(mediaPath);
+        if (audioTag) {
+          audioParts.push(audioTag);
+        }
+      }
+      if (audioParts.length > 0) {
+        text = text + "\n" + audioParts.join("\n");
+      }
+    }
+
+    return this.resolveMediaPaths(text);
   }
 
   private resolveMediaPaths(text: string): string {
