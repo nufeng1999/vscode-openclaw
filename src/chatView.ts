@@ -208,7 +208,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   // Match Obsidian plugin's handleChatEvent
-  public handleChatEvent(payload: any) {
+  public async handleChatEvent(payload: any) {
     const sessionKey = this.resolveSession(payload?.sessionKey);
     const rawSessionKey = payload?.sessionKey || "";
     const state = typeof payload?.state === "string" ? payload.state : "";
@@ -216,13 +216,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     // Intercept supervisor agent responses
     if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
       if (state === "delta") {
-        const text = this.extractDeltaText(payload?.message);
+        const text = await this.extractDeltaText(payload?.message);
         if (text) {
           this.supervisorAccumulated += text;
           this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
         }
       } else if (state === "final") {
-        const finalText = this.extractDeltaText(payload?.message);
+        const finalText = await this.extractDeltaText(payload?.message);
         const fullReply = finalText || this.supervisorAccumulated;
         
         this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
@@ -294,7 +294,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
 
     if (state === "delta") {
-      const text = this.extractDeltaText(payload?.message);
+      const text = await this.extractDeltaText(payload?.message);
       this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
       if (text) {
         this.postToWebview({ type: "streamDelta", sessionKey, text });
@@ -304,7 +304,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       // Extract final message text and display it
       const finalMsg = payload?.message;
       if (finalMsg) {
-        const finalText = this.extractDeltaText(finalMsg);
+        const finalText = await this.extractDeltaText(finalMsg);
         this.log(`final text len=${finalText.length}`);
         if (finalText) {
           // Check if response is an error pattern that needs "Continue"
@@ -376,7 +376,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  private extractDeltaText(message: any): string {
+  private async extractDeltaText(message: any): Promise<string> {
     if (typeof message === "string") return this.resolveMediaPaths(message);
     if (!message) return "";
 
@@ -401,7 +401,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (mediaUrls && mediaUrls.length > 0) {
       const audioParts: string[] = [];
       for (const mediaPath of mediaUrls) {
-        const audioTag = this.convertMediaToMarkdown(mediaPath);
+        const audioTag = await this.convertMediaToMarkdown(mediaPath);
         if (audioTag) {
           audioParts.push(audioTag);
         }
@@ -414,7 +414,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     return this.resolveMediaPaths(text);
   }
 
-  private resolveMediaPaths(text: string): string {
+  private async resolveMediaPaths(text: string): Promise<string> {
     if (!text || text.indexOf("MEDIA:") === -1) return text;
     
     const segments = text.split("\n");
@@ -422,8 +422,18 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     
     for (const segment of segments) {
       if (segment.indexOf("MEDIA:") === 0) {
-        const mediaPath = segment.slice(6).trim();
-        const result = this.convertMediaToMarkdown(mediaPath);
+        const rest = segment.slice(6).trim();
+        // 支持带类型前缀的格式：MEDIA:<type>:<path>（如 MEDIA:audio:/api/chat/media/...）
+        const typePrefixMatch = rest.match(/^(audio|video|img|image):(.+)$/);
+        let mediaPath: string;
+        let forcedTag: string | undefined;
+        if (typePrefixMatch) {
+          forcedTag = typePrefixMatch[1] === "image" ? "img" : typePrefixMatch[1];
+          mediaPath = typePrefixMatch[2].trim();
+        } else {
+          mediaPath = rest;
+        }
+        const result = await this.convertMediaToMarkdown(mediaPath, forcedTag);
         if (result) {
           resolvedSegments.push(result);
         }
@@ -435,13 +445,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     return resolvedSegments.join("\n");
   }
 
-  private convertMediaToMarkdown(mediaPath: string): string | null {
+  private async convertMediaToMarkdown(mediaPath: string, forcedTag?: string): Promise<string | null> {
     try {
       if (!mediaPath) return null;
 
-      // ── 远程 URL 支持：http:// 或 https:// 开头 ──
-      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://")) {
-        return this.buildRemoteMediaTag(mediaPath);
+      // ── 远程 URL 支持：http://、https:// 或网关媒体相对路径 /api/chat/media/ ──
+      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
+        const tag = await this.buildRemoteMediaTag(mediaPath);
+        // forcedTag 优先（如 MEDIA:audio: 前缀强制音频），相对路径同样转绝对 HTTP URL
+        if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
+          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
+          return this.buildMediaTag(forcedTag, absoluteUrl);
+        }
+        return tag;
       }
 
       // 否则处理本地文件（现有 base64 逻辑）
@@ -523,20 +539,82 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         return { mimeType: "audio/flac", tag: "audio" };
       // 默认
       default:
-        return { mimeType: "application/octet-stream", tag: "img" };
+        return { mimeType: "application/octet-stream", tag: "video" };
     }
+  }
+
+  /**
+   * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
+   * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
+   * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
+   * 通过 RPC resolveArtifactDownload 获取包含 mediaTicket 鉴权的完整 URL。
+   */
+  private async toAbsoluteMediaUrl(url: string): Promise<string> {
+    if (!url.startsWith("/api/chat/media/")) return url;
+    
+    // 解析 sessionKey 和 artifactId
+    // 格式：/api/chat/media/outgoing/{sessionKey}/{artifactId}/full
+    const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
+    if (!match) {
+      // 格式不匹配，降级为原始绝对 URL
+      const httpBase = this.gatewayUrl
+        .replace(/^ws:\/\//, "http://")
+        .replace(/^wss:\/\//, "https://")
+        .replace(/\/+$/, "");
+      return `${httpBase}${url}`;
+    }
+    
+    const [, sessionKey, artifactId] = match;
+    
+    try {
+      // 调用 RPC 获取带 mediaTicket 的完整 URL
+      const result = await this.gateway.request("resolveArtifactDownload", {
+        sessionKey,
+        artifactId
+      });
+      
+      if (result?.url) {
+        return result.url;
+      }
+    } catch (err: any) {
+      // RPC 失败/超时：降级为原始绝对 URL，不阻断渲染
+      this.log(`toAbsoluteMediaUrl: resolveArtifactDownload failed for ${sessionKey}/${artifactId}: ${err?.message || err}`);
+    }
+    
+    // 降级：返回原始绝对 URL（无 ticket）
+    const httpBase = this.gatewayUrl
+      .replace(/^ws:\/\//, "http://")
+      .replace(/^wss:\/\//, "https://")
+      .replace(/\/+$/, "");
+    return `${httpBase}${url}`;
   }
 
   /**
    * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
    * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
+   * 网关媒体相对路径（/api/chat/media/...）自动转绝对 HTTP URL，避免解析到 vscode-webview:// 基址。
    */
-  private buildRemoteMediaTag(url: string): string {
+  private async buildRemoteMediaTag(url: string): Promise<string> {
     // 去除 URL 中可能携带的查询参数后再取扩展名
     const cleanUrl = url.split("#")[0].split("?")[0];
     const ext = path.extname(cleanUrl).toLowerCase();
-    const { tag } = this.getMediaInfo(ext);
-    return this.buildMediaTag(tag, url);
+    let { tag } = this.getMediaInfo(ext);
+    // 网关媒体 URL 通常无扩展名：/api/chat/media/{incoming|outgoing}/{chatId}/{mediaId}/full
+    // 若 extname 为空，按 URL 路径关键词推断类型
+    if (!ext) {
+      const lower = url.toLowerCase();
+      if (lower.includes("/audio/") || lower.endsWith("/audio")) {
+        tag = "audio";
+      } else if (lower.includes("/video/") || lower.endsWith("/video")) {
+        tag = "video";
+      } else {
+        // 无路径关键词时默认 audio（TTS / 语音消息场景居多）
+        tag = "audio";
+      }
+    }
+    // 相对网关媒体路径转绝对 HTTP URL（webview 中相对路径会解析到 vscode-webview:// 基址，无法加载）
+    const src = await this.toAbsoluteMediaUrl(url);
+    return this.buildMediaTag(tag, src);
   }
 
   /**
@@ -553,7 +631,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  private extractHistoryContent(content: any): string {
+  private async extractHistoryContent(content: any): Promise<string> {
     if (typeof content === "string") return this.resolveMediaPaths(content);
     if (!content) return "";
     if (Array.isArray(content)) {
@@ -571,12 +649,40 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               }
             }
           }
-        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && block.content) {
+        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && (block.content || block.url)) {
           // 处理音频/文件/媒体块：提取路径并转为 MEDIA: 标记
-          const mediaPath = typeof block.content === "string" ? block.content : (block.content.path || block.content.url || "");
-          if (mediaPath) {
-            text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
+          // 兼容 Web UI 实际结构：{type:'audio', url:'/api/chat/media/...'}
+          // 以及旧结构：{type:'audio', content:{path|url}}
+          let mediaPath = "";
+          if (typeof block.url === "string" && block.url) {
+            // 优先读取顶层 url 字段（Web UI 实际音频块结构）
+            mediaPath = block.url;
+          } else if (typeof block.content === "string") {
+            mediaPath = block.content;
+          } else if (block.content && typeof block.content === "object") {
+            mediaPath = block.content.path || block.content.url || "";
           }
+          if (mediaPath) {
+            // 对于网关媒体 URL（无扩展名），携带 block.type 信息以便准确判断
+            if (mediaPath.startsWith("/api/chat/media/")) {
+              // 格式：MEDIA:<type>:<path>，如 MEDIA:audio:/api/chat/media/outgoing/...
+              text += (text ? "\n" : "") + "MEDIA:" + block.type + ":" + mediaPath;
+            } else {
+              text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
+            }
+          }
+        }
+      }
+      // 处理顶层 openclawDelivery.mediaUrls（TTS 语音播放条支持）
+      const mediaUrls = (content as any)?.openclawDelivery?.mediaUrls as string[] | undefined;
+      if (mediaUrls && mediaUrls.length > 0) {
+        const audioParts: string[] = [];
+        for (const mediaPath of mediaUrls) {
+          const audioTag = await this.convertMediaToMarkdown(mediaPath);
+          if (audioTag) audioParts.push(audioTag);
+        }
+        if (audioParts.length > 0) {
+          text += (text ? "\n" : "") + audioParts.join("\n");
         }
       }
       return this.resolveMediaPaths(text);
@@ -1561,7 +1667,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         const m = msgs[i];
         this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
         if (m.role === "assistant") {
-          const text = this.extractHistoryContent(m.content);
+          const text = await this.extractHistoryContent(m.content);
           this.log(`  Assistant message text length: ${text?.length || 0}`);
           if (text && !text.startsWith("HEARTBEAT")) {
             lastContent = text;
@@ -1809,7 +1915,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com https://unpkg.com; img-src data: https: blob:; media-src data: https:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com https://unpkg.com; img-src data: https: blob: http:; media-src data: https: http:;">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
