@@ -81,6 +81,7 @@
       this.supervisorAccumulated = "";
       this.busyCount = 0;
       this.serverVersion = "";
+      this.seenPreambleTexts = [];
       // Subagent activity tracking (Requirement A)
       this.lastSubagentEventMs = 0;
       this.activeSubagentCount = 0;
@@ -88,6 +89,7 @@
       // sessions_yield tracking (Requirement B): set when busy + active subagent
       this.yieldState = false;
       this.yieldTimer = null;
+      this.historyReloadTimer = null;
       this.context = context;
       this.gateway = gateway;
       const ch = channel;
@@ -320,10 +322,12 @@
         }
         this.postToWebview({ type: "streamDone", sessionKey });
         this.setBusy(false);
+        this.scheduleHistoryReload(sessionKey);
       } else if (state === "aborted") {
         this.log(`stream aborted`);
         this.postToWebview({ type: "streamDone", sessionKey });
         this.setBusy(false);
+        this.scheduleHistoryReload(sessionKey);
       } else if (state === "error") {
         const errorMsg = payload?.errorMessage || "unknown error";
         this.log(`stream error: ${errorMsg}`);
@@ -341,6 +345,15 @@
       const toolName = data.name || data.toolName || payload?.toolName || payload?.name || "";
       const phase = data.phase || payload?.phase || "";
       this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
+      if (data.kind === "preamble" && typeof data.progressText === "string" && data.progressText.trim()) {
+        const t = data.progressText.trim();
+        if (!this.seenPreambleTexts.includes(t)) {
+          this.seenPreambleTexts.push(t);
+          if (this.seenPreambleTexts.length > 50)
+            this.seenPreambleTexts.shift();
+        }
+        return;
+      }
       if (toolName && (phase === "start" || state === "tool_use")) {
         const label = `${toolName}`;
         this.postToWebview({ type: "toolCall", label, phase: "start" });
@@ -490,7 +503,7 @@
      * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
      * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
      * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
-     * 通过 RPC resolveArtifactDownload 获取包含 mediaTicket 鉴权的完整 URL。
+     * 通过 RPC artifacts.download 获取包含 mediaTicket 鉴权的完整 URL。
      */
     async toAbsoluteMediaUrl(url) {
       if (!url.startsWith("/api/chat/media/"))
@@ -500,19 +513,25 @@
         const httpBase2 = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
         return `${httpBase2}${url}`;
       }
-      const [, sessionKey, artifactId] = match;
-      try {
-        const result = await this.gateway.request("resolveArtifactDownload", {
-          sessionKey,
-          artifactId
-        });
-        if (result?.url) {
-          return result.url;
-        }
-      } catch (err) {
-        this.log(`toAbsoluteMediaUrl: resolveArtifactDownload failed for ${sessionKey}/${artifactId}: ${err?.message || err}`);
-      }
+      const [, sessionKeyEncoded, attachmentId] = match;
+      const sessionKey = decodeURIComponent(sessionKeyEncoded);
       const httpBase = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
+      for (const prefix of ["artifact_managed_media_", "artifact_managed_image_"]) {
+        try {
+          const artifactId = prefix + attachmentId;
+          const result = await this.gateway.request("artifacts.download", {
+            artifactId,
+            sessionKey
+          });
+          if (result?.url) {
+            const absoluteUrl = result.url.startsWith("/") ? httpBase + result.url : result.url;
+            this.log(`toAbsoluteMediaUrl: resolved ${sessionKey}/${attachmentId} -> ${absoluteUrl}`);
+            return absoluteUrl;
+          }
+        } catch (err) {
+          this.log(`toAbsoluteMediaUrl: artifacts.download(${prefix}) failed for ${sessionKey}/${attachmentId}: ${err?.message || err}`);
+        }
+      }
       return `${httpBase}${url}`;
     }
     /**
@@ -1567,6 +1586,28 @@
         this.supervisorTimeout = timeout;
       });
     }
+    stripMedia(text) {
+      if (!text)
+        return "";
+      let t = String(text);
+      t = t.replace(/<audio[^>]*>[\s\S]*?<\/audio>/gi, "");
+      t = t.replace(/<audio[\s\S]*?>/gi, "");
+      t = t.split("\n").filter((line) => !line.startsWith("MEDIA:")).join("\n");
+      return t.trim();
+    }
+    normText(text) {
+      if (!text)
+        return "";
+      return String(text).replace(/\s+/g, " ").trim();
+    }
+    isPreamble(text) {
+      if (!this.seenPreambleTexts.length)
+        return false;
+      const norm = this.normText(this.stripMedia(text));
+      if (!norm)
+        return false;
+      return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
+    }
     async handleLoadMessages(sessionKey) {
       try {
         const res = await this.gateway.request("chat.history", {
@@ -1583,11 +1624,42 @@
             contentBlocks: Array.isArray(m.content) ? m.content : void 0
           }))
         );
-        const filtered = parsed.filter((m) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
+        let filtered = parsed.filter((m) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
         if (filtered.length > 0 && filtered[0].role === "user") {
           filtered.shift();
         }
-        this.postToWebview({ type: "loadMessages", sessionKey, messages: filtered });
+        const preambleFiltered = filtered.filter((m) => {
+          if (m.role !== "assistant" || !this.seenPreambleTexts.length)
+            return true;
+          return !this.isPreamble(m.text);
+        });
+        const seen = /* @__PURE__ */ new Set();
+        const merged = [];
+        for (const m of preambleFiltered) {
+          const cleanText = this.normText(this.stripMedia(m.text));
+          if (!cleanText && /<audio/i.test(m.text)) {
+            merged.push(m);
+            continue;
+          }
+          const key = m.role + "\0" + cleanText;
+          const isMedia = /<audio/i.test(m.text) || m.text.indexOf("MEDIA:") === 0;
+          if (isMedia) {
+            const idx = merged.findIndex((x) => x.role + "\0" + this.normText(this.stripMedia(x.text)) === key);
+            if (idx >= 0) {
+              merged[idx] = m;
+            } else {
+              merged.push(m);
+            }
+            seen.add(key);
+          } else {
+            if (seen.has(key))
+              continue;
+            seen.add(key);
+            merged.push(m);
+          }
+        }
+        this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
+        this.postToWebview({ type: "loadMessages", sessionKey, messages: merged });
       } catch (err) {
         this.log(`history error: ${err.message}`);
         this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
@@ -1615,6 +1687,22 @@
     }
     postToWebview(msg) {
       this.view?.webview.postMessage(msg);
+    }
+    /**
+     * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
+     * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
+     */
+    scheduleHistoryReload(sessionKey) {
+      if (this.historyReloadTimer)
+        clearTimeout(this.historyReloadTimer);
+      const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
+      this.historyReloadTimer = setTimeout(async () => {
+        this.historyReloadTimer = null;
+        try {
+          await this.handleLoadMessages(localKey);
+        } catch {
+        }
+      }, 900);
     }
     setBusy(active) {
       if (active)
@@ -2179,12 +2267,7 @@ body {
 .msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
 
 /* \u8BED\u97F3\u6D88\u606F\u6837\u5F0F */
-.msg-audio-bubble { display: flex; flex-direction: column; gap: 8px; }
-.msg-audio { display: flex; align-items: center; gap: 10px; background: rgba(128,128,128,0.08); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 4px 0; }
-.msg-audio-play { font-size: 16px; color: var(--accent); cursor: pointer; flex-shrink: 0; width: 20px; text-align: center; }
-.msg-audio-play:hover { opacity: 0.7; }
-.msg-audio-player { flex: 1; height: 32px; }
-.msg-audio-player audio { width: 100%; height: 32px; }
+.msg-audio-bubble audio { max-width: 100%; display: block; margin: 4px 0; }
 
 /* Mermaid diagram container */
 .msg-assistant .msg-bubble .mermaid-wrapper {
@@ -4071,67 +4154,12 @@ if (resizeHandle) {
       if (audioElements.length > 0) {
         // \u5C06\u5E26\u6709\u97F3\u9891\u7684\u6D88\u606F\u6807\u8BB0\u4E3A\u8BED\u97F3\u6D88\u606F\u6837\u5F0F
         bubble.classList.add('msg-audio-bubble');
-        // \u5728\u6240\u6709 <audio> \u5143\u7D20\u5916\u5C42\u5305\u88F9\u8BED\u97F3\u6D88\u606F\u5BB9\u5668
+        // \u4F7F\u7528 <audio> \u539F\u751F\u63A7\u5236\u6309\u94AE
         for (let i = 0; i < audioElements.length; i++) {
           const audio = audioElements[i];
-          const audioContainer = document.createElement('div');
-          audioContainer.className = 'msg-audio';
-          // \u521B\u5EFA\u64AD\u653E\u6309\u94AE\u56FE\u6807
-          const playIcon = document.createElement('span');
-          playIcon.className = 'msg-audio-play';
-          playIcon.textContent = '\u25B6'; // \u25B6
-          console.log('[Audio] playIcon created, initial state: \u25B6');
-          audioContainer.appendChild(playIcon);
-          // \u521B\u5EFA\u53EF\u663E\u793A\u7684 audio \u64AD\u653E\u5668
-          const audioDisplay = document.createElement('audio');
-          audioDisplay.src = audio.src;
-          audioDisplay.controls = true;
-          audioDisplay.className = 'msg-audio-player';
-          audioDisplay.preload = 'metadata';
-          audioContainer.appendChild(audioDisplay);
-          
-          // \u9A8C\u8BC1 src \u6709\u6548\u6027\uFF0C\u9632\u6B62 CSP \u62E6\u622A\u6216\u7A7A src
-          if (!audioDisplay.src || audioDisplay.src === window.location.href) {
-            console.warn('[Audio] Invalid src detected, attempting recovery...');
-            // \u5C1D\u8BD5\u4ECE\u539F\u59CB audio \u5143\u7D20\u7684\u5176\u4ED6\u5C5E\u6027\u6062\u590D
-            const originalSrc = audio.getAttribute('src') || audio.dataset?.src;
-            if (originalSrc) {
-              audioDisplay.src = originalSrc;
-              console.log('[Audio] Recovered src:', originalSrc);
-            }
-          }
-          
-          // \u6DFB\u52A0\u97F3\u9891\u52A0\u8F7D\u9519\u8BEF\u5904\u7406
-          audioDisplay.onerror = (e) => {
-            console.error('[Audio] Load error:', e);
-            playIcon.textContent = '\u274C';
-            playIcon.title = '\u97F3\u9891\u52A0\u8F7D\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6743\u9650\u6216\u7F51\u7EDC';
-          };
-          
-          // \u97F3\u9891\u52A0\u8F7D\u5B8C\u6210\u540E\u9A8C\u8BC1\u72B6\u6001
-          audioDisplay.onloadeddata = () => {
-            console.log('[Audio] Loaded successfully, duration:', audioDisplay.duration);
-            playIcon.title = '\u70B9\u51FB\u64AD\u653E';
-          };
-          
-          // \u6DFB\u52A0\u70B9\u51FB\u4E8B\u4EF6\u5904\u7406
-          playIcon.addEventListener('click', () => {
-            if (audioDisplay.paused) {
-              audioDisplay.play().catch(err => {
-                console.error('[Audio] Play failed:', err);
-                playIcon.textContent = '\u274C';
-                playIcon.title = '\u64AD\u653E\u5931\u8D25';
-              });
-              playIcon.textContent = '\u23F8'; // \u23F8 \u6682\u505C\u56FE\u6807
-            } else {
-              audioDisplay.pause();
-              playIcon.textContent = '\u25B6'; // \u25B6 \u64AD\u653E\u56FE\u6807
-            }
-          };
-          
-          // \u66FF\u6362\u539F audio \u5143\u7D20
-          audio.parentNode.insertBefore(audioContainer, audio);
-          audio.parentNode.removeChild(audio);
+          audio.controls = true;
+          audio.preload = 'metadata';
+          audio.style.cssText = 'max-width:100%;display:block;margin:4px 0;';
         }
       }
     }

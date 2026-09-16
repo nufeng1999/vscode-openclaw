@@ -55,6 +55,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private supervisorAccumulated: string = "";
   private busyCount = 0;
   private serverVersion: string = '';
+  private seenPreambleTexts: string[] = [];
   // Subagent activity tracking (Requirement A)
   private lastSubagentEventMs = 0;
   private activeSubagentCount = 0;
@@ -344,10 +345,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
       this.postToWebview({ type: "streamDone", sessionKey });
       this.setBusy(false);
+      // 立即重新拉取历史，让服务端最终消息（含语音/音频）马上呈现在 messages 里
+      this.scheduleHistoryReload(sessionKey);
     } else if (state === "aborted") {
       this.log(`stream aborted`);
       this.postToWebview({ type: "streamDone", sessionKey });
       this.setBusy(false);
+      this.scheduleHistoryReload(sessionKey);
     } else if (state === "error") {
       const errorMsg = payload?.errorMessage || "unknown error";
       this.log(`stream error: ${errorMsg}`);
@@ -367,6 +371,15 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     const phase = data.phase || payload?.phase || "";
 
     this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
+
+    if (data.kind === "preamble" && typeof data.progressText === "string" && data.progressText.trim()) {
+      const t = data.progressText.trim();
+      if (!this.seenPreambleTexts.includes(t)) {
+        this.seenPreambleTexts.push(t);
+        if (this.seenPreambleTexts.length > 50) this.seenPreambleTexts.shift();
+      }
+      return;
+    }
 
     if (toolName && (phase === "start" || state === "tool_use")) {
       const label = `${toolName}`;
@@ -547,13 +560,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
    * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
    * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
    * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
-   * 通过 RPC resolveArtifactDownload 获取包含 mediaTicket 鉴权的完整 URL。
+   * 通过 RPC artifacts.download 获取包含 mediaTicket 鉴权的完整 URL。
    */
   private async toAbsoluteMediaUrl(url: string): Promise<string> {
     if (!url.startsWith("/api/chat/media/")) return url;
     
-    // 解析 sessionKey 和 artifactId
-    // 格式：/api/chat/media/outgoing/{sessionKey}/{artifactId}/full
+    // 解析 sessionKey 和 attachmentId
+    // 格式：/api/chat/media/outgoing/{sessionKey}/{attachmentId}/full
     const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
     if (!match) {
       // 格式不匹配，降级为原始绝对 URL
@@ -564,28 +577,37 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       return `${httpBase}${url}`;
     }
     
-    const [, sessionKey, artifactId] = match;
+    const [, sessionKeyEncoded, attachmentId] = match;
+    const sessionKey = decodeURIComponent(sessionKeyEncoded);
     
-    try {
-      // 调用 RPC 获取带 mediaTicket 的完整 URL
-      const result = await this.gateway.request("resolveArtifactDownload", {
-        sessionKey,
-        artifactId
-      });
-      
-      if (result?.url) {
-        return result.url;
-      }
-    } catch (err: any) {
-      // RPC 失败/超时：降级为原始绝对 URL，不阻断渲染
-      this.log(`toAbsoluteMediaUrl: resolveArtifactDownload failed for ${sessionKey}/${artifactId}: ${err?.message || err}`);
-    }
-    
-    // 降级：返回原始绝对 URL（无 ticket）
     const httpBase = this.gatewayUrl
       .replace(/^ws:\/\//, "http://")
       .replace(/^wss:\/\//, "https://")
       .replace(/\/+$/, "");
+
+    // 尝试通过 artifacts.download 获取带 mediaTicket 的 URL。
+    // artifactId 需要带前缀：TTS 语音为 artifact_managed_media_<uuid>，
+    // 图片类为 artifact_managed_image_<uuid>，分别尝试。
+    for (const prefix of ["artifact_managed_media_", "artifact_managed_image_"]) {
+      try {
+        const artifactId = prefix + attachmentId;
+        const result = await this.gateway.request("artifacts.download", {
+          artifactId,
+          sessionKey
+        });
+        if (result?.url) {
+          // artifacts.download 返回的相对路径（/api/chat/media/...）必须拼上
+          // 网关 HTTP 基址，否则 webview 会解析到 vscode-webview:// 基址并被 CSP 拦截
+          const absoluteUrl = result.url.startsWith("/") ? httpBase + result.url : result.url;
+          this.log(`toAbsoluteMediaUrl: resolved ${sessionKey}/${attachmentId} -> ${absoluteUrl}`);
+          return absoluteUrl;
+        }
+      } catch (err: any) {
+        this.log(`toAbsoluteMediaUrl: artifacts.download(${prefix}) failed for ${sessionKey}/${attachmentId}: ${err?.message || err}`);
+      }
+    }
+    
+    // 降级：返回原始绝对 URL（无 ticket），播放器会尝试加载
     return `${httpBase}${url}`;
   }
 
@@ -1800,6 +1822,27 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     });
   }
 
+  private stripMedia(text: string): string {
+    if (!text) return "";
+    let t = String(text);
+    t = t.replace(/<audio[^>]*>[\s\S]*?<\/audio>/gi, "");
+    t = t.replace(/<audio[\s\S]*?>/gi, "");
+    t = t.split("\n").filter((line: string) => !line.startsWith("MEDIA:")).join("\n");
+    return t.trim();
+  }
+
+  private normText(text: string): string {
+    if (!text) return "";
+    return String(text).replace(/\s+/g, " ").trim();
+  }
+
+  private isPreamble(text: string): boolean {
+    if (!this.seenPreambleTexts.length) return false;
+    const norm = this.normText(this.stripMedia(text));
+    if (!norm) return false;
+    return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
+  }
+
   private async handleLoadMessages(sessionKey: string) {
     try {
       const res = await this.gateway.request("chat.history", {
@@ -1818,12 +1861,47 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             contentBlocks: Array.isArray(m.content) ? m.content : undefined
           }))
       );
-      const filtered = parsed.filter((m: ChatMessage) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
+      let filtered = parsed.filter((m: ChatMessage) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
       // Remove leading orphan user message (from failed send)
       if (filtered.length > 0 && filtered[0].role === "user") {
         filtered.shift();
       }
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: filtered });
+      // Filter runtime-captured preamble messages (e.g. TTS planning text)
+      const preambleFiltered = filtered.filter((m: ChatMessage) => {
+        if (m.role !== "assistant" || !this.seenPreambleTexts.length) return true;
+        return !this.isPreamble(m.text);
+      });
+      // Deduplicate assistant messages: prefer the media/audio version over a plain-text copy.
+      // 注意顺序：必须先判断 isMedia，否则同一 key 的音频版会被纯文本版抢先 seen 而丢弃。
+      const seen = new Set<string>();
+      const merged: ChatMessage[] = [];
+      for (const m of preambleFiltered) {
+        const cleanText = this.normText(this.stripMedia(m.text));
+        if (!cleanText && /<audio/i.test(m.text)) {
+          // 纯音频消息（无文本）：key 为空字符串，多条历史会共享，
+          // 但必须保留（否则播放条永远不出现）。
+          merged.push(m);
+          continue;
+        }
+        const key = m.role + "\u0000" + cleanText;
+        const isMedia = /<audio/i.test(m.text) || m.text.indexOf("MEDIA:") === 0;
+        if (isMedia) {
+          // 音频版优先：若已存在相同 key 的纯文本版，替换为音频版
+          const idx = merged.findIndex((x) => x.role + "\u0000" + this.normText(this.stripMedia(x.text)) === key);
+          if (idx >= 0) {
+            merged[idx] = m;
+          } else {
+            merged.push(m);
+          }
+          seen.add(key);
+        } else {
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(m);
+        }
+      }
+      this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
+      this.postToWebview({ type: "loadMessages", sessionKey, messages: merged });
     } catch (err: any) {
       this.log(`history error: ${err.message}`);
       this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
@@ -1853,6 +1931,23 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   private postToWebview(msg: any) {
     this.view?.webview.postMessage(msg);
+  }
+
+  private historyReloadTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
+   * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
+   */
+  private scheduleHistoryReload(sessionKey: string) {
+    if (this.historyReloadTimer) clearTimeout(this.historyReloadTimer);
+    const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
+    this.historyReloadTimer = setTimeout(async () => {
+      this.historyReloadTimer = null;
+      try {
+        await this.handleLoadMessages(localKey);
+      } catch {}
+    }, 900);
   }
 
   private setBusy(active: boolean) {
@@ -2420,12 +2515,7 @@ body {
 .msg-assistant .msg-bubble p:has(img), .msg-assistant .msg-bubble p:has(video) { margin: 0; }
 
 /* 语音消息样式 */
-.msg-audio-bubble { display: flex; flex-direction: column; gap: 8px; }
-.msg-audio { display: flex; align-items: center; gap: 10px; background: rgba(128,128,128,0.08); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 4px 0; }
-.msg-audio-play { font-size: 16px; color: var(--accent); cursor: pointer; flex-shrink: 0; width: 20px; text-align: center; }
-.msg-audio-play:hover { opacity: 0.7; }
-.msg-audio-player { flex: 1; height: 32px; }
-.msg-audio-player audio { width: 100%; height: 32px; }
+.msg-audio-bubble audio { max-width: 100%; display: block; margin: 4px 0; }
 
 /* Mermaid diagram container */
 .msg-assistant .msg-bubble .mermaid-wrapper {
@@ -4312,67 +4402,12 @@ if (resizeHandle) {
       if (audioElements.length > 0) {
         // 将带有音频的消息标记为语音消息样式
         bubble.classList.add('msg-audio-bubble');
-        // 在所有 <audio> 元素外层包裹语音消息容器
+        // 使用 <audio> 原生控制按钮
         for (let i = 0; i < audioElements.length; i++) {
           const audio = audioElements[i];
-          const audioContainer = document.createElement('div');
-          audioContainer.className = 'msg-audio';
-          // 创建播放按钮图标
-          const playIcon = document.createElement('span');
-          playIcon.className = 'msg-audio-play';
-          playIcon.textContent = '\u25B6'; // ▶
-          console.log('[Audio] playIcon created, initial state: ▶');
-          audioContainer.appendChild(playIcon);
-          // 创建可显示的 audio 播放器
-          const audioDisplay = document.createElement('audio');
-          audioDisplay.src = audio.src;
-          audioDisplay.controls = true;
-          audioDisplay.className = 'msg-audio-player';
-          audioDisplay.preload = 'metadata';
-          audioContainer.appendChild(audioDisplay);
-          
-          // 验证 src 有效性，防止 CSP 拦截或空 src
-          if (!audioDisplay.src || audioDisplay.src === window.location.href) {
-            console.warn('[Audio] Invalid src detected, attempting recovery...');
-            // 尝试从原始 audio 元素的其他属性恢复
-            const originalSrc = audio.getAttribute('src') || audio.dataset?.src;
-            if (originalSrc) {
-              audioDisplay.src = originalSrc;
-              console.log('[Audio] Recovered src:', originalSrc);
-            }
-          }
-          
-          // 添加音频加载错误处理
-          audioDisplay.onerror = (e) => {
-            console.error('[Audio] Load error:', e);
-            playIcon.textContent = '❌';
-            playIcon.title = '音频加载失败，请检查权限或网络';
-          };
-          
-          // 音频加载完成后验证状态
-          audioDisplay.onloadeddata = () => {
-            console.log('[Audio] Loaded successfully, duration:', audioDisplay.duration);
-            playIcon.title = '点击播放';
-          };
-          
-          // 添加点击事件处理
-          playIcon.addEventListener('click', () => {
-            if (audioDisplay.paused) {
-              audioDisplay.play().catch(err => {
-                console.error('[Audio] Play failed:', err);
-                playIcon.textContent = '❌';
-                playIcon.title = '播放失败';
-              });
-              playIcon.textContent = '\u23F8'; // ⏸ 暂停图标
-            } else {
-              audioDisplay.pause();
-              playIcon.textContent = '\u25B6'; // ▶ 播放图标
-            }
-          };
-          
-          // 替换原 audio 元素
-          audio.parentNode.insertBefore(audioContainer, audio);
-          audio.parentNode.removeChild(audio);
+          audio.controls = true;
+          audio.preload = 'metadata';
+          audio.style.cssText = 'max-width:100%;display:block;margin:4px 0;';
         }
       }
     }
