@@ -140,6 +140,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.postToWebview({
       type: "init",
       sessionKey: this.currentSessionKey,
+      gwSessionKey: this.gwSessionKey(),
       model: this.currentModel,
       connected,
       agent: this.activeAgent,
@@ -298,7 +299,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       const text = await this.extractDeltaText(payload?.message);
       this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
       if (text) {
-        this.postToWebview({ type: "streamDelta", sessionKey, text });
+        this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text });
       }
     } else if (state === "final") {
       this.log(`stream final`);
@@ -327,8 +328,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               this.autoContinueCount = 0;
             } else {
               // Send "Continue" to retry (not recorded in history)
-              this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
-              this.postToWebview({ type: "streamDone", sessionKey });
+              this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
+              this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
               this.sendContinueMessage();
               return;
             }
@@ -339,23 +340,23 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               this.context.globalState.update("openclaw.autoContinueCount", 0);
             }
             // Display the final message directly
-            this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+            this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
           }
         }
       }
-      this.postToWebview({ type: "streamDone", sessionKey });
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
       this.setBusy(false);
       // 立即重新拉取历史，让服务端最终消息（含语音/音频）马上呈现在 messages 里
-      this.scheduleHistoryReload(sessionKey);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
     } else if (state === "aborted") {
       this.log(`stream aborted`);
-      this.postToWebview({ type: "streamDone", sessionKey });
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
       this.setBusy(false);
-      this.scheduleHistoryReload(sessionKey);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
     } else if (state === "error") {
       const errorMsg = payload?.errorMessage || "unknown error";
       this.log(`stream error: ${errorMsg}`);
-      this.postToWebview({ type: "streamError", sessionKey, error: errorMsg });
+      this.postToWebview({ type: "streamError", sessionKey, agentId: this.activeAgent.id, error: errorMsg });
       this.setBusy(false);
     } else {
       this.log(`unknown chat state: ${state}`);
@@ -755,6 +756,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           this.postToWebview({
             type: "init",
             sessionKey: this.currentSessionKey,
+            gwSessionKey: this.gwSessionKey(),
             model: this.currentModel,
             connected: this.gateway.connected,
             agent: this.activeAgent,
@@ -793,11 +795,24 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "requestTasks":
           await this.handleRequestTasks();
           break;
-        case "switchSession":
-          const ssLocalKey = this.resolveSession(msg.sessionKey);
+        case "switchSession": {
+          const ssGwKey = msg.sessionKey || '';
+          // 从完整 gateway sessionKey 解析 agentId（格式: agent:<agentId>:<localKey>）
+          const agentMatch = ssGwKey.match(/^agent:([^:]+):/);
+          let sessionAgentId: string | undefined;
+          if (agentMatch) {
+            sessionAgentId = agentMatch[1];
+            const ag = this.agents.find(a => a.id === sessionAgentId);
+            if (ag && (!this.activeAgent || this.activeAgent.id !== sessionAgentId)) {
+              this.activeAgent = ag;
+              this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
+            }
+          }
+          const ssLocalKey = this.resolveSession(ssGwKey);
           this.currentSessionKey = ssLocalKey;
-          await this.handleLoadMessages(ssLocalKey);
+          await this.handleLoadMessages(ssLocalKey, sessionAgentId, msg.sessionId);
           break;
+        }
         case "switchTab":
           // 从 sessionKey 解析 agentId（格式: agent:<agentId>:<localKey>）
           if (msg.sessionKey) {
@@ -822,7 +837,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           }
           const localSessionKey = this.resolveSession(msg.sessionKey || "main");
           this.currentSessionKey = localSessionKey;
-          await this.handleLoadMessages(localSessionKey);
+          await this.handleLoadMessages(localSessionKey, undefined, msg.sessionId);
           this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
           break;
         case "deleteSession":
@@ -830,36 +845,28 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           break;
         case "addChatTabFromSession": {
           const sessionKey = msg.sessionKey || '';
-          // subagent 会话（sessionKey 含 :subagent:）：创建新 tab 显示该会话历史
-          if (sessionKey.includes(':subagent:')) {
-            const deviceName = msg.deviceName || sessionKey;
-            // 截断设备名称用于 tab 标题
-            const parts = deviceName.split(':');
-            let tabLabel = parts[0].trim();
-            if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
-            // 从 sessionKey 解析 agentId
-            let tabAgentId = 'main';
-            const match = sessionKey.match(/^agent:([^:]+):/);
-            if (match) tabAgentId = match[1];
-            const newTab = {
-              id: 'tab-' + sessionKey + '-' + Date.now(),
-              label: tabLabel,
-              agentId: tabAgentId,
-              sessionKey: sessionKey,
-              messages: []
-            };
-            // 通知 webview 创建 tab（webview 侧会做去重）
-            this.postToWebview({ type: 'addChatTab', tab: newTab });
-            // 加载该 subagent 会话历史
-            this.currentSessionKey = this.resolveSession(sessionKey);
-            await this.handleLoadMessages(this.currentSessionKey);
-          } else {
-            // 普通会话：直接打开该 agent 的默认聊天界面（不创建新 tab）
-            let agentId = 'main';
-            const m = sessionKey.match(/^agent:([^:]+):/);
-            if (m) agentId = m[1];
-            this.postToWebview({ type: 'activateAgentChat', agentId });
-          }
+          const deviceName = msg.deviceName || sessionKey;
+          // 会话一律创建专属 tab（webview 按 sessionKey 去重，已存在则直接切换），绝不触碰 Chat tab
+          const parts = deviceName.split(':');
+          let tabLabel = parts[0].trim();
+          if (tabLabel.length > 15) tabLabel = tabLabel.substring(0, 15) + '…';
+          // 从 sessionKey 解析 agentId
+          let tabAgentId = 'main';
+          const match = sessionKey.match(/^agent:([^:]+):/);
+          if (match) tabAgentId = match[1];
+          const newTab = {
+            id: 'tab-' + sessionKey + '-' + Date.now(),
+            label: tabLabel,
+            agentId: tabAgentId,
+            sessionKey: sessionKey,
+            sessionId: msg.sessionId,
+            messages: []
+          };
+          // 通知 webview 创建 tab（webview 侧会做去重）
+          this.postToWebview({ type: 'addChatTab', tab: newTab });
+          // 加载该会话历史（绑定到该 session 所属 agent，而不是当前 activeAgent）
+          this.currentSessionKey = this.resolveSession(sessionKey);
+          await this.handleLoadMessages(this.currentSessionKey, tabAgentId, msg.sessionId);
           break;
         }
         case "switchAgent":
@@ -1018,11 +1025,11 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       ...userMsg,
       attachments: webviewAttachments || []
     } : userMsg;
-    this.postToWebview({ type: "userMessage", message: msgWithAttachments });
+    this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
 
     const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
 
     try {
       let res: any;
@@ -1068,7 +1075,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       if (res && typeof res === 'object' && 
           res.aborted === false && 
           (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
-        this.postToWebview({ type: "streamDone", runId });
+        this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
         // Format slash command response for display
         const replyText = this.formatCommandResponse(text, res);
         const assistantMsg: ChatMessage = {
@@ -1077,7 +1084,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           timestamp: Date.now()
         };
         this.messages.push(assistantMsg);
-        this.postToWebview({ type: "userMessage", message: assistantMsg });
+        this.postToWebview({ type: "userMessage", message: assistantMsg, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
         this.setBusy(false);  // fix: close busy state for slash commands that don't produce streaming runs
       }
     } catch (err: any) {
@@ -1086,7 +1093,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         text: `Error: ${err}`,
         timestamp: Date.now()
       });
-      this.postToWebview({ type: "streamDone", runId });
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
       this.setBusy(false);
     }
   }
@@ -1099,7 +1106,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private async sendContinueMessage() {
     if (!this.gateway.connected) return;
     const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
     try {
       try {
         await this.gateway.request("chat.send", {
@@ -1130,7 +1137,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
       }
     } catch {
-      this.postToWebview({ type: "streamDone", runId });
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
       this.setBusy(false);
     }
   }
@@ -1409,6 +1416,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       });
       this.sessions = res?.sessions || [];
       this.log(`sessions.list: ${this.sessions.length} 条`);
+      for (const s of this.sessions || []) {
+        this.log(`  session: key=${JSON.stringify(s?.key || '')} id=${s?.sessionId || '-'} name=${JSON.stringify(s?.['device-info']?.['device-name'] || s?.displayName || s?.derivedTitle || '')}`);
+      }
       // 发送完整会话数据给 webview，包含 device-info 等字段
       this.postToWebview({ type: "sessionsList", sessions: this.sessions });
     } catch (err: any) {
@@ -1843,14 +1853,15 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
   }
 
-  private async handleLoadMessages(sessionKey: string) {
+  private async handleLoadMessages(sessionKey: string, agentId?: string, sessionId?: string) {
+    const targetAgentId = agentId || this.activeAgent.id;
     try {
       const res = await this.gateway.request("chat.history", {
-        sessionKey: this.gwSessionKey(sessionKey),
+        sessionKey: `agent:${targetAgentId}:${sessionKey}`,
         limit: 200
       });
       const msgs = res?.messages || [];
-      this.log(`history: ${msgs.length} messages`);
+      this.log(`history: ${msgs.length} messages (key=agent:${targetAgentId}:${sessionKey} id=${res?.sessionId || sessionId || '-'})`);
       const parsed: ChatMessage[] = await Promise.all(
         msgs
           .filter((m: any) => m.role === "user" || m.role === "assistant")
@@ -1901,10 +1912,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         }
       }
       this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: merged });
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: merged });
     } catch (err: any) {
       this.log(`history error: ${err.message}`);
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: [] });
     }
   }
 
@@ -1939,13 +1950,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
    * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
    * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
    */
-  private scheduleHistoryReload(sessionKey: string) {
+  private scheduleHistoryReload(sessionKey: string, agentId?: string) {
     if (this.historyReloadTimer) clearTimeout(this.historyReloadTimer);
     const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
+    const targetAgentId = agentId || this.activeAgent.id;
     this.historyReloadTimer = setTimeout(async () => {
       this.historyReloadTimer = null;
       try {
-        await this.handleLoadMessages(localKey);
+        await this.handleLoadMessages(localKey, targetAgentId);
       } catch {}
     }, 900);
   }
@@ -3182,6 +3194,48 @@ body {
 
   function getActiveTab() { return tabs.find(t => t.id === activeTabId) || tabs[0]; }
 
+  // 记录正在流式输出的 agent 绑定到哪个 tab（避免不同 agent 的消息互相串台）
+  const streamAgentBindings = {};
+
+  function tabForStreamEvent(msg) {
+    const streamAgent = msg.agentId || (agent && agent.id) || 'main';
+    const boundTabId = streamAgentBindings[streamAgent];
+    const active = getActiveTab();
+    // 有绑定：流只影响绑定 tab（若不在前台则忽略流式渲染；历史重载会补全消息）
+    return boundTabId ? boundTabId === active.id : true;
+  }
+
+  // 点击会话列表 / 收到 loadMessages / userMessage 时的 tab 路由：
+  // 1) 已有该 agent 的 tab → 直接复用；
+  // 2) tab-main 仍是占位 'main'（尚未绑定配置的 OpenClaw: Agent ID）→ 复用它绑定到该 agent；
+  // 3) 否则新建该 agent 的专属 tab。绝不把已绑定配置 agent 的 Chat tab 重新绑定到别的 agent。
+  function getOrCreateTabByAgentId(agentId) {
+    let tab = tabs.find(t => t.agentId === agentId);
+    if (!tab) {
+      const defaultTab = tabs.find(t => t.id === 'tab-main' && t.agentId === 'main');
+      if (defaultTab) {
+        tab = defaultTab;
+        tab.agentId = agentId || 'main';
+        tab.sessionKey = 'main';
+        const ag = agents.find(a => a.id === tab.agentId);
+        if (ag) tab.label = ag.name || ag.id;
+      } else {
+        const ag = agents.find(a => a.id === agentId);
+        const resolvedAgentId = agentId || (agent && agent.id) || 'main';
+        tab = {
+          id: 'tab-agent-' + agentId + '-' + Date.now(),
+          label: (ag && (ag.name || ag.id)) || agentId,
+          agentId: agentId,
+          sessionKey: 'agent:' + resolvedAgentId + ':main',
+          messages: []
+        };
+        tabs.push(tab);
+      }
+      renderTabs();
+    }
+    return tab;
+  }
+
   renderTabs();
   vscode.postMessage({ type: 'webviewReady' });
 
@@ -3611,7 +3665,7 @@ if (resizeHandle) {
         updateAgentCard();
         updateChips();
         serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t('not configured')}';
-        if (msg.sessionKey) currentSession = msg.sessionKey;
+        if (msg.sessionKey) currentSession = msg.gwSessionKey || msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
           openWorkdirBtn.style.display = connected ? '' : 'none';
@@ -3623,7 +3677,8 @@ if (resizeHandle) {
 // Update default tab with resolved agent/session from init message
       if (tabs.length > 0) {
         tabs[0].agentId = msg.agent.id;
-        tabs[0].sessionKey = msg.sessionKey;
+        // tab 统一保存完整 gwKey（如 agent:<id>:main），保证按 sessionKey 查重可匹配 Chat tab
+        tabs[0].sessionKey = msg.gwSessionKey || msg.sessionKey || tabs[0].sessionKey;
         // If we have stored messages for this tab, use them
         if (activeTabMessages.length > 0 && tabs[0].id === activeTabId) {
           tabs[0].messages = activeTabMessages.slice();
@@ -3683,19 +3738,39 @@ if (resizeHandle) {
         renderAgentButtons();
         renderTabs();
         break;
-      case 'userMessage':
-        appendMessage(msg.message);
-        activeTabMessages.push(msg.message);
-        break;
-      case 'loadMessages':
-        clearMessages();
-        const tab = getActiveTab();
-        if (tab) {
-          activeTabMessages = (msg.messages || []).slice();
-          tab.messages = activeTabMessages;
+      case 'userMessage': {
+        // 优先按 gwKey 匹配专属会话 tab；否则回退到 agentId 路由
+        let tab = msg.gwKey ? tabs.find(t => t.sessionKey === msg.gwKey) : undefined;
+        if (!tab) {
+          const targetAgent = msg.agentId || (agent && agent.id) || 'main';
+          tab = getOrCreateTabByAgentId(targetAgent);
         }
-        for (const m of (msg.messages || [])) appendMessage(m);
+        if (tab.id === activeTabId) {
+          appendMessage(msg.message);
+          activeTabMessages.push(msg.message);
+        } else {
+          tab.messages.push(msg.message);
+        }
         break;
+      }
+      case 'loadMessages': {
+        // 优先按完整 sessionKey（gwKey）匹配专属 tab，避免同 agent 下多个会话路由错 tab
+        let tab = msg.gwKey ? tabs.find(t => t.sessionKey === msg.gwKey) : undefined;
+        if (!tab) {
+          const targetAgent = msg.agentId || (agent && agent.id) || 'main';
+          tab = getOrCreateTabByAgentId(targetAgent);
+        }
+        tab.sessionKey = msg.gwKey || msg.sessionKey || tab.sessionKey;
+        tab.sessionId = msg.sessionId || tab.sessionId;
+        tab.messages = (msg.messages || []).slice();
+        if (tab.id === activeTabId) {
+          currentSession = tab.sessionKey;
+          clearMessages();
+          activeTabMessages = tab.messages;
+          for (const m of tab.messages) appendMessage(m);
+        }
+        break;
+      }
       case 'activateAgentChat':
         // 切换到该 agent 的默认聊天界面（复用 agent 按钮切换逻辑）
         if (msg.agentId) {
@@ -3706,7 +3781,7 @@ if (resizeHandle) {
               id: 'tab-' + msg.agentId + '-' + Date.now(),
               label: (ag && (ag.name || ag.id)) || msg.agentId,
               agentId: msg.agentId,
-              sessionKey: 'main',
+              sessionKey: 'agent:' + msg.agentId + ':main',
               messages: []
             };
             tabs.push(tab);
@@ -3733,7 +3808,9 @@ if (resizeHandle) {
         const ct = getActiveTab();
         if (ct) ct.messages = [];
         break;
-      case 'streamStart':
+      case 'streamStart': {
+        const streamAgent = msg.agentId || (agent && agent.id) || 'main';
+        streamAgentBindings[streamAgent] = getActiveTab().id;
         // Clean up any leftover streamEl (fix for residual content interfering with new stream)
         if (streamEl) {
           streamEl.remove();
@@ -3746,13 +3823,16 @@ if (resizeHandle) {
         attachBtnEl.style.display = 'none';
         emptyState.style.display = 'none';
         break;
+      }
       case 'streamDelta':
+        if (!tabForStreamEvent(msg)) break;
         streaming = true;
         emptyState.style.display = 'none';
         showTyping(false);
         updateStream(msg.text, false);
         break;
-      case 'streamDone':
+      case 'streamDone': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         // Capture bubble content BEFORE clearing streamEl
         let finalText = '';
@@ -3785,7 +3865,9 @@ if (resizeHandle) {
         // 流式输出完成后渲染 Mermaid 图表（否则需要刷新才能渲染）
         renderMermaidBlocks();
         break;
-      case 'streamError':
+      }
+      case 'streamError': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         appendMessage({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         showTyping(false);
@@ -3795,6 +3877,7 @@ if (resizeHandle) {
         // Store error message in activeTabMessages
         activeTabMessages.push({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         break;
+      }
       case 'toolCall':
         emptyState.style.display = 'none';
         showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t('Thinking...')}');
@@ -3809,7 +3892,8 @@ if (resizeHandle) {
           renderAtDropdown();
         }
         break;
-      case 'autoContinueFailed':
+      case 'autoContinueFailed': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         appendMessage({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
@@ -3819,6 +3903,7 @@ if (resizeHandle) {
         activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t('Auto-continue failed after {0} attempts')}'.replace('{0}', msg.count), timestamp: Date.now() });
         this.setBusy(false);
         break;
+      }
       case 'busyState': {
         const busyEl = document.getElementById('busyIndicator');
         if (busyEl) {
@@ -4951,9 +5036,9 @@ if (resizeHandle) {
         // 提取 device-info.device-name 用于显示
         const deviceName = session['device-info']?.['device-name'] || session.displayName || session.key;
         const simplifiedName = simplifyDeviceName(deviceName);
-        html += '<div class="' + cls + '" data-key="' + session.key + '" data-device-name="' + deviceName + '">';
+        html += '<div class="' + cls + '" data-key="' + session.key + '" data-sid="' + (session.sessionId || '') + '" data-device-name="' + deviceName + '">';
         html += '<div class="' + dotCls + '"></div>';
-        html += '<div class="device-info"><div class="device-name">' + simplifiedName + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + '</div></div>';
+        html += '<div class="device-info"><div class="device-name">' + simplifiedName + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + (session.sessionId ? ' · ' + session.sessionId.slice(0, 8) : '') + '</div></div>';
         if (session.totalTokens) html += '<div class="device-tokens">' + formatTokens(session.totalTokens) + '</div>';
         html += '<button class="device-delete">×</button>';
         html += '</div>';
@@ -4969,8 +5054,12 @@ if (resizeHandle) {
       // Attach click handlers after DOM insertion
       sessionsList.querySelectorAll('.device-item[data-key]').forEach(el => {
         el.addEventListener('click', () => {
-          currentSession = el.getAttribute('data-key');
-          vscode.postMessage({ type: 'switchSession', sessionKey: currentSession });
+          const key = el.getAttribute('data-key') || '';
+          const deviceName = el.getAttribute('data-device-name') || '';
+          const sid = el.getAttribute('data-sid') || undefined;
+          currentSession = key;
+          // 会话点击：创建/切换该 sessionKey 的专属 tab，绝不复用 Chat tab
+          vscode.postMessage({ type: 'addChatTabFromSession', sessionKey: key, deviceName: deviceName, sessionId: sid });
           renderSessions();
         });
         el.querySelector('.device-delete')?.addEventListener('click', (e) => {
@@ -4990,11 +5079,13 @@ if (resizeHandle) {
           el.addEventListener('click', () => {
             const sessionKey = el.getAttribute('data-key');
             const deviceName = el.getAttribute('data-device-name') || '';
+            const sid = el.getAttribute('data-sid') || undefined;
             // 点击 tabSessionsContent 中的会话时，添加新的 chat tab 并加载历史
             vscode.postMessage({
               type: 'addChatTabFromSession',
               sessionKey: sessionKey,
-              deviceName: deviceName
+              deviceName: deviceName,
+              sessionId: sid
             });
           });
           el.querySelector('.device-delete')?.addEventListener('click', (e) => {
@@ -5041,7 +5132,7 @@ if (resizeHandle) {
             id: 'tab-' + a.id + '-' + Date.now(),
             label: a.name || a.id,
             agentId: a.id,
-            sessionKey: 'main',
+            sessionKey: 'agent:' + a.id + ':main',
             messages: []
           };
           tabs.push(tab);
@@ -5118,7 +5209,7 @@ if (resizeHandle) {
     renderAgentButtons();
     renderTabs();
     // Tell extension to switch agent/session
-    vscode.postMessage({ type: 'switchTab', agentId: tab.agentId, sessionKey: tab.sessionKey });
+    vscode.postMessage({ type: 'switchTab', agentId: tab.agentId, sessionKey: tab.sessionKey, sessionId: tab.sessionId });
   }
 
   function formatTokens(n) {

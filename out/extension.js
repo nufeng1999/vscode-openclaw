@@ -1149,6 +1149,7 @@ var OpenClawChatView = class _OpenClawChatView {
     this.postToWebview({
       type: "init",
       sessionKey: this.currentSessionKey,
+      gwSessionKey: this.gwSessionKey(),
       model: this.currentModel,
       connected,
       agent: this.activeAgent,
@@ -1289,7 +1290,7 @@ var OpenClawChatView = class _OpenClawChatView {
       const text = await this.extractDeltaText(payload?.message);
       this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
       if (text) {
-        this.postToWebview({ type: "streamDelta", sessionKey, text });
+        this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text });
       }
     } else if (state === "final") {
       this.log(`stream final`);
@@ -1312,8 +1313,8 @@ var OpenClawChatView = class _OpenClawChatView {
               });
               this.autoContinueCount = 0;
             } else {
-              this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
-              this.postToWebview({ type: "streamDone", sessionKey });
+              this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
+              this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
               this.sendContinueMessage();
               return;
             }
@@ -1322,22 +1323,22 @@ var OpenClawChatView = class _OpenClawChatView {
               this.autoContinueCount = 0;
               this.context.globalState.update("openclaw.autoContinueCount", 0);
             }
-            this.postToWebview({ type: "streamDelta", sessionKey, text: finalText });
+            this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
           }
         }
       }
-      this.postToWebview({ type: "streamDone", sessionKey });
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
       this.setBusy(false);
-      this.scheduleHistoryReload(sessionKey);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
     } else if (state === "aborted") {
       this.log(`stream aborted`);
-      this.postToWebview({ type: "streamDone", sessionKey });
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
       this.setBusy(false);
-      this.scheduleHistoryReload(sessionKey);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
     } else if (state === "error") {
       const errorMsg = payload?.errorMessage || "unknown error";
       this.log(`stream error: ${errorMsg}`);
-      this.postToWebview({ type: "streamError", sessionKey, error: errorMsg });
+      this.postToWebview({ type: "streamError", sessionKey, agentId: this.activeAgent.id, error: errorMsg });
       this.setBusy(false);
     } else {
       this.log(`unknown chat state: ${state}`);
@@ -1662,6 +1663,7 @@ var OpenClawChatView = class _OpenClawChatView {
           this.postToWebview({
             type: "init",
             sessionKey: this.currentSessionKey,
+            gwSessionKey: this.gwSessionKey(),
             model: this.currentModel,
             connected: this.gateway.connected,
             agent: this.activeAgent,
@@ -1700,11 +1702,23 @@ var OpenClawChatView = class _OpenClawChatView {
         case "requestTasks":
           await this.handleRequestTasks();
           break;
-        case "switchSession":
-          const ssLocalKey = this.resolveSession(msg.sessionKey);
+        case "switchSession": {
+          const ssGwKey = msg.sessionKey || "";
+          const agentMatch = ssGwKey.match(/^agent:([^:]+):/);
+          let sessionAgentId;
+          if (agentMatch) {
+            sessionAgentId = agentMatch[1];
+            const ag = this.agents.find((a) => a.id === sessionAgentId);
+            if (ag && (!this.activeAgent || this.activeAgent.id !== sessionAgentId)) {
+              this.activeAgent = ag;
+              this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
+            }
+          }
+          const ssLocalKey = this.resolveSession(ssGwKey);
           this.currentSessionKey = ssLocalKey;
-          await this.handleLoadMessages(ssLocalKey);
+          await this.handleLoadMessages(ssLocalKey, sessionAgentId, msg.sessionId);
           break;
+        }
         case "switchTab":
           if (msg.sessionKey) {
             const match = msg.sessionKey.match(/^agent:([^:]+):/);
@@ -1728,7 +1742,7 @@ var OpenClawChatView = class _OpenClawChatView {
           }
           const localSessionKey = this.resolveSession(msg.sessionKey || "main");
           this.currentSessionKey = localSessionKey;
-          await this.handleLoadMessages(localSessionKey);
+          await this.handleLoadMessages(localSessionKey, void 0, msg.sessionId);
           this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
           break;
         case "deleteSession":
@@ -1736,33 +1750,26 @@ var OpenClawChatView = class _OpenClawChatView {
           break;
         case "addChatTabFromSession": {
           const sessionKey = msg.sessionKey || "";
-          if (sessionKey.includes(":subagent:")) {
-            const deviceName = msg.deviceName || sessionKey;
-            const parts = deviceName.split(":");
-            let tabLabel = parts[0].trim();
-            if (tabLabel.length > 15)
-              tabLabel = tabLabel.substring(0, 15) + "\u2026";
-            let tabAgentId = "main";
-            const match = sessionKey.match(/^agent:([^:]+):/);
-            if (match)
-              tabAgentId = match[1];
-            const newTab = {
-              id: "tab-" + sessionKey + "-" + Date.now(),
-              label: tabLabel,
-              agentId: tabAgentId,
-              sessionKey,
-              messages: []
-            };
-            this.postToWebview({ type: "addChatTab", tab: newTab });
-            this.currentSessionKey = this.resolveSession(sessionKey);
-            await this.handleLoadMessages(this.currentSessionKey);
-          } else {
-            let agentId = "main";
-            const m = sessionKey.match(/^agent:([^:]+):/);
-            if (m)
-              agentId = m[1];
-            this.postToWebview({ type: "activateAgentChat", agentId });
-          }
+          const deviceName = msg.deviceName || sessionKey;
+          const parts = deviceName.split(":");
+          let tabLabel = parts[0].trim();
+          if (tabLabel.length > 15)
+            tabLabel = tabLabel.substring(0, 15) + "\u2026";
+          let tabAgentId = "main";
+          const match = sessionKey.match(/^agent:([^:]+):/);
+          if (match)
+            tabAgentId = match[1];
+          const newTab = {
+            id: "tab-" + sessionKey + "-" + Date.now(),
+            label: tabLabel,
+            agentId: tabAgentId,
+            sessionKey,
+            sessionId: msg.sessionId,
+            messages: []
+          };
+          this.postToWebview({ type: "addChatTab", tab: newTab });
+          this.currentSessionKey = this.resolveSession(sessionKey);
+          await this.handleLoadMessages(this.currentSessionKey, tabAgentId, msg.sessionId);
           break;
         }
         case "switchAgent":
@@ -1904,10 +1911,10 @@ var OpenClawChatView = class _OpenClawChatView {
       ...userMsg,
       attachments: webviewAttachments || []
     } : userMsg;
-    this.postToWebview({ type: "userMessage", message: msgWithAttachments });
+    this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
     const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
     try {
       let res;
       try {
@@ -1948,7 +1955,7 @@ var OpenClawChatView = class _OpenClawChatView {
       }
       this.setBusy(true);
       if (res && typeof res === "object" && res.aborted === false && (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
-        this.postToWebview({ type: "streamDone", runId });
+        this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
         const replyText = this.formatCommandResponse(text, res);
         const assistantMsg = {
           role: "assistant",
@@ -1956,7 +1963,7 @@ var OpenClawChatView = class _OpenClawChatView {
           timestamp: Date.now()
         };
         this.messages.push(assistantMsg);
-        this.postToWebview({ type: "userMessage", message: assistantMsg });
+        this.postToWebview({ type: "userMessage", message: assistantMsg, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
         this.setBusy(false);
       }
     } catch (err) {
@@ -1965,7 +1972,7 @@ var OpenClawChatView = class _OpenClawChatView {
         text: `Error: ${err}`,
         timestamp: Date.now()
       });
-      this.postToWebview({ type: "streamDone", runId });
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
       this.setBusy(false);
     }
   }
@@ -1978,7 +1985,7 @@ var OpenClawChatView = class _OpenClawChatView {
     if (!this.gateway.connected)
       return;
     const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId });
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
     try {
       try {
         await this.gateway.request("chat.send", {
@@ -2009,7 +2016,7 @@ var OpenClawChatView = class _OpenClawChatView {
         }
       }
     } catch {
-      this.postToWebview({ type: "streamDone", runId });
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
       this.setBusy(false);
     }
   }
@@ -2248,6 +2255,9 @@ var OpenClawChatView = class _OpenClawChatView {
       });
       this.sessions = res?.sessions || [];
       this.log(`sessions.list: ${this.sessions.length} \u6761`);
+      for (const s of this.sessions || []) {
+        this.log(`  session: key=${JSON.stringify(s?.key || "")} id=${s?.sessionId || "-"} name=${JSON.stringify(s?.["device-info"]?.["device-name"] || s?.displayName || s?.derivedTitle || "")}`);
+      }
       this.postToWebview({ type: "sessionsList", sessions: this.sessions });
     } catch (err) {
       this.log(`sessions.list error: ${err.message}`);
@@ -2614,14 +2624,15 @@ var OpenClawChatView = class _OpenClawChatView {
       return false;
     return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
   }
-  async handleLoadMessages(sessionKey) {
+  async handleLoadMessages(sessionKey, agentId, sessionId) {
+    const targetAgentId = agentId || this.activeAgent.id;
     try {
       const res = await this.gateway.request("chat.history", {
-        sessionKey: this.gwSessionKey(sessionKey),
+        sessionKey: `agent:${targetAgentId}:${sessionKey}`,
         limit: 200
       });
       const msgs = res?.messages || [];
-      this.log(`history: ${msgs.length} messages`);
+      this.log(`history: ${msgs.length} messages (key=agent:${targetAgentId}:${sessionKey} id=${res?.sessionId || sessionId || "-"})`);
       const parsed = await Promise.all(
         msgs.filter((m) => m.role === "user" || m.role === "assistant").map(async (m) => ({
           role: m.role,
@@ -2665,10 +2676,10 @@ var OpenClawChatView = class _OpenClawChatView {
         }
       }
       this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: merged });
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: merged });
     } catch (err) {
       this.log(`history error: ${err.message}`);
-      this.postToWebview({ type: "loadMessages", sessionKey, messages: [] });
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: [] });
     }
   }
   async handleDeleteSession(sessionKey) {
@@ -2698,14 +2709,15 @@ var OpenClawChatView = class _OpenClawChatView {
    * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
    * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
    */
-  scheduleHistoryReload(sessionKey) {
+  scheduleHistoryReload(sessionKey, agentId) {
     if (this.historyReloadTimer)
       clearTimeout(this.historyReloadTimer);
     const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
+    const targetAgentId = agentId || this.activeAgent.id;
     this.historyReloadTimer = setTimeout(async () => {
       this.historyReloadTimer = null;
       try {
-        await this.handleLoadMessages(localKey);
+        await this.handleLoadMessages(localKey, targetAgentId);
       } catch {
       }
     }, 900);
@@ -3940,6 +3952,48 @@ body {
 
   function getActiveTab() { return tabs.find(t => t.id === activeTabId) || tabs[0]; }
 
+  // \u8BB0\u5F55\u6B63\u5728\u6D41\u5F0F\u8F93\u51FA\u7684 agent \u7ED1\u5B9A\u5230\u54EA\u4E2A tab\uFF08\u907F\u514D\u4E0D\u540C agent \u7684\u6D88\u606F\u4E92\u76F8\u4E32\u53F0\uFF09
+  const streamAgentBindings = {};
+
+  function tabForStreamEvent(msg) {
+    const streamAgent = msg.agentId || (agent && agent.id) || 'main';
+    const boundTabId = streamAgentBindings[streamAgent];
+    const active = getActiveTab();
+    // \u6709\u7ED1\u5B9A\uFF1A\u6D41\u53EA\u5F71\u54CD\u7ED1\u5B9A tab\uFF08\u82E5\u4E0D\u5728\u524D\u53F0\u5219\u5FFD\u7565\u6D41\u5F0F\u6E32\u67D3\uFF1B\u5386\u53F2\u91CD\u8F7D\u4F1A\u8865\u5168\u6D88\u606F\uFF09
+    return boundTabId ? boundTabId === active.id : true;
+  }
+
+  // \u70B9\u51FB\u4F1A\u8BDD\u5217\u8868 / \u6536\u5230 loadMessages / userMessage \u65F6\u7684 tab \u8DEF\u7531\uFF1A
+  // 1) \u5DF2\u6709\u8BE5 agent \u7684 tab \u2192 \u76F4\u63A5\u590D\u7528\uFF1B
+  // 2) tab-main \u4ECD\u662F\u5360\u4F4D 'main'\uFF08\u5C1A\u672A\u7ED1\u5B9A\u914D\u7F6E\u7684 OpenClaw: Agent ID\uFF09\u2192 \u590D\u7528\u5B83\u7ED1\u5B9A\u5230\u8BE5 agent\uFF1B
+  // 3) \u5426\u5219\u65B0\u5EFA\u8BE5 agent \u7684\u4E13\u5C5E tab\u3002\u7EDD\u4E0D\u628A\u5DF2\u7ED1\u5B9A\u914D\u7F6E agent \u7684 Chat tab \u91CD\u65B0\u7ED1\u5B9A\u5230\u522B\u7684 agent\u3002
+  function getOrCreateTabByAgentId(agentId) {
+    let tab = tabs.find(t => t.agentId === agentId);
+    if (!tab) {
+      const defaultTab = tabs.find(t => t.id === 'tab-main' && t.agentId === 'main');
+      if (defaultTab) {
+        tab = defaultTab;
+        tab.agentId = agentId || 'main';
+        tab.sessionKey = 'main';
+        const ag = agents.find(a => a.id === tab.agentId);
+        if (ag) tab.label = ag.name || ag.id;
+      } else {
+        const ag = agents.find(a => a.id === agentId);
+        const resolvedAgentId = agentId || (agent && agent.id) || 'main';
+        tab = {
+          id: 'tab-agent-' + agentId + '-' + Date.now(),
+          label: (ag && (ag.name || ag.id)) || agentId,
+          agentId: agentId,
+          sessionKey: 'agent:' + resolvedAgentId + ':main',
+          messages: []
+        };
+        tabs.push(tab);
+      }
+      renderTabs();
+    }
+    return tab;
+  }
+
   renderTabs();
   vscode.postMessage({ type: 'webviewReady' });
 
@@ -4369,7 +4423,7 @@ if (resizeHandle) {
         updateAgentCard();
         updateChips();
         serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t("not configured")}';
-        if (msg.sessionKey) currentSession = msg.sessionKey;
+        if (msg.sessionKey) currentSession = msg.gwSessionKey || msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
           openWorkdirBtn.style.display = connected ? '' : 'none';
@@ -4381,7 +4435,8 @@ if (resizeHandle) {
 // Update default tab with resolved agent/session from init message
       if (tabs.length > 0) {
         tabs[0].agentId = msg.agent.id;
-        tabs[0].sessionKey = msg.sessionKey;
+        // tab \u7EDF\u4E00\u4FDD\u5B58\u5B8C\u6574 gwKey\uFF08\u5982 agent:<id>:main\uFF09\uFF0C\u4FDD\u8BC1\u6309 sessionKey \u67E5\u91CD\u53EF\u5339\u914D Chat tab
+        tabs[0].sessionKey = msg.gwSessionKey || msg.sessionKey || tabs[0].sessionKey;
         // If we have stored messages for this tab, use them
         if (activeTabMessages.length > 0 && tabs[0].id === activeTabId) {
           tabs[0].messages = activeTabMessages.slice();
@@ -4441,19 +4496,39 @@ if (resizeHandle) {
         renderAgentButtons();
         renderTabs();
         break;
-      case 'userMessage':
-        appendMessage(msg.message);
-        activeTabMessages.push(msg.message);
-        break;
-      case 'loadMessages':
-        clearMessages();
-        const tab = getActiveTab();
-        if (tab) {
-          activeTabMessages = (msg.messages || []).slice();
-          tab.messages = activeTabMessages;
+      case 'userMessage': {
+        // \u4F18\u5148\u6309 gwKey \u5339\u914D\u4E13\u5C5E\u4F1A\u8BDD tab\uFF1B\u5426\u5219\u56DE\u9000\u5230 agentId \u8DEF\u7531
+        let tab = msg.gwKey ? tabs.find(t => t.sessionKey === msg.gwKey) : undefined;
+        if (!tab) {
+          const targetAgent = msg.agentId || (agent && agent.id) || 'main';
+          tab = getOrCreateTabByAgentId(targetAgent);
         }
-        for (const m of (msg.messages || [])) appendMessage(m);
+        if (tab.id === activeTabId) {
+          appendMessage(msg.message);
+          activeTabMessages.push(msg.message);
+        } else {
+          tab.messages.push(msg.message);
+        }
         break;
+      }
+      case 'loadMessages': {
+        // \u4F18\u5148\u6309\u5B8C\u6574 sessionKey\uFF08gwKey\uFF09\u5339\u914D\u4E13\u5C5E tab\uFF0C\u907F\u514D\u540C agent \u4E0B\u591A\u4E2A\u4F1A\u8BDD\u8DEF\u7531\u9519 tab
+        let tab = msg.gwKey ? tabs.find(t => t.sessionKey === msg.gwKey) : undefined;
+        if (!tab) {
+          const targetAgent = msg.agentId || (agent && agent.id) || 'main';
+          tab = getOrCreateTabByAgentId(targetAgent);
+        }
+        tab.sessionKey = msg.gwKey || msg.sessionKey || tab.sessionKey;
+        tab.sessionId = msg.sessionId || tab.sessionId;
+        tab.messages = (msg.messages || []).slice();
+        if (tab.id === activeTabId) {
+          currentSession = tab.sessionKey;
+          clearMessages();
+          activeTabMessages = tab.messages;
+          for (const m of tab.messages) appendMessage(m);
+        }
+        break;
+      }
       case 'activateAgentChat':
         // \u5207\u6362\u5230\u8BE5 agent \u7684\u9ED8\u8BA4\u804A\u5929\u754C\u9762\uFF08\u590D\u7528 agent \u6309\u94AE\u5207\u6362\u903B\u8F91\uFF09
         if (msg.agentId) {
@@ -4464,7 +4539,7 @@ if (resizeHandle) {
               id: 'tab-' + msg.agentId + '-' + Date.now(),
               label: (ag && (ag.name || ag.id)) || msg.agentId,
               agentId: msg.agentId,
-              sessionKey: 'main',
+              sessionKey: 'agent:' + msg.agentId + ':main',
               messages: []
             };
             tabs.push(tab);
@@ -4491,7 +4566,9 @@ if (resizeHandle) {
         const ct = getActiveTab();
         if (ct) ct.messages = [];
         break;
-      case 'streamStart':
+      case 'streamStart': {
+        const streamAgent = msg.agentId || (agent && agent.id) || 'main';
+        streamAgentBindings[streamAgent] = getActiveTab().id;
         // Clean up any leftover streamEl (fix for residual content interfering with new stream)
         if (streamEl) {
           streamEl.remove();
@@ -4504,13 +4581,16 @@ if (resizeHandle) {
         attachBtnEl.style.display = 'none';
         emptyState.style.display = 'none';
         break;
+      }
       case 'streamDelta':
+        if (!tabForStreamEvent(msg)) break;
         streaming = true;
         emptyState.style.display = 'none';
         showTyping(false);
         updateStream(msg.text, false);
         break;
-      case 'streamDone':
+      case 'streamDone': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         // Capture bubble content BEFORE clearing streamEl
         let finalText = '';
@@ -4543,7 +4623,9 @@ if (resizeHandle) {
         // \u6D41\u5F0F\u8F93\u51FA\u5B8C\u6210\u540E\u6E32\u67D3 Mermaid \u56FE\u8868\uFF08\u5426\u5219\u9700\u8981\u5237\u65B0\u624D\u80FD\u6E32\u67D3\uFF09
         renderMermaidBlocks();
         break;
-      case 'streamError':
+      }
+      case 'streamError': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         appendMessage({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         showTyping(false);
@@ -4553,6 +4635,7 @@ if (resizeHandle) {
         // Store error message in activeTabMessages
         activeTabMessages.push({ role: 'assistant', text: 'Error: ' + msg.error, timestamp: Date.now() });
         break;
+      }
       case 'toolCall':
         emptyState.style.display = 'none';
         showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t("Thinking...")}');
@@ -4567,7 +4650,8 @@ if (resizeHandle) {
           renderAtDropdown();
         }
         break;
-      case 'autoContinueFailed':
+      case 'autoContinueFailed': {
+        if (!tabForStreamEvent(msg)) break;
         streaming = false;
         appendMessage({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
@@ -4577,6 +4661,7 @@ if (resizeHandle) {
         activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         this.setBusy(false);
         break;
+      }
       case 'busyState': {
         const busyEl = document.getElementById('busyIndicator');
         if (busyEl) {
@@ -5709,9 +5794,9 @@ if (resizeHandle) {
         // \u63D0\u53D6 device-info.device-name \u7528\u4E8E\u663E\u793A
         const deviceName = session['device-info']?.['device-name'] || session.displayName || session.key;
         const simplifiedName = simplifyDeviceName(deviceName);
-        html += '<div class="' + cls + '" data-key="' + session.key + '" data-device-name="' + deviceName + '">';
+        html += '<div class="' + cls + '" data-key="' + session.key + '" data-sid="' + (session.sessionId || '') + '" data-device-name="' + deviceName + '">';
         html += '<div class="' + dotCls + '"></div>';
-        html += '<div class="device-info"><div class="device-name">' + simplifiedName + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + '</div></div>';
+        html += '<div class="device-info"><div class="device-name">' + simplifiedName + '</div><div class="device-meta">' + (session.status ? '[' + session.status + '] ' : '') + (session.agentId || session.key) + (session.sessionId ? ' \xB7 ' + session.sessionId.slice(0, 8) : '') + '</div></div>';
         if (session.totalTokens) html += '<div class="device-tokens">' + formatTokens(session.totalTokens) + '</div>';
         html += '<button class="device-delete">\xD7</button>';
         html += '</div>';
@@ -5727,8 +5812,12 @@ if (resizeHandle) {
       // Attach click handlers after DOM insertion
       sessionsList.querySelectorAll('.device-item[data-key]').forEach(el => {
         el.addEventListener('click', () => {
-          currentSession = el.getAttribute('data-key');
-          vscode.postMessage({ type: 'switchSession', sessionKey: currentSession });
+          const key = el.getAttribute('data-key') || '';
+          const deviceName = el.getAttribute('data-device-name') || '';
+          const sid = el.getAttribute('data-sid') || undefined;
+          currentSession = key;
+          // \u4F1A\u8BDD\u70B9\u51FB\uFF1A\u521B\u5EFA/\u5207\u6362\u8BE5 sessionKey \u7684\u4E13\u5C5E tab\uFF0C\u7EDD\u4E0D\u590D\u7528 Chat tab
+          vscode.postMessage({ type: 'addChatTabFromSession', sessionKey: key, deviceName: deviceName, sessionId: sid });
           renderSessions();
         });
         el.querySelector('.device-delete')?.addEventListener('click', (e) => {
@@ -5748,11 +5837,13 @@ if (resizeHandle) {
           el.addEventListener('click', () => {
             const sessionKey = el.getAttribute('data-key');
             const deviceName = el.getAttribute('data-device-name') || '';
+            const sid = el.getAttribute('data-sid') || undefined;
             // \u70B9\u51FB tabSessionsContent \u4E2D\u7684\u4F1A\u8BDD\u65F6\uFF0C\u6DFB\u52A0\u65B0\u7684 chat tab \u5E76\u52A0\u8F7D\u5386\u53F2
             vscode.postMessage({
               type: 'addChatTabFromSession',
               sessionKey: sessionKey,
-              deviceName: deviceName
+              deviceName: deviceName,
+              sessionId: sid
             });
           });
           el.querySelector('.device-delete')?.addEventListener('click', (e) => {
@@ -5799,7 +5890,7 @@ if (resizeHandle) {
             id: 'tab-' + a.id + '-' + Date.now(),
             label: a.name || a.id,
             agentId: a.id,
-            sessionKey: 'main',
+            sessionKey: 'agent:' + a.id + ':main',
             messages: []
           };
           tabs.push(tab);
@@ -5876,7 +5967,7 @@ if (resizeHandle) {
     renderAgentButtons();
     renderTabs();
     // Tell extension to switch agent/session
-    vscode.postMessage({ type: 'switchTab', agentId: tab.agentId, sessionKey: tab.sessionKey });
+    vscode.postMessage({ type: 'switchTab', agentId: tab.agentId, sessionKey: tab.sessionKey, sessionId: tab.sessionId });
   }
 
   function formatTokens(n) {
