@@ -2712,6 +2712,7 @@ body {
         <div class="panel-tab active" data-tab="notes">${vscode.l10n.t("Progress Notes")}</div>
         <div class="panel-tab" data-tab="tasks">${vscode.l10n.t("Tasks")}</div>
         <div class="panel-tab" data-tab="sessions">${vscode.l10n.t("Sessions")}</div>
+        <div class="panel-tab" data-tab="agents">${vscode.l10n.t("Agents")}</div>
         <button id="progress-note-panel-toggle" title="${vscode.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
       </div>
       <div class="panel-tab-content">
@@ -2732,6 +2733,9 @@ body {
           <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
             <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("No sessions")}</div>
           </div>
+        </div>
+        <div id="tab-agents" class="tab-pane">
+          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;"></div>
         </div>
       </div>
     </div>
@@ -3094,6 +3098,8 @@ body {
         vscode.postMessage({ type: 'requestTasks' });
       } else if (tab.dataset.tab === 'sessions') {
         vscode.postMessage({ type: 'requestSessions' });
+      } else if (tab.dataset.tab === 'agents') {
+        vscode.postMessage({ type: 'requestAgents' });
       }
     });
   });
@@ -3476,6 +3482,7 @@ if (resizeHandle) {
       case 'agentsList':
         agents = msg.agents || [];
         renderAgentButtons();
+        renderAgentsTab();
         break;
       case 'defaultsLoaded':
         thinkingLevel = msg.thinkingLevel || '';
@@ -4893,6 +4900,12 @@ if (resizeHandle) {
       });
       container.appendChild(btn);
     }
+  }
+
+  function renderAgentsTab() {
+    const container = document.getElementById('tabAgentsContent');
+    if (!container) return;
+    container.innerHTML = '';
   }
 
   function renderTabs() {

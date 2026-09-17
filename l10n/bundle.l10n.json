@@ -77,6 +77,8 @@
   "OpenClaw: Set Log Level": "OpenClaw: Set Log Level",
   "Log level changed to: {0}": "Log level changed to: {0}",
   "No tasks": "No tasks",
+  "No agents": "No agents",
+  "Agents": "Agents",
   "Tasks": "Tasks",
   "Sessions": "Sessions",
   "Progress Notes": "Progress Notes",
