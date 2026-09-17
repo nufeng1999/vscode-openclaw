@@ -5,6 +5,8 @@ import type { OutputChannel } from "vscode";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { resolveAgentsDir, getMediaInfo, formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce, genId, MIME_MAP, getMimeType, stripMedia, normText, isPreamble } from "./utils";
+import { buildAgentsTree, handleRequestAgentsTree, getAgentsTabRenderer } from "./agentTree";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -27,23 +29,6 @@ interface Agent {
   id: string;
   name: string;
   emoji?: string;
-}
-
-// 解析 AgentsDIR 配置（跨平台）：
-// - 留空 → 用户主目录下的 .openclaw/agents（Windows: C:\Users\<name>\.openclaw\agents；macOS/Linux: ~/.openclaw/agents）
-// - 支持 "~" 与 "~/..." 展开；相对路径基于当前工作区/进程目录解析为绝对路径
-export function resolveAgentsDir(configValue?: string): string {
-  const value = (configValue || "").trim();
-  if (!value) {
-    return path.join(os.homedir(), ".openclaw", "agents");
-  }
-  let expanded = value;
-  if (expanded === "~") {
-    expanded = os.homedir();
-  } else if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {
-    expanded = path.join(os.homedir(), expanded.slice(2));
-  }
-  return path.resolve(expanded);
 }
 
 export class OpenClawChatView implements vscode.WebviewViewProvider {
@@ -531,7 +516,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       
       // Detect MIME type from extension
       const ext = path.extname(mediaPath).toLowerCase();
-      const mediaInfo = this.getMediaInfo(ext);
+      const mediaInfo = getMediaInfo(ext);
       let mimeType = mediaInfo.mimeType;
       let tag = mediaInfo.tag;
       
@@ -547,55 +532,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  /**
-   * 根据扩展名解析媒体类型信息（MIME 类型与 HTML 标签名）。
-   * 统一用于本地文件与远程 URL 两种路径，保证行为一致。
-   */
-  private getMediaInfo(ext: string): { mimeType: string; tag: string } {
-    switch (ext) {
-      // 图片
-      case ".png":
-        return { mimeType: "image/png", tag: "img" };
-      case ".jpg":
-      case ".jpeg":
-        return { mimeType: "image/jpeg", tag: "img" };
-      case ".gif":
-        return { mimeType: "image/gif", tag: "img" };
-      case ".webp":
-        return { mimeType: "image/webp", tag: "img" };
-      case ".svg":
-        return { mimeType: "image/svg+xml", tag: "img" };
-      // 视频
-      case ".mp4":
-        return { mimeType: "video/mp4", tag: "video" };
-      case ".webm":
-        return { mimeType: "video/webm", tag: "video" };
-      case ".ogv":
-        return { mimeType: "video/ogg", tag: "video" };
-      case ".avi":
-        return { mimeType: "video/x-msvideo", tag: "video" };
-      case ".mov":
-        return { mimeType: "video/quicktime", tag: "video" };
-      // 音频
-      case ".mp3":
-        return { mimeType: "audio/mpeg", tag: "audio" };
-      case ".wav":
-        return { mimeType: "audio/wav", tag: "audio" };
-      case ".ogg":
-      case ".oga":
-        return { mimeType: "audio/ogg", tag: "audio" };
-      case ".m4a":
-        return { mimeType: "audio/mp4", tag: "audio" };
-      case ".flac":
-        return { mimeType: "audio/flac", tag: "audio" };
-      // 默认
-      default:
-        return { mimeType: "application/octet-stream", tag: "video" };
-    }
-  }
-
-  /**
-   * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
+    /**
+     * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
    * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
    * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
    * 通过 RPC artifacts.download 获取包含 mediaTicket 鉴权的完整 URL。
@@ -658,7 +596,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     // 去除 URL 中可能携带的查询参数后再取扩展名
     const cleanUrl = url.split("#")[0].split("?")[0];
     const ext = path.extname(cleanUrl).toLowerCase();
-    let { tag } = this.getMediaInfo(ext);
+    let { tag } = getMediaInfo(ext);
     // 网关媒体 URL 通常无扩展名：/api/chat/media/{incoming|outgoing}/{chatId}/{mediaId}/full
     // 若 extname 为空，按 URL 路径关键词推断类型
     if (!ext) {
@@ -830,7 +768,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           await this.handleRequestAgents();
           break;
         case "requestAgentsTree":
-          await this.handleRequestAgentsTree();
+          await handleRequestAgentsTree(this.agentsDir, this.postToWebview.bind(this), this.log.bind(this));
           break;
         case "requestTasks":
           await this.handleRequestTasks();
@@ -1081,7 +1019,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
 
-    const runId = this.genId();
+    const runId = genId();
     this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
 
     try {
@@ -1103,7 +1041,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
               sessionKey: this.gwSessionKey(),
               message: "/new",
               deliver: false,
-              idempotencyKey: this.genId()
+              idempotencyKey: genId()
             });
             await new Promise(r => setTimeout(r, 1000));
             this.log(`Retrying send after /new...`);
@@ -1158,7 +1096,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
    */
   private async sendContinueMessage() {
     if (!this.gateway.connected) return;
-    const runId = this.genId();
+    const runId = genId();
     this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
     try {
       try {
@@ -1176,7 +1114,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
             sessionKey: this.gwSessionKey(),
             message: "/new",
             deliver: false,
-            idempotencyKey: this.genId()
+            idempotencyKey: genId()
           });
           await new Promise(r => setTimeout(r, 1000));
           await this.gateway.request("chat.send", {
@@ -1512,70 +1450,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  /**
-   * 构建目录树（host 侧，使用 Node fs API）
-   * - 隐藏 dotfile（文件名以 . 开头的条目跳过）
-   * - 递归深度限制由 maxDepth 控制（默认 3 层）
-   * - 目录读取失败时返回空数组（不中断调用）
-   */
-  private buildAgentsTree(dir: string, maxDepth = 3, depth = 0): any {
-    const children: any[] = [];
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        // 跳过 dotfile（隐藏文件/目录）
-        if (entry.name.startsWith(".")) continue;
-        const fullPath = path.join(dir, entry.name);
-        const node: any = { name: entry.name, path: fullPath };
-        if (entry.isDirectory()) {
-          node.type = "directory";
-          if (depth < maxDepth) {
-            // Fix: extract children array from recursive result, not the whole tree node
-            node.children = this.buildAgentsTree(fullPath, maxDepth, depth + 1).children;
-          } else {
-            node.children = [];
-          }
-        } else if (entry.isFile()) {
-          node.type = "file";
-          node.children = undefined;
-        } else {
-          // symlink / other：按文件处理，不递归
-          node.type = "file";
-          node.children = undefined;
-        }
-        children.push(node);
-      }
-    } catch (err: any) {
-      // 目录不可读时返回空数组，不抛出
-      this.log(`buildAgentsTree: read ${dir} failed: ${err?.message || err}`);
-    }
-    // 按名称排序（目录在前，文件在后，各自按字母序）
-    children.sort((a, b) => {
-      if (a.type === "directory" && b.type !== "directory") return -1;
-      if (a.type !== "directory" && b.type === "directory") return 1;
-      return a.name.localeCompare(b.name);
-    });
-    return { name: path.basename(dir) || dir, path: dir, type: "directory", children };
-  }
-
-  /**
-   * 处理 requestAgentsTree 消息：读取 agentsDir 并构建目录树，发送给 webview
-   */
-  private async handleRequestAgentsTree() {
-    try {
-      const dir = this.agentsDir;
-      if (!dir || !fs.existsSync(dir)) {
-        this.postToWebview({ type: "agentsTree", tree: null, dir: dir || "" });
-        return;
-      }
-      const tree = this.buildAgentsTree(dir, 3, 0);
-      this.postToWebview({ type: "agentsTree", tree, dir });
-    } catch (err: any) {
-      this.log(`handleRequestAgentsTree error: ${err?.message || err}`);
-      this.postToWebview({ type: "agentsTree", tree: null, dir: this.agentsDir });
-    }
-  }
-
   private async handleRequestTasks() {
     try {
       // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
@@ -1741,7 +1615,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     const HELLO_MESSAGE = "hello， Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
     this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
     try {
-      const runId = this.genId();
+      const runId = genId();
       await this.gateway.request("chat.send", {
         sessionKey: supervisorSessionKey,
         message: HELLO_MESSAGE,
@@ -1843,7 +1717,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       const supervisorSessionKey = `agent:${agentId}:main`;
       this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
       
-      const runId = this.genId();
+      const runId = genId();
       try {
         // Send inquiry to supervisor agent via chat.send to its session
         await this.gateway.request("chat.send", {
@@ -1887,7 +1761,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         this.log(`Content SAME (length=${lastContent.length}) → sending reminder`);
         if (reminderMessage) {
           this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
-          const runId = this.genId();
+          const runId = genId();
           try {
             await this.gateway.request("chat.send", {
               sessionKey: this.gwSessionKey(),
@@ -1949,27 +1823,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     });
   }
 
-  private stripMedia(text: string): string {
-    if (!text) return "";
-    let t = String(text);
-    t = t.replace(/<audio[^>]*>[\s\S]*?<\/audio>/gi, "");
-    t = t.replace(/<audio[\s\S]*?>/gi, "");
-    t = t.split("\n").filter((line: string) => !line.startsWith("MEDIA:")).join("\n");
-    return t.trim();
-  }
-
-  private normText(text: string): string {
-    if (!text) return "";
-    return String(text).replace(/\s+/g, " ").trim();
-  }
-
-  private isPreamble(text: string): boolean {
-    if (!this.seenPreambleTexts.length) return false;
-    const norm = this.normText(this.stripMedia(text));
-    if (!norm) return false;
-    return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
-  }
-
   private async handleLoadMessages(sessionKey: string, agentId?: string, sessionId?: string) {
     const targetAgentId = agentId || this.activeAgent.id;
     try {
@@ -1997,14 +1850,14 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       // Filter runtime-captured preamble messages (e.g. TTS planning text)
       const preambleFiltered = filtered.filter((m: ChatMessage) => {
         if (m.role !== "assistant" || !this.seenPreambleTexts.length) return true;
-        return !this.isPreamble(m.text);
+        return !isPreamble(m.text);
       });
       // Deduplicate assistant messages: prefer the media/audio version over a plain-text copy.
       // 注意顺序：必须先判断 isMedia，否则同一 key 的音频版会被纯文本版抢先 seen 而丢弃。
       const seen = new Set<string>();
       const merged: ChatMessage[] = [];
       for (const m of preambleFiltered) {
-        const cleanText = this.normText(this.stripMedia(m.text));
+        const cleanText = normText(stripMedia(m.text));
         if (!cleanText && /<audio/i.test(m.text)) {
           // 纯音频消息（无文本）：key 为空字符串，多条历史会共享，
           // 但必须保留（否则播放条永远不出现）。
@@ -2015,7 +1868,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         const isMedia = /<audio/i.test(m.text) || m.text.indexOf("MEDIA:") === 0;
         if (isMedia) {
           // 音频版优先：若已存在相同 key 的纯文本版，替换为音频版
-          const idx = merged.findIndex((x) => x.role + "\u0000" + this.normText(this.stripMedia(x.text)) === key);
+          const idx = merged.findIndex((x) => x.role + "\u0000" + normText(stripMedia(x.text)) === key);
           if (idx >= 0) {
             merged[idx] = m;
           } else {
@@ -2128,10 +1981,6 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       active: shouldYield,
       label: shouldYield ? vscode.l10n.t('Waiting for subagent…') : ''
     });
-  }
-
-  private genId(): string {
-    return Math.random().toString(36).substring(2, 12);
   }
 
   private getHtml(): string {
