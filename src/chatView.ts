@@ -30,12 +30,12 @@ interface Agent {
 }
 
 // 解析 AgentsDIR 配置（跨平台）：
-// - 留空 → 用户主目录下的 Agents（Windows: C:\Users\<name>\Agents；macOS/Linux: ~/Agents）
+// - 留空 → 用户主目录下的 .openclaw/agents（Windows: C:\Users\<name>\.openclaw\agents；macOS/Linux: ~/.openclaw/agents）
 // - 支持 "~" 与 "~/..." 展开；相对路径基于当前工作区/进程目录解析为绝对路径
 export function resolveAgentsDir(configValue?: string): string {
   const value = (configValue || "").trim();
   if (!value) {
-    return path.join(os.homedir(), "Agents");
+    return path.join(os.homedir(), ".openclaw", "agents");
   }
   let expanded = value;
   if (expanded === "~") {
@@ -120,7 +120,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
 
     // AgentsDIR：保存各种 agent 资料的目录。
-    // 留空时使用跨平台默认值：用户主目录下的 Agents（Windows: C:\Users\<name>\Agents, macOS/Linux: ~/Agents）。
+    // 留空时使用跨平台默认值：用户主目录下的 .openclaw/agents（Windows: C:\Users\<name>\.openclaw\agents, macOS/Linux: ~/.openclaw/agents）。
     const configAgentsDir = config.get<string>("agentsDir", "");
     this.agentsDir = resolveAgentsDir(configAgentsDir);
     try {
@@ -155,7 +155,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "show" });
   }
 
-  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/Agents），已确保目录存在 */
+  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/.openclaw/agents），已确保目录存在 */
   public get agentsDirectory(): string {
     return this.agentsDir;
   }
@@ -829,6 +829,9 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "requestAgents":
           await this.handleRequestAgents();
           break;
+        case "requestAgentsTree":
+          await this.handleRequestAgentsTree();
+          break;
         case "requestTasks":
           await this.handleRequestTasks();
           break;
@@ -1008,6 +1011,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         case "openWorkdir":
           await this.handleOpenWorkdir();
           break;
+        case "openFile": {
+          const p = msg.path as string;
+          if (p) {
+            try {
+              const uri = vscode.Uri.file(p);
+              const doc = await vscode.workspace.openTextDocument(uri);
+              await vscode.window.showTextDocument(doc, { preview: true });
+            } catch (e: any) {
+              vscode.window.showErrorMessage(vscode.l10n.t('Failed to open file') + ': ' + (e?.message || e));
+            }
+          }
+          break;
+        }
         case "toggleSupervision":
           await this.handleToggleSupervision(msg.enabled);
           break;
@@ -1493,6 +1509,70 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
     } catch {
       this.postToWebview({ type: "agentsList", agents: [] });
+    }
+  }
+
+  /**
+   * 构建目录树（host 侧，使用 Node fs API）
+   * - 隐藏 dotfile（文件名以 . 开头的条目跳过）
+   * - 递归深度限制由 maxDepth 控制（默认 3 层）
+   * - 目录读取失败时返回空数组（不中断调用）
+   */
+  private buildAgentsTree(dir: string, maxDepth = 3, depth = 0): any {
+    const children: any[] = [];
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        // 跳过 dotfile（隐藏文件/目录）
+        if (entry.name.startsWith(".")) continue;
+        const fullPath = path.join(dir, entry.name);
+        const node: any = { name: entry.name, path: fullPath };
+        if (entry.isDirectory()) {
+          node.type = "directory";
+          if (depth < maxDepth) {
+            // Fix: extract children array from recursive result, not the whole tree node
+            node.children = this.buildAgentsTree(fullPath, maxDepth, depth + 1).children;
+          } else {
+            node.children = [];
+          }
+        } else if (entry.isFile()) {
+          node.type = "file";
+          node.children = undefined;
+        } else {
+          // symlink / other：按文件处理，不递归
+          node.type = "file";
+          node.children = undefined;
+        }
+        children.push(node);
+      }
+    } catch (err: any) {
+      // 目录不可读时返回空数组，不抛出
+      this.log(`buildAgentsTree: read ${dir} failed: ${err?.message || err}`);
+    }
+    // 按名称排序（目录在前，文件在后，各自按字母序）
+    children.sort((a, b) => {
+      if (a.type === "directory" && b.type !== "directory") return -1;
+      if (a.type !== "directory" && b.type === "directory") return 1;
+      return a.name.localeCompare(b.name);
+    });
+    return { name: path.basename(dir) || dir, path: dir, type: "directory", children };
+  }
+
+  /**
+   * 处理 requestAgentsTree 消息：读取 agentsDir 并构建目录树，发送给 webview
+   */
+  private async handleRequestAgentsTree() {
+    try {
+      const dir = this.agentsDir;
+      if (!dir || !fs.existsSync(dir)) {
+        this.postToWebview({ type: "agentsTree", tree: null, dir: dir || "" });
+        return;
+      }
+      const tree = this.buildAgentsTree(dir, 3, 0);
+      this.postToWebview({ type: "agentsTree", tree, dir });
+    } catch (err: any) {
+      this.log(`handleRequestAgentsTree error: ${err?.message || err}`);
+      this.postToWebview({ type: "agentsTree", tree: null, dir: this.agentsDir });
     }
   }
 
@@ -2903,6 +2983,73 @@ body {
 .progress-card-copy-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
 .progress-card-md-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
 .progress-card .copy-bar { display: flex; align-items: center; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+/* Agents Tree Styles */
+.agents-tree {
+  padding: 8px;
+}
+.agents-tree-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.agents-tree-item:hover {
+  background-color: rgba(128, 128, 128, 0.1);
+}
+.agents-tree-item.active {
+  background-color: rgba(0, 120, 215, 0.15);
+  border-left: 2px solid var(--accent);
+}
+.agents-tree-item.folder {
+  font-weight: 500;
+}
+.agents-tree-item.file {
+  font-weight: normal;
+  opacity: 0.8;
+}
+.agents-tree-item.file:hover {
+  opacity: 1;
+}
+.agents-tree-icon {
+  margin-right: 6px;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+.agents-tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-tree-depth-0 { margin-left: 0px; }
+.agents-tree-depth-1 { margin-left: 16px; }
+.agents-tree-depth-2 { margin-left: 32px; }
+.agents-tree-depth-3 { margin-left: 48px; }
+.agents-tree-depth-4 { margin-left: 64px; }
+.agents-tree-node { display: flex; flex-direction: column; }
+.agents-tree-arrow {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.agents-tree-children {
+  overflow: hidden;
+}
+.agents-tree-item.empty-dir {
+  opacity: 0.5;
+  color: var(--text-muted);
+}
+.agents-tree-item.folder {
+  font-weight: 500;
+}
 </style>
 </head>
 <body>
@@ -3096,6 +3243,8 @@ body {
   let verboseLevel = '';
   let gatewayUrl = '';
   let hudVisible = false;
+  let agentsTreeData = null;
+  let agentsTreeDir = '';
   let messageHistory = [];
   let historyIndex = -1;
 
@@ -3388,7 +3537,7 @@ body {
       } else if (tab.dataset.tab === 'sessions') {
         vscode.postMessage({ type: 'requestSessions' });
       } else if (tab.dataset.tab === 'agents') {
-        vscode.postMessage({ type: 'requestAgents' });
+        vscode.postMessage({ type: 'requestAgentsTree' });
       }
     });
   });
@@ -3771,6 +3920,11 @@ if (resizeHandle) {
       case 'agentsList':
         agents = msg.agents || [];
         renderAgentButtons();
+        renderAgentsTab();
+        break;
+      case 'agentsTree':
+        agentsTreeData = msg.tree;
+        agentsTreeDir = msg.dir || '';
         renderAgentsTab();
         break;
       case 'defaultsLoaded':
@@ -5195,6 +5349,99 @@ if (resizeHandle) {
     const container = document.getElementById('tabAgentsContent');
     if (!container) return;
     container.innerHTML = '';
+    // vs10n: webview l10n helper with Chinese fallback
+    const t = (str, ...args) => {
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      // webview fallback dictionary (zh-CN)
+      const dict = { 'No agents': '无智能体', 'Empty directory': '空目录' };
+      return dict[str] || str;
+    };
+    if (!agentsTreeData) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.style.cssText = 'color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;';
+      emptyDiv.textContent = t('No agents');
+      container.appendChild(emptyDiv);
+      return;
+    }
+    function getIcon(node) {
+      if (node.type === 'directory') {
+        if (node.children && node.children.length > 0) return '📂';
+        return '📁';
+      }
+      var name = (node.name || '').toLowerCase();
+      if (name.endsWith('.md') || name.endsWith('.txt')) return '📄';
+      if (name.endsWith('.json') || name.endsWith('.yaml') || name.endsWith('.yml')) return '⚙️';
+      if (name.endsWith('.js') || name.endsWith('.ts')) return '📜';
+      return '📄';
+    }
+    function createItem(node, depth) {
+      var item = document.createElement('div');
+      item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
+      item.style.paddingLeft = (depth * 16 + 8) + 'px';
+      var iconSpan = document.createElement('span');
+      iconSpan.className = 'agents-tree-icon';
+      iconSpan.textContent = getIcon(node);
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'agents-tree-name';
+      nameSpan.textContent = node.name;
+      item.appendChild(iconSpan);
+      item.appendChild(nameSpan);
+      // Wrap each node in a wrapper div so children nest properly
+      var wrapper = document.createElement('div');
+      wrapper.className = 'agents-tree-node';
+      wrapper.appendChild(item);
+
+      if (node.type === 'directory') {
+        var hasChildren = node.children && node.children.length > 0;
+        if (hasChildren) {
+          // Arrow indicator: collapsed = ▸, expanded = ▾
+          var arrow = document.createElement('span');
+          arrow.className = 'agents-tree-arrow';
+          arrow.textContent = '▸';
+          item.insertBefore(arrow, iconSpan);
+
+          var childrenWrapper = document.createElement('div');
+          childrenWrapper.className = 'agents-tree-children';
+          childrenWrapper.style.display = 'none';
+          node.children.forEach(function(child) {
+            var childWrapper = createItem(child, depth + 1);
+            childrenWrapper.appendChild(childWrapper);
+          });
+          wrapper.appendChild(childrenWrapper);
+
+          item.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var isHidden = childrenWrapper.style.display === 'none';
+            childrenWrapper.style.display = isHidden ? '' : 'none';
+            arrow.textContent = isHidden ? '▾' : '▸';
+          });
+        } else {
+          // Empty directory: no arrow, just a spacer to align with files
+          var spacer = document.createElement('span');
+          spacer.className = 'agents-tree-arrow';
+          spacer.innerHTML = '&nbsp;';
+          item.insertBefore(spacer, iconSpan);
+          item.title = t('Empty directory');
+          item.classList.add('empty-dir');
+        }
+      } else {
+        // File: no arrow, just a spacer to align with directories
+        var spacer = document.createElement('span');
+        spacer.className = 'agents-tree-arrow';
+        spacer.innerHTML = '&nbsp;';
+        item.insertBefore(spacer, iconSpan);
+        item.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (typeof vscode !== 'undefined') {
+            vscode.postMessage({ type: 'openFile', path: node.path });
+          }
+        });
+      }
+      return wrapper;
+    }
+    var rootWrapper = createItem(agentsTreeData, 0);
+    container.appendChild(rootWrapper);
+    return rootWrapper;
   }
 
   function renderTabs() {

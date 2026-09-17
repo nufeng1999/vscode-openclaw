@@ -1043,7 +1043,7 @@ var path = __toESM(require("path"));
 function resolveAgentsDir(configValue) {
   const value = (configValue || "").trim();
   if (!value) {
-    return path.join(os.homedir(), "Agents");
+    return path.join(os.homedir(), ".openclaw", "agents");
   }
   let expanded = value;
   if (expanded === "~") {
@@ -1161,7 +1161,7 @@ var OpenClawChatView = class _OpenClawChatView {
   show() {
     this.view?.webview.postMessage({ type: "show" });
   }
-  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/Agents），已确保目录存在 */
+  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/.openclaw/agents），已确保目录存在 */
   get agentsDirectory() {
     return this.agentsDir;
   }
@@ -1728,6 +1728,9 @@ var OpenClawChatView = class _OpenClawChatView {
         case "requestAgents":
           await this.handleRequestAgents();
           break;
+        case "requestAgentsTree":
+          await this.handleRequestAgentsTree();
+          break;
         case "requestTasks":
           await this.handleRequestTasks();
           break;
@@ -1894,6 +1897,19 @@ var OpenClawChatView = class _OpenClawChatView {
         case "openWorkdir":
           await this.handleOpenWorkdir();
           break;
+        case "openFile": {
+          const p = msg.path;
+          if (p) {
+            try {
+              const uri = vscode.Uri.file(p);
+              const doc = await vscode.workspace.openTextDocument(uri);
+              await vscode.window.showTextDocument(doc, { preview: true });
+            } catch (e) {
+              vscode.window.showErrorMessage(vscode.l10n.t("Failed to open file") + ": " + (e?.message || e));
+            }
+          }
+          break;
+        }
         case "toggleSupervision":
           await this.handleToggleSupervision(msg.enabled);
           break;
@@ -2322,6 +2338,66 @@ var OpenClawChatView = class _OpenClawChatView {
       this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
     } catch {
       this.postToWebview({ type: "agentsList", agents: [] });
+    }
+  }
+  /**
+   * 构建目录树（host 侧，使用 Node fs API）
+   * - 隐藏 dotfile（文件名以 . 开头的条目跳过）
+   * - 递归深度限制由 maxDepth 控制（默认 3 层）
+   * - 目录读取失败时返回空数组（不中断调用）
+   */
+  buildAgentsTree(dir, maxDepth = 3, depth = 0) {
+    const children = [];
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith("."))
+          continue;
+        const fullPath = path.join(dir, entry.name);
+        const node = { name: entry.name, path: fullPath };
+        if (entry.isDirectory()) {
+          node.type = "directory";
+          if (depth < maxDepth) {
+            node.children = this.buildAgentsTree(fullPath, maxDepth, depth + 1).children;
+          } else {
+            node.children = [];
+          }
+        } else if (entry.isFile()) {
+          node.type = "file";
+          node.children = void 0;
+        } else {
+          node.type = "file";
+          node.children = void 0;
+        }
+        children.push(node);
+      }
+    } catch (err) {
+      this.log(`buildAgentsTree: read ${dir} failed: ${err?.message || err}`);
+    }
+    children.sort((a, b) => {
+      if (a.type === "directory" && b.type !== "directory")
+        return -1;
+      if (a.type !== "directory" && b.type === "directory")
+        return 1;
+      return a.name.localeCompare(b.name);
+    });
+    return { name: path.basename(dir) || dir, path: dir, type: "directory", children };
+  }
+  /**
+   * 处理 requestAgentsTree 消息：读取 agentsDir 并构建目录树，发送给 webview
+   */
+  async handleRequestAgentsTree() {
+    try {
+      const dir = this.agentsDir;
+      if (!dir || !fs.existsSync(dir)) {
+        this.postToWebview({ type: "agentsTree", tree: null, dir: dir || "" });
+        return;
+      }
+      const tree = this.buildAgentsTree(dir, 3, 0);
+      this.postToWebview({ type: "agentsTree", tree, dir });
+    } catch (err) {
+      this.log(`handleRequestAgentsTree error: ${err?.message || err}`);
+      this.postToWebview({ type: "agentsTree", tree: null, dir: this.agentsDir });
     }
   }
   async handleRequestTasks() {
@@ -3653,6 +3729,73 @@ body {
 .progress-card-copy-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
 .progress-card-md-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 4px; margin-left: 2px; }
 .progress-card .copy-bar { display: flex; align-items: center; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+/* Agents Tree Styles */
+.agents-tree {
+  padding: 8px;
+}
+.agents-tree-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.agents-tree-item:hover {
+  background-color: rgba(128, 128, 128, 0.1);
+}
+.agents-tree-item.active {
+  background-color: rgba(0, 120, 215, 0.15);
+  border-left: 2px solid var(--accent);
+}
+.agents-tree-item.folder {
+  font-weight: 500;
+}
+.agents-tree-item.file {
+  font-weight: normal;
+  opacity: 0.8;
+}
+.agents-tree-item.file:hover {
+  opacity: 1;
+}
+.agents-tree-icon {
+  margin-right: 6px;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+.agents-tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agents-tree-depth-0 { margin-left: 0px; }
+.agents-tree-depth-1 { margin-left: 16px; }
+.agents-tree-depth-2 { margin-left: 32px; }
+.agents-tree-depth-3 { margin-left: 48px; }
+.agents-tree-depth-4 { margin-left: 64px; }
+.agents-tree-node { display: flex; flex-direction: column; }
+.agents-tree-arrow {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.agents-tree-children {
+  overflow: hidden;
+}
+.agents-tree-item.empty-dir {
+  opacity: 0.5;
+  color: var(--text-muted);
+}
+.agents-tree-item.folder {
+  font-weight: 500;
+}
 </style>
 </head>
 <body>
@@ -3846,6 +3989,8 @@ body {
   let verboseLevel = '';
   let gatewayUrl = '';
   let hudVisible = false;
+  let agentsTreeData = null;
+  let agentsTreeDir = '';
   let messageHistory = [];
   let historyIndex = -1;
 
@@ -4138,7 +4283,7 @@ body {
       } else if (tab.dataset.tab === 'sessions') {
         vscode.postMessage({ type: 'requestSessions' });
       } else if (tab.dataset.tab === 'agents') {
-        vscode.postMessage({ type: 'requestAgents' });
+        vscode.postMessage({ type: 'requestAgentsTree' });
       }
     });
   });
@@ -4521,6 +4666,11 @@ if (resizeHandle) {
       case 'agentsList':
         agents = msg.agents || [];
         renderAgentButtons();
+        renderAgentsTab();
+        break;
+      case 'agentsTree':
+        agentsTreeData = msg.tree;
+        agentsTreeDir = msg.dir || '';
         renderAgentsTab();
         break;
       case 'defaultsLoaded':
@@ -5945,6 +6095,99 @@ if (resizeHandle) {
     const container = document.getElementById('tabAgentsContent');
     if (!container) return;
     container.innerHTML = '';
+    // vs10n: webview l10n helper with Chinese fallback
+    const t = (str, ...args) => {
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      // webview fallback dictionary (zh-CN)
+      const dict = { 'No agents': '\u65E0\u667A\u80FD\u4F53', 'Empty directory': '\u7A7A\u76EE\u5F55' };
+      return dict[str] || str;
+    };
+    if (!agentsTreeData) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.style.cssText = 'color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;';
+      emptyDiv.textContent = t('No agents');
+      container.appendChild(emptyDiv);
+      return;
+    }
+    function getIcon(node) {
+      if (node.type === 'directory') {
+        if (node.children && node.children.length > 0) return '\u{1F4C2}';
+        return '\u{1F4C1}';
+      }
+      var name = (node.name || '').toLowerCase();
+      if (name.endsWith('.md') || name.endsWith('.txt')) return '\u{1F4C4}';
+      if (name.endsWith('.json') || name.endsWith('.yaml') || name.endsWith('.yml')) return '\u2699\uFE0F';
+      if (name.endsWith('.js') || name.endsWith('.ts')) return '\u{1F4DC}';
+      return '\u{1F4C4}';
+    }
+    function createItem(node, depth) {
+      var item = document.createElement('div');
+      item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
+      item.style.paddingLeft = (depth * 16 + 8) + 'px';
+      var iconSpan = document.createElement('span');
+      iconSpan.className = 'agents-tree-icon';
+      iconSpan.textContent = getIcon(node);
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'agents-tree-name';
+      nameSpan.textContent = node.name;
+      item.appendChild(iconSpan);
+      item.appendChild(nameSpan);
+      // Wrap each node in a wrapper div so children nest properly
+      var wrapper = document.createElement('div');
+      wrapper.className = 'agents-tree-node';
+      wrapper.appendChild(item);
+
+      if (node.type === 'directory') {
+        var hasChildren = node.children && node.children.length > 0;
+        if (hasChildren) {
+          // Arrow indicator: collapsed = \u25B8, expanded = \u25BE
+          var arrow = document.createElement('span');
+          arrow.className = 'agents-tree-arrow';
+          arrow.textContent = '\u25B8';
+          item.insertBefore(arrow, iconSpan);
+
+          var childrenWrapper = document.createElement('div');
+          childrenWrapper.className = 'agents-tree-children';
+          childrenWrapper.style.display = 'none';
+          node.children.forEach(function(child) {
+            var childWrapper = createItem(child, depth + 1);
+            childrenWrapper.appendChild(childWrapper);
+          });
+          wrapper.appendChild(childrenWrapper);
+
+          item.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var isHidden = childrenWrapper.style.display === 'none';
+            childrenWrapper.style.display = isHidden ? '' : 'none';
+            arrow.textContent = isHidden ? '\u25BE' : '\u25B8';
+          });
+        } else {
+          // Empty directory: no arrow, just a spacer to align with files
+          var spacer = document.createElement('span');
+          spacer.className = 'agents-tree-arrow';
+          spacer.innerHTML = '&nbsp;';
+          item.insertBefore(spacer, iconSpan);
+          item.title = t('Empty directory');
+          item.classList.add('empty-dir');
+        }
+      } else {
+        // File: no arrow, just a spacer to align with directories
+        var spacer = document.createElement('span');
+        spacer.className = 'agents-tree-arrow';
+        spacer.innerHTML = '&nbsp;';
+        item.insertBefore(spacer, iconSpan);
+        item.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (typeof vscode !== 'undefined') {
+            vscode.postMessage({ type: 'openFile', path: node.path });
+          }
+        });
+      }
+      return wrapper;
+    }
+    var rootWrapper = createItem(agentsTreeData, 0);
+    container.appendChild(rootWrapper);
+    return rootWrapper;
   }
 
   function renderTabs() {

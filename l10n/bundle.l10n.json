@@ -98,6 +98,5 @@
   "{0}h ago": "{0}h ago",
   "{0}d ago": "{0}d ago",
   "Subagent": "Subagent",
-  "Cron job": "Cron job",
-  "config.agentsDir.description": "Directory for storing various Agent data files. Leave empty to use the default <home>/Agents (cross-platform)."
+  "Cron job": "Cron job"
 }

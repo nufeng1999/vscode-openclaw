@@ -137,8 +137,8 @@
 			},
 			"openclaw.agentsDir": {
 				"type": "string",
-				"default": "",
-				"description": "%config.agentsDir.description%"
+				"default": "~/.openclaw/agents",
+				"description": "Directory for storing various Agent data files. Supports ~ (home dir); defaults to ~/.openclaw/agents on all platforms."
 			},
 				"openclaw.agentId": {
 					"type": "string",

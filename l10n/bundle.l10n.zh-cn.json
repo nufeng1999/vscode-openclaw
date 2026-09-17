@@ -99,6 +99,5 @@
   "{0}h ago": "{0}小时前",
   "{0}d ago": "{0}天前",
   "Subagent": "子智能体",
-  "Cron job": "定时任务",
-  "config.agentsDir.description": "用于保存各种 agent 资料的目录。留空则默认使用当前用户主目录下的 Agents（跨平台）。"
+  "Cron job": "定时任务"
 }
