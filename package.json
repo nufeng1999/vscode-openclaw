@@ -130,11 +130,16 @@
 					"default": "",
 					"description": "%config.token.description%"
 				},
-				"openclaw.sessionKey": {
-					"type": "string",
-					"default": "OpenClaw VSCode",
-					"description": "%config.sessionKey.description%"
-				},
+"openclaw.sessionKey": {
+				"type": "string",
+				"default": "OpenClaw VSCode",
+				"description": "%config.sessionKey.description%"
+			},
+			"openclaw.agentsDir": {
+				"type": "string",
+				"default": "",
+				"description": "%config.agentsDir.description%"
+			},
 				"openclaw.agentId": {
 					"type": "string",
 					"default": "OpenClaw VSCode",

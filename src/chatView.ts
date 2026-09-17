@@ -3,6 +3,7 @@ import { OpenClawGateway } from "./gateway";
 import { log as viewLog, LOG_INFO } from "./logLevel";
 import type { OutputChannel } from "vscode";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 
 interface ChatMessage {
@@ -28,6 +29,23 @@ interface Agent {
   emoji?: string;
 }
 
+// 解析 AgentsDIR 配置（跨平台）：
+// - 留空 → 用户主目录下的 Agents（Windows: C:\Users\<name>\Agents；macOS/Linux: ~/Agents）
+// - 支持 "~" 与 "~/..." 展开；相对路径基于当前工作区/进程目录解析为绝对路径
+export function resolveAgentsDir(configValue?: string): string {
+  const value = (configValue || "").trim();
+  if (!value) {
+    return path.join(os.homedir(), "Agents");
+  }
+  let expanded = value;
+  if (expanded === "~") {
+    expanded = os.homedir();
+  } else if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+    expanded = path.join(os.homedir(), expanded.slice(2));
+  }
+  return path.resolve(expanded);
+}
+
 export class OpenClawChatView implements vscode.WebviewViewProvider {
   public static readonly viewType = "openclaw.chatView";
   private view?: vscode.WebviewView;
@@ -43,6 +61,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private thinkingLevel = "";
   private verboseLevel = "";
   private gatewayUrl = "";
+  private agentsDir = "";
   private messageHistory: string[] = [];
   private autoContinueCount = 0;
   private supervisionEnabled = false;
@@ -100,6 +119,19 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       this.currentSessionKey = configSessionKey;
     }
 
+    // AgentsDIR：保存各种 agent 资料的目录。
+    // 留空时使用跨平台默认值：用户主目录下的 Agents（Windows: C:\Users\<name>\Agents, macOS/Linux: ~/Agents）。
+    const configAgentsDir = config.get<string>("agentsDir", "");
+    this.agentsDir = resolveAgentsDir(configAgentsDir);
+    try {
+      if (!fs.existsSync(this.agentsDir)) {
+        fs.mkdirSync(this.agentsDir, { recursive: true });
+        viewLog(`AgentsDIR created: ${this.agentsDir}`, LOG_INFO, ch);
+      }
+    } catch (mkdirErr: any) {
+      viewLog(`AgentsDIR create failed: ${mkdirErr?.message || mkdirErr}`, LOG_INFO, ch);
+    }
+
     // 监听任务状态变化，自动刷新任务列表
     this.gateway.on('task.ended', () => {
       this.handleRequestTasks();
@@ -121,6 +153,11 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   public show() {
     this.view?.webview.postMessage({ type: "show" });
+  }
+
+  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/Agents），已确保目录存在 */
+  public get agentsDirectory(): string {
+    return this.agentsDir;
   }
 
   public setInputText(text: string) {
@@ -2983,7 +3020,11 @@ body {
           </div>
         </div>
         <div id="tab-agents" class="tab-pane">
-          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;"></div>
+          <div id="progress-note-panel-header">
+            <span id="progress-note-panel-title">工具栏</span>
+          </div>
+          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
+          </div>
         </div>
       </div>
     </div>

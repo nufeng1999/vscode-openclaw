@@ -57,7 +57,21 @@
 
   // src/chatView.ts
   var fs = __toESM(__require("fs"));
+  var os = __toESM(__require("os"));
   var path = __toESM(__require("path"));
+  function resolveAgentsDir(configValue) {
+    const value = (configValue || "").trim();
+    if (!value) {
+      return path.join(os.homedir(), "Agents");
+    }
+    let expanded = value;
+    if (expanded === "~") {
+      expanded = os.homedir();
+    } else if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+      expanded = path.join(os.homedir(), expanded.slice(2));
+    }
+    return path.resolve(expanded);
+  }
   var _OpenClawChatView = class _OpenClawChatView {
     constructor(context, gateway, channel) {
       this.messages = [];
@@ -69,6 +83,7 @@
       this.thinkingLevel = "";
       this.verboseLevel = "";
       this.gatewayUrl = "";
+      this.agentsDir = "";
       this.messageHistory = [];
       this.autoContinueCount = 0;
       this.supervisionEnabled = false;
@@ -105,6 +120,16 @@
       if (configSessionKey) {
         this.currentSessionKey = configSessionKey;
       }
+      const configAgentsDir = config.get("agentsDir", "");
+      this.agentsDir = resolveAgentsDir(configAgentsDir);
+      try {
+        if (!fs.existsSync(this.agentsDir)) {
+          fs.mkdirSync(this.agentsDir, { recursive: true });
+          log(`AgentsDIR created: ${this.agentsDir}`, LOG_INFO, ch);
+        }
+      } catch (mkdirErr) {
+        log(`AgentsDIR create failed: ${mkdirErr?.message || mkdirErr}`, LOG_INFO, ch);
+      }
       this.gateway.on("task.ended", () => {
         this.handleRequestTasks();
       });
@@ -129,6 +154,10 @@
     }
     show() {
       this.view?.webview.postMessage({ type: "show" });
+    }
+    /** 已解析的 AgentsDIR（绝对路径，默认 <home>/Agents），已确保目录存在 */
+    get agentsDirectory() {
+      return this.agentsDir;
     }
     setInputText(text) {
       this.postToWebview({ type: "setInputText", text });
@@ -778,8 +807,8 @@
             if (dataUrl && typeof dataUrl === "string") {
               try {
                 const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-                const os = __require("os");
-                const tmpB64 = path.join(os.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+                const os2 = __require("os");
+                const tmpB64 = path.join(os2.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
                 fs.writeFileSync(tmpB64, base64Data, "utf8");
                 const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
                 const encoded = Buffer.from(psScript, "utf16le").toString("base64");
@@ -1582,16 +1611,16 @@
       }
     }
     waitForSupervisorResponse(supervisorSessionKey, timeoutMs = 12e4) {
-      return new Promise((resolve) => {
+      return new Promise((resolve2) => {
         this.supervisorPendingSessionKey = supervisorSessionKey;
-        this.supervisorResponseResolver = resolve;
+        this.supervisorResponseResolver = resolve2;
         this.supervisorAccumulated = "";
         const timeout = setTimeout(() => {
           this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
           this.supervisorTimeout = null;
           this.supervisorPendingSessionKey = null;
           this.supervisorResponseResolver = null;
-          resolve(this.supervisorAccumulated || null);
+          resolve2(this.supervisorAccumulated || null);
         }, timeoutMs);
         this.supervisorTimeout = timeout;
       });
@@ -2735,7 +2764,11 @@ body {
           </div>
         </div>
         <div id="tab-agents" class="tab-pane">
-          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;"></div>
+          <div id="progress-note-panel-header">
+            <span id="progress-note-panel-title">\u5DE5\u5177\u680F</span>
+          </div>
+          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
+          </div>
         </div>
       </div>
     </div>
