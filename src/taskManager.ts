@@ -16,6 +16,7 @@ export interface ChatViewLike {
   buildRemoteMediaTag: (url: string) => Promise<string>;
   buildAttachments: (fileRefs?: string[]) => Promise<any[]>;
   sendContinueMessage: () => Promise<void>;
+  resolveActiveAgent: () => void;
 }
 
 export async function handleRequestTasks(cv: ChatViewLike) {
@@ -60,6 +61,8 @@ export async function handleRequestAgents(cv: ChatViewLike) {
     cv.log(`agents.list: ${agents.length} agents`);
     cv.postToWebview({ type: "agentsList", agents });
     cv.postToWebview({ type: "agentSwitched", agent: cv.activeAgent });
+    // 同步 activeAgent 解析（与原 chatView 行为等价）
+    if (typeof cv.resolveActiveAgent === "function") cv.resolveActiveAgent();
   } catch (err: any) {
     cv.log(`agents.list error: ${err.message}`);
     cv.postToWebview({ type: "agentsList", agents: [] });

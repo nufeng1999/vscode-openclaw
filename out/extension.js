@@ -1508,6 +1508,53 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
   }
 }
 
+// src/taskManager.ts
+async function handleRequestTasks(cv) {
+  cv.log(`handleRequestTasks called`);
+  try {
+    const res = await cv.gateway.request("tasks.list", {
+      limit: 500
+    });
+    const allTasks = res?.tasks || [];
+    const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
+    cv.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
+    cv.postToWebview({ type: "tasksList", tasks: activeTasks });
+  } catch (err) {
+    cv.log(`tasks.list error: ${err.message}`);
+    cv.postToWebview({ type: "tasksList", tasks: [] });
+  }
+}
+async function handleRequestModels(cv) {
+  cv.log(`handleRequestModels called`);
+  try {
+    const res = await cv.gateway.request("models.list", {});
+    const models = res?.models || [];
+    cv.log(`models.list: ${models.length} models`);
+    cv.postToWebview({ type: "modelsList", models });
+  } catch (err) {
+    cv.log(`models.list error: ${err.message}`);
+    cv.postToWebview({ type: "modelsList", models: [] });
+  }
+}
+async function handleRequestAgents(cv) {
+  cv.log(`handleRequestAgents called`);
+  try {
+    const res = await cv.gateway.request("agents.list", {});
+    const agents = res?.agents || [];
+    if (agents.length === 0)
+      agents.push({ id: "main", name: "Agent" });
+    cv.agents = agents;
+    cv.log(`agents.list: ${agents.length} agents`);
+    cv.postToWebview({ type: "agentsList", agents });
+    cv.postToWebview({ type: "agentSwitched", agent: cv.activeAgent });
+    if (typeof cv.resolveActiveAgent === "function")
+      cv.resolveActiveAgent();
+  } catch (err) {
+    cv.log(`agents.list error: ${err.message}`);
+    cv.postToWebview({ type: "agentsList", agents: [] });
+  }
+}
+
 // src/uiRenderer.ts
 var vscode2 = __toESM(require("vscode"));
 function getHtml() {
@@ -5854,12 +5901,7 @@ var OpenClawChatView = class _OpenClawChatView {
     });
   }
   async handleRequestModels() {
-    try {
-      const res = await this.gateway.request("models.list", {});
-      this.postToWebview({ type: "modelsList", models: res?.models || [] });
-    } catch {
-      this.postToWebview({ type: "modelsList", models: [] });
-    }
+    return handleRequestModels(this);
   }
   async handleRequestSessions() {
     try {
@@ -5900,31 +5942,10 @@ var OpenClawChatView = class _OpenClawChatView {
     }
   }
   async handleRequestAgents() {
-    try {
-      const res = await this.gateway.request("agents.list", {});
-      this.agents = res?.agents || [];
-      if (this.agents.length === 0)
-        this.agents = [{ id: "main", name: "Agent" }];
-      this.resolveActiveAgent();
-      this.postToWebview({ type: "agentsList", agents: this.agents });
-      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-    } catch {
-      this.postToWebview({ type: "agentsList", agents: [] });
-    }
+    return handleRequestAgents(this);
   }
   async handleRequestTasks() {
-    try {
-      const res = await this.gateway.request("tasks.list", {
-        limit: 500
-      });
-      const allTasks = res?.tasks || [];
-      const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
-      this.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
-      this.postToWebview({ type: "tasksList", tasks: activeTasks });
-    } catch (err) {
-      this.log(`tasks.list error: ${err.message}`);
-      this.postToWebview({ type: "tasksList", tasks: [] });
-    }
+    return handleRequestTasks(this);
   }
   async handleLoadDefaults() {
     try {
