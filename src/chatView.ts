@@ -6,8 +6,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { resolveAgentsDir, getMediaInfo, formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce, genId, MIME_MAP, getMimeType, stripMedia, normText, isPreamble } from "./utils";
-import { buildAgentsTree, handleRequestAgentsTree, getAgentsTabRenderer } from "./agentTree";
 import { handleWebviewMessage } from "./webviewHandler";
+import { handleRequestModels, handleRequestAgents, handleRequestTasks } from "./taskManager";
 import { getHtml } from "./uiRenderer";
 
 export interface ChatMessage {
@@ -1139,12 +1139,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   private async handleRequestModels() {
-    try {
-      const res = await this.gateway.request("models.list", {});
-      this.postToWebview({ type: "modelsList", models: res?.models || [] });
-    } catch {
-      this.postToWebview({ type: "modelsList", models: [] });
-    }
+    // 委托给 taskManager 统一实现（避免自实现重复逻辑）
+    return handleRequestModels(this as any);
   }
 
   private async handleRequestSessions() {
@@ -1190,34 +1186,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   }
 
   private async handleRequestAgents() {
-    try {
-      const res = await this.gateway.request("agents.list", {});
-      this.agents = res?.agents || [];
-      if (this.agents.length === 0) this.agents = [{ id: "main", name: "Agent" }];
-      this.resolveActiveAgent();
-      this.postToWebview({ type: "agentsList", agents: this.agents });
-      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-    } catch {
-      this.postToWebview({ type: "agentsList", agents: [] });
-    }
+    // 委托给 taskManager 统一实现（避免自实现重复逻辑）
+    return handleRequestAgents(this as any);
   }
 
   private async handleRequestTasks() {
-    try {
-      // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
-      const res = await this.gateway.request("tasks.list", {
-        limit: 500
-      });
-      // 后端过滤：只保留 queued 和 running 状态的任务
-      const allTasks = res?.tasks || [];
-      
-      const activeTasks = allTasks.filter((t: any) => t.status === "queued" || t.status === "running");
-      this.log(`tasks.list: ${activeTasks.length} 条 (总 ${allTasks.length} 条)`);
-      this.postToWebview({ type: "tasksList", tasks: activeTasks });
-    } catch (err: any) {
-      this.log(`tasks.list error: ${err.message}`);
-      this.postToWebview({ type: "tasksList", tasks: [] });
-    }
+    // 委托给 taskManager 统一实现（避免自实现重复逻辑）
+    return handleRequestTasks(this as any);
   }
 
   private async handleLoadDefaults() {

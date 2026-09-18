@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
 import { OpenClawGateway } from './gateway';
-import type { ChatMessage } from './chatView';
-import { genId } from './utils';
 
 /**
  * 任务管理相关方法
@@ -42,12 +40,12 @@ export async function handleRequestTasks(cv: ChatViewLike) {
 export async function handleRequestModels(cv: ChatViewLike) {
   cv.log(`handleRequestModels called`);
   try {
-    const res = await cv.gateway.request("model.list", {});
+    const res = await cv.gateway.request("models.list", {});
     const models = res?.models || [];
-    cv.log(`model.list: ${models.length} models`);
+    cv.log(`models.list: ${models.length} models`);
     cv.postToWebview({ type: "modelsList", models });
   } catch (err: any) {
-    cv.log(`model.list error: ${err.message}`);
+    cv.log(`models.list error: ${err.message}`);
     cv.postToWebview({ type: "modelsList", models: [] });
   }
 }
@@ -55,12 +53,15 @@ export async function handleRequestModels(cv: ChatViewLike) {
 export async function handleRequestAgents(cv: ChatViewLike) {
   cv.log(`handleRequestAgents called`);
   try {
-    const res = await cv.gateway.request("agent.list", {});
+    const res = await cv.gateway.request("agents.list", {});
     const agents = res?.agents || [];
-    cv.log(`agent.list: ${agents.length} agents`);
+    if (agents.length === 0) agents.push({ id: "main", name: "Agent" });
+    cv.agents = agents;  // 同步到 chatView 实例
+    cv.log(`agents.list: ${agents.length} agents`);
     cv.postToWebview({ type: "agentsList", agents });
+    cv.postToWebview({ type: "agentSwitched", agent: cv.activeAgent });
   } catch (err: any) {
-    cv.log(`agent.list error: ${err.message}`);
+    cv.log(`agents.list error: ${err.message}`);
     cv.postToWebview({ type: "agentsList", agents: [] });
   }
 }
