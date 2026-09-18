@@ -34,7 +34,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode2 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 
 // src/gateway.ts
 var WebSocket = __toESM(require("ws"));
@@ -759,16 +759,16 @@ var NodeHost = class extends import_events.EventEmitter {
       const normalized = cwd.replace(/\\/g, "/");
       if (normalized.startsWith("/")) {
         try {
-          const fs2 = require("fs");
-          if (fs2.existsSync(cwd))
+          const fs4 = require("fs");
+          if (fs4.existsSync(cwd))
             return cwd;
         } catch {
         }
       }
       if (/^[A-Za-z]:/.test(cwd)) {
         try {
-          const fs2 = require("fs");
-          if (fs2.existsSync(cwd))
+          const fs4 = require("fs");
+          if (fs4.existsSync(cwd))
             return cwd;
         } catch {
         }
@@ -843,15 +843,15 @@ var NodeHost = class extends import_events.EventEmitter {
     }
   }
   async promptForApproval(command, cwd) {
-    const vscode3 = require("vscode");
+    const vscode5 = require("vscode");
     const items = [
-      { label: `$(check) ${vscode3.l10n.t("Allow Once")}`, description: vscode3.l10n.t("Allow this command to run one time"), result: "allowOnce" },
-      { label: `$(shield) ${vscode3.l10n.t("Always Allow")}`, description: vscode3.l10n.t("Remember this command and always allow"), result: "alwaysAllow" },
-      { label: `$(close) ${vscode3.l10n.t("Deny")}`, description: vscode3.l10n.t("Block this command from running"), result: "deny" }
+      { label: `$(check) ${vscode5.l10n.t("Allow Once")}`, description: vscode5.l10n.t("Allow this command to run one time"), result: "allowOnce" },
+      { label: `$(shield) ${vscode5.l10n.t("Always Allow")}`, description: vscode5.l10n.t("Remember this command and always allow"), result: "alwaysAllow" },
+      { label: `$(close) ${vscode5.l10n.t("Deny")}`, description: vscode5.l10n.t("Block this command from running"), result: "deny" }
     ];
-    const selected = await vscode3.window.showQuickPick(items, {
-      placeHolder: vscode3.l10n.t("Command: {0}\nDirectory: {1}", command, cwd),
-      title: vscode3.l10n.t("OpenClaw Node: Command Approval")
+    const selected = await vscode5.window.showQuickPick(items, {
+      placeHolder: vscode5.l10n.t("Command: {0}\nDirectory: {1}", command, cwd),
+      title: vscode5.l10n.t("OpenClaw Node: Command Approval")
     });
     return selected?.result || "deny";
   }
@@ -1036,8 +1036,11 @@ function base64UrlDecode(str) {
 }
 
 // src/chatView.ts
-var vscode = __toESM(require("vscode"));
-var fs = __toESM(require("fs"));
+var vscode3 = __toESM(require("vscode"));
+var fs3 = __toESM(require("fs"));
+var path4 = __toESM(require("path"));
+
+// src/utils.ts
 var os = __toESM(require("os"));
 var path = __toESM(require("path"));
 function resolveAgentsDir(configValue) {
@@ -1053,1836 +1056,465 @@ function resolveAgentsDir(configValue) {
   }
   return path.resolve(expanded);
 }
-var OpenClawChatView = class _OpenClawChatView {
-  constructor(context, gateway2, channel) {
-    this.messages = [];
-    this.sessions = [];
-    this.agents = [];
-    this.activeAgent = { id: "main", name: "Agent", emoji: "\u{1F916}" };
-    this.currentModel = "";
-    this.currentSessionKey = "main";
-    this.thinkingLevel = "";
-    this.verboseLevel = "";
-    this.gatewayUrl = "";
-    this.agentsDir = "";
-    this.messageHistory = [];
-    this.autoContinueCount = 0;
-    this.supervisionEnabled = false;
-    this.supervisionTimer = null;
-    this.lastSupervisedContent = "";
-    this.supervisorBusy = false;
-    this.supervisorPendingSessionKey = null;
-    this.supervisorResponseResolver = null;
-    this.supervisorTimeout = null;
-    this.supervisorAccumulated = "";
-    this.busyCount = 0;
-    this.serverVersion = "";
-    this.seenPreambleTexts = [];
-    // Subagent activity tracking (Requirement A)
-    this.lastSubagentEventMs = 0;
-    this.activeSubagentCount = 0;
-    this.subagentTimer = null;
-    // sessions_yield tracking (Requirement B): set when busy + active subagent
-    this.yieldState = false;
-    this.yieldTimer = null;
-    this.historyReloadTimer = null;
-    this.context = context;
-    this.gateway = gateway2;
-    const ch = channel;
-    this.log = (msg) => log(msg, LOG_INFO, ch);
-    this.messageHistory = context.globalState.get("openclaw.messageHistory", []);
-    const config = vscode.workspace.getConfiguration("openclaw");
-    this.gatewayUrl = config.get("gatewayUrl", "ws://127.0.0.1:18789");
-    const configAgentId = config.get("agentId", "");
-    const configSessionKey = config.get("sessionKey", "");
-    if (configAgentId) {
-      this.activeAgent = { id: configAgentId, name: configAgentId, emoji: "\u{1F916}" };
-    }
-    if (configSessionKey) {
-      this.currentSessionKey = configSessionKey;
-    }
-    const configAgentsDir = config.get("agentsDir", "");
-    this.agentsDir = resolveAgentsDir(configAgentsDir);
-    try {
-      if (!fs.existsSync(this.agentsDir)) {
-        fs.mkdirSync(this.agentsDir, { recursive: true });
-        log(`AgentsDIR created: ${this.agentsDir}`, LOG_INFO, ch);
-      }
-    } catch (mkdirErr) {
-      log(`AgentsDIR create failed: ${mkdirErr?.message || mkdirErr}`, LOG_INFO, ch);
-    }
-    this.gateway.on("task.ended", () => {
-      this.handleRequestTasks();
-    });
-    this.gateway.on("task.updated", () => {
-      this.handleRequestTasks();
-    });
-    this.gateway.on("session.updated", () => {
-      this.handleRequestSessions();
-    });
-    this.gateway.on("session.created", () => {
-      this.handleRequestSessions();
-    });
-    this.gateway.on("session.deleted", () => {
-      this.handleRequestSessions();
-    });
+function getMediaInfo(ext) {
+  switch (ext) {
+    case ".png":
+      return { mimeType: "image/png", tag: "img" };
+    case ".jpg":
+    case ".jpeg":
+      return { mimeType: "image/jpeg", tag: "img" };
+    case ".gif":
+      return { mimeType: "image/gif", tag: "img" };
+    case ".webp":
+      return { mimeType: "image/webp", tag: "img" };
+    case ".svg":
+      return { mimeType: "image/svg+xml", tag: "img" };
+    case ".mp4":
+      return { mimeType: "video/mp4", tag: "video" };
+    case ".webm":
+      return { mimeType: "video/webm", tag: "video" };
+    case ".ogv":
+      return { mimeType: "video/ogg", tag: "video" };
+    case ".avi":
+      return { mimeType: "video/x-msvideo", tag: "video" };
+    case ".mov":
+      return { mimeType: "video/quicktime", tag: "video" };
+    case ".mp3":
+      return { mimeType: "audio/mpeg", tag: "audio" };
+    case ".wav":
+      return { mimeType: "audio/wav", tag: "audio" };
+    case ".ogg":
+    case ".oga":
+      return { mimeType: "audio/ogg", tag: "audio" };
+    case ".m4a":
+      return { mimeType: "audio/mp4", tag: "audio" };
+    case ".flac":
+      return { mimeType: "audio/flac", tag: "audio" };
+    default:
+      return { mimeType: "application/octet-stream", tag: "video" };
   }
-  static {
-    this.viewType = "openclaw.chatView";
+}
+function getNonce() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < 32; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  static {
-    this.SUBAGENT_ACTIVITY_TIMEOUT_MS = 6e4;
-  }
-  static {
-    this.AUTO_CONTINUE_MAX = 3;
-  }
-  static {
-    this.ERROR_PATTERNS = [
-      "The agent run failed before producing a reply",
-      // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
-      "Agent run ended before producing a complete result",
-      // ✅ formatAbandonedLivenessError 产出
-      "Agent run blocked before producing a usable result",
-      // ✅ formatBlockedLivenessError 产出
-      "Agent failed before reply",
-      // ✅ AGENT_FAILED_BEFORE_REPLY_TEXT
-      "Agent run failed",
-      // ✅ 通用后备文本
-      "ACP turn failed before completion"
-      // ✅ ACP 轮次失败
-    ];
-  }
-  get agentPrefix() {
-    return `agent:${this.activeAgent.id}:`;
-  }
-  gwSessionKey(localKey) {
-    return this.agentPrefix + (localKey || this.currentSessionKey);
-  }
-  show() {
-    this.view?.webview.postMessage({ type: "show" });
-  }
-  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/.openclaw/agents），已确保目录存在 */
-  get agentsDirectory() {
-    return this.agentsDir;
-  }
-  setInputText(text) {
-    this.postToWebview({ type: "setInputText", text });
-  }
-  newChat() {
-    this.messages = [];
-    this.currentSessionKey = "main";
-    this.postToWebview({ type: "clearMessages" });
-  }
-  updateConnectionStatus(connected, serverVersion) {
-    this.serverVersion = serverVersion || this.serverVersion;
-    this.postToWebview({
-      type: "init",
-      sessionKey: this.currentSessionKey,
-      gwSessionKey: this.gwSessionKey(),
-      model: this.currentModel,
-      connected,
-      agent: this.activeAgent,
-      gatewayUrl: this.gatewayUrl,
-      thinkingLevel: this.thinkingLevel,
-      verboseLevel: this.verboseLevel,
-      messageHistory: this.messageHistory,
-      supervisionEnabled: this.supervisionEnabled,
-      version: this.serverVersion
-    });
-    this.postToWebview({
-      type: "connectionStatus",
-      connected,
-      agent: this.activeAgent
-    });
-    if (connected) {
-      this.handleRequestModels().catch(() => {
-      });
-      this.handleRequestSessions().catch(() => {
-      });
-      this.handleRequestAgents().catch(() => {
-      });
-      this.handleRequestTasks().catch(() => {
-      });
-      this.handleLoadMessages(this.currentSessionKey).catch(() => {
-      });
-    } else {
-      this.busyCount = 0;
-      this.postToWebview({ type: "busyState", busy: false, label: "" });
-      this.activeSubagentCount = 0;
-      this.postToWebview({ type: "subagentState", active: false, label: "", state: "" });
-      this.updateYieldState();
-    }
-  }
-  /**
-   * Public method to send text to the chat view
-   * @param text The text to send
-   */
-  async sendText(text) {
-    await this.handleSendMessage(text);
-  }
-  /**
-   * 处理进度卡片更新
-   * @param card 进度卡片对象，null 表示清除
-   */
-  handleProgressCardUpdate(card) {
-    if (!this.view)
-      return;
-    if (card) {
-      this.postToWebview({
-        type: "progressCard",
-        data: {
-          title: card.title,
-          description: card.description,
-          progress: card.progress,
-          status: card.status,
-          steps: card.steps || card.plan,
-          // 优先使用 card.steps，回退到 card.plan
-          plan: card.plan,
-          markdown: card.markdown,
-          revision: card.revision
-        }
-      });
-    } else {
-      this.postToWebview({ type: "progressCard", data: null });
-    }
-  }
-  // Match Obsidian plugin's handleChatEvent
-  async handleChatEvent(payload) {
-    const sessionKey = this.resolveSession(payload?.sessionKey);
-    const rawSessionKey = payload?.sessionKey || "";
-    const state = typeof payload?.state === "string" ? payload.state : "";
-    if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
-      if (state === "delta") {
-        const text = await this.extractDeltaText(payload?.message);
-        if (text) {
-          this.supervisorAccumulated += text;
-          this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
-        }
-      } else if (state === "final") {
-        const finalText = await this.extractDeltaText(payload?.message);
-        const fullReply = finalText || this.supervisorAccumulated;
-        this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
-        if (this.supervisorTimeout) {
-          clearTimeout(this.supervisorTimeout);
-          this.supervisorTimeout = null;
-        }
-        this.supervisorPendingSessionKey = null;
-        const resolver = this.supervisorResponseResolver;
-        this.supervisorResponseResolver = null;
-        this.supervisorAccumulated = "";
-        if (resolver) {
-          resolver(fullReply);
-        }
-        return;
-      } else if (state === "error") {
-        if (this.supervisorTimeout) {
-          clearTimeout(this.supervisorTimeout);
-          this.supervisorTimeout = null;
-        }
-        this.supervisorPendingSessionKey = null;
-        const resolver = this.supervisorResponseResolver;
-        this.supervisorResponseResolver = null;
-        this.supervisorAccumulated = "";
-        if (resolver) {
-          resolver(null);
-        }
-        return;
-      }
-    }
-    if (rawSessionKey && rawSessionKey.includes("subagent")) {
-      const m = rawSessionKey.match(/^agent:([^:]+):/);
-      if (m && m[1] === this.activeAgent.id) {
-        this.lastSubagentEventMs = Date.now();
-        this.activeSubagentCount++;
-        this.startSubagentTimer();
-        const tail = rawSessionKey.split(":").pop() || "subagent";
-        const shortLabel = tail.length > 12 ? tail.substring(0, 8) + "\u2026" : tail;
-        this.postToWebview({
-          type: "subagentState",
-          active: true,
-          label: vscode.l10n.t("Subagent active: {0}", shortLabel),
-          state
-        });
-        this.updateYieldState();
-      }
-      return;
-    }
-    if (rawSessionKey) {
-      const m = rawSessionKey.match(/^agent:([^:]+):/);
-      if (m && m[1] !== this.activeAgent.id) {
-        this.log(`chatEvent discarded: agent=${m[1]} != current=${this.activeAgent.id}`);
-        return;
-      }
-    }
-    this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
-    if (state === "delta") {
-      const text = await this.extractDeltaText(payload?.message);
-      this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
-      if (text) {
-        this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text });
-      }
-    } else if (state === "final") {
-      this.log(`stream final`);
-      const finalMsg = payload?.message;
-      if (finalMsg) {
-        const finalText = await this.extractDeltaText(finalMsg);
-        this.log(`final text len=${finalText.length}`);
-        if (finalText) {
-          const isErrorResponse = _OpenClawChatView.ERROR_PATTERNS.some(
-            (pattern) => finalText.includes(pattern)
-          );
-          if (isErrorResponse) {
-            this.autoContinueCount++;
-            this.log(`Auto-continue retry ${this.autoContinueCount}/${_OpenClawChatView.AUTO_CONTINUE_MAX}`);
-            if (this.autoContinueCount >= _OpenClawChatView.AUTO_CONTINUE_MAX) {
-              this.postToWebview({
-                type: "autoContinueFailed",
-                sessionKey,
-                count: this.autoContinueCount
-              });
-              this.autoContinueCount = 0;
-            } else {
-              this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
-              this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
-              this.sendContinueMessage();
-              return;
-            }
-          } else {
-            if (this.autoContinueCount > 0) {
-              this.autoContinueCount = 0;
-              this.context.globalState.update("openclaw.autoContinueCount", 0);
-            }
-            this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
-          }
-        }
-      }
-      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
-      this.setBusy(false);
-      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
-    } else if (state === "aborted") {
-      this.log(`stream aborted`);
-      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
-      this.setBusy(false);
-      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
-    } else if (state === "error") {
-      const errorMsg = payload?.errorMessage || "unknown error";
-      this.log(`stream error: ${errorMsg}`);
-      this.postToWebview({ type: "streamError", sessionKey, agentId: this.activeAgent.id, error: errorMsg });
-      this.setBusy(false);
-    } else {
-      this.log(`unknown chat state: ${state}`);
-    }
-  }
-  // Match Obsidian plugin's handleStreamEvent
-  handleStreamEvent(payload) {
-    const stream = typeof payload?.stream === "string" ? payload.stream : "";
-    const state = typeof payload?.state === "string" ? payload.state : "";
-    const data = payload?.data || {};
-    const toolName = data.name || data.toolName || payload?.toolName || payload?.name || "";
-    const phase = data.phase || payload?.phase || "";
-    this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
-    if (data.kind === "preamble" && typeof data.progressText === "string" && data.progressText.trim()) {
-      const t = data.progressText.trim();
-      if (!this.seenPreambleTexts.includes(t)) {
-        this.seenPreambleTexts.push(t);
-        if (this.seenPreambleTexts.length > 50)
-          this.seenPreambleTexts.shift();
-      }
-      return;
-    }
-    if (toolName && (phase === "start" || state === "tool_use")) {
-      const label = `${toolName}`;
-      this.postToWebview({ type: "toolCall", label, phase: "start" });
-    } else if (toolName && phase === "result") {
-      this.postToWebview({ type: "toolCall", label: toolName, phase: "result" });
-    }
-  }
-  async extractDeltaText(message) {
-    if (typeof message === "string")
-      return await this.resolveMediaPaths(message);
-    if (!message)
-      return "";
-    const content = message.content ?? message;
-    let text = "";
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        if (typeof item === "string") {
-          text += item;
-        } else if (item && typeof item === "object" && "text" in item) {
-          text += (text ? "\n" : "") + String(item.text);
-        }
-      }
-    } else if (typeof content === "string") {
-      text = content;
-    } else {
-      text = message.text || "";
-    }
-    const mediaUrls = message.openclawDelivery?.mediaUrls;
-    if (mediaUrls && mediaUrls.length > 0) {
-      const audioParts = [];
-      for (const mediaPath of mediaUrls) {
-        const audioTag = await this.convertMediaToMarkdown(mediaPath);
-        if (audioTag) {
-          audioParts.push(audioTag);
-        }
-      }
-      if (audioParts.length > 0) {
-        text = text + "\n" + audioParts.join("\n");
-      }
-    }
-    return await this.resolveMediaPaths(text);
-  }
-  async resolveMediaPaths(text) {
-    if (!text || text.indexOf("MEDIA:") === -1)
-      return text;
-    const segments = text.split("\n");
-    const resolvedSegments = [];
-    for (const segment of segments) {
-      if (segment.indexOf("MEDIA:") === 0) {
-        const rest = segment.slice(6).trim();
-        const typePrefixMatch = rest.match(/^(audio|video|img|image):(.+)$/);
-        let mediaPath;
-        let forcedTag;
-        if (typePrefixMatch) {
-          forcedTag = typePrefixMatch[1] === "image" ? "img" : typePrefixMatch[1];
-          mediaPath = typePrefixMatch[2].trim();
-        } else {
-          mediaPath = rest;
-        }
-        const result = await this.convertMediaToMarkdown(mediaPath, forcedTag);
-        if (result) {
-          resolvedSegments.push(result);
-        }
-      } else {
-        resolvedSegments.push(segment);
-      }
-    }
-    return resolvedSegments.join("\n");
-  }
-  async convertMediaToMarkdown(mediaPath, forcedTag) {
-    try {
-      if (!mediaPath)
-        return null;
-      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
-        const tag2 = await this.buildRemoteMediaTag(mediaPath);
-        if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
-          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
-          return this.buildMediaTag(forcedTag, absoluteUrl);
-        }
-        return tag2;
-      }
-      const normalizedPath = mediaPath.replace(/\\/g, "/");
-      let buffer;
-      try {
-        buffer = fs.readFileSync(mediaPath);
-      } catch {
-        try {
-          buffer = fs.readFileSync(normalizedPath);
-        } catch {
-          return null;
-        }
-      }
-      const ext = path.extname(mediaPath).toLowerCase();
-      const mediaInfo = this.getMediaInfo(ext);
-      let mimeType = mediaInfo.mimeType;
-      let tag = mediaInfo.tag;
-      const base64 = buffer.toString("base64");
-      const dataUrl = `data:${mimeType};base64,${base64}`;
-      return this.buildMediaTag(tag, dataUrl);
-    } catch {
-      return null;
-    }
-  }
-  /**
-   * 根据扩展名解析媒体类型信息（MIME 类型与 HTML 标签名）。
-   * 统一用于本地文件与远程 URL 两种路径，保证行为一致。
-   */
-  getMediaInfo(ext) {
-    switch (ext) {
-      case ".png":
-        return { mimeType: "image/png", tag: "img" };
-      case ".jpg":
-      case ".jpeg":
-        return { mimeType: "image/jpeg", tag: "img" };
-      case ".gif":
-        return { mimeType: "image/gif", tag: "img" };
-      case ".webp":
-        return { mimeType: "image/webp", tag: "img" };
-      case ".svg":
-        return { mimeType: "image/svg+xml", tag: "img" };
-      case ".mp4":
-        return { mimeType: "video/mp4", tag: "video" };
-      case ".webm":
-        return { mimeType: "video/webm", tag: "video" };
-      case ".ogv":
-        return { mimeType: "video/ogg", tag: "video" };
-      case ".avi":
-        return { mimeType: "video/x-msvideo", tag: "video" };
-      case ".mov":
-        return { mimeType: "video/quicktime", tag: "video" };
-      case ".mp3":
-        return { mimeType: "audio/mpeg", tag: "audio" };
-      case ".wav":
-        return { mimeType: "audio/wav", tag: "audio" };
-      case ".ogg":
-      case ".oga":
-        return { mimeType: "audio/ogg", tag: "audio" };
-      case ".m4a":
-        return { mimeType: "audio/mp4", tag: "audio" };
-      case ".flac":
-        return { mimeType: "audio/flac", tag: "audio" };
-      default:
-        return { mimeType: "application/octet-stream", tag: "video" };
-    }
-  }
-  /**
-   * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
-   * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
-   * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
-   * 通过 RPC artifacts.download 获取包含 mediaTicket 鉴权的完整 URL。
-   */
-  async toAbsoluteMediaUrl(url) {
-    if (!url.startsWith("/api/chat/media/"))
-      return url;
-    const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
-    if (!match) {
-      const httpBase2 = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
-      return `${httpBase2}${url}`;
-    }
-    const [, sessionKeyEncoded, attachmentId] = match;
-    const sessionKey = decodeURIComponent(sessionKeyEncoded);
-    const httpBase = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
-    for (const prefix of ["artifact_managed_media_", "artifact_managed_image_"]) {
-      try {
-        const artifactId = prefix + attachmentId;
-        const result = await this.gateway.request("artifacts.download", {
-          artifactId,
-          sessionKey
-        });
-        if (result?.url) {
-          const absoluteUrl = result.url.startsWith("/") ? httpBase + result.url : result.url;
-          this.log(`toAbsoluteMediaUrl: resolved ${sessionKey}/${attachmentId} -> ${absoluteUrl}`);
-          return absoluteUrl;
-        }
-      } catch (err) {
-        this.log(`toAbsoluteMediaUrl: artifacts.download(${prefix}) failed for ${sessionKey}/${attachmentId}: ${err?.message || err}`);
-      }
-    }
-    return `${httpBase}${url}`;
-  }
-  /**
-   * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
-   * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
-   * 网关媒体相对路径（/api/chat/media/...）自动转绝对 HTTP URL，避免解析到 vscode-webview:// 基址。
-   */
-  async buildRemoteMediaTag(url) {
-    const cleanUrl = url.split("#")[0].split("?")[0];
-    const ext = path.extname(cleanUrl).toLowerCase();
-    let { tag } = this.getMediaInfo(ext);
-    if (!ext) {
-      const lower = url.toLowerCase();
-      if (lower.includes("/audio/") || lower.endsWith("/audio")) {
-        tag = "audio";
-      } else if (lower.includes("/video/") || lower.endsWith("/video")) {
-        tag = "video";
-      } else {
-        tag = "audio";
-      }
-    }
-    const src = await this.toAbsoluteMediaUrl(url);
-    return this.buildMediaTag(tag, src);
-  }
-  /**
-   * 根据标签名与数据源生成最终 HTML 标签。
-   * video/audio 添加 controls 属性；img 添加样式限制大小。
-   */
-  buildMediaTag(tag, src) {
-    if (tag === "video") {
-      return `<video src="${src}" controls preload="metadata" style="max-width:100%;max-height:400px;border-radius:6px;"></video>`;
-    } else if (tag === "audio") {
-      return `<audio src="${src}" controls preload="metadata" style="max-width:100%;"></audio>`;
-    } else {
-      return `<img src="${src}" alt="media" style="max-width:100%;max-height:400px;border-radius:6px;" />`;
-    }
-  }
-  async extractHistoryContent(content) {
-    if (typeof content === "string")
-      return await this.resolveMediaPaths(content);
-    if (!content)
-      return "";
-    if (Array.isArray(content)) {
-      let text = "";
-      for (const block of content) {
-        if (block.type === "text" && block.text) {
-          text += (text ? "\n" : "") + block.text;
-        } else if (block.type === "tool_result" && block.content) {
-          if (typeof block.content === "string") {
-            text += (text ? "\n" : "") + block.content;
-          } else if (Array.isArray(block.content)) {
-            for (const sub of block.content) {
-              if (sub?.type === "text" && sub.text) {
-                text += (text ? "\n" : "") + sub.text;
-              }
-            }
-          }
-        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && (block.content || block.url)) {
-          let mediaPath = "";
-          if (typeof block.url === "string" && block.url) {
-            mediaPath = block.url;
-          } else if (typeof block.content === "string") {
-            mediaPath = block.content;
-          } else if (block.content && typeof block.content === "object") {
-            mediaPath = block.content.path || block.content.url || "";
-          }
-          if (mediaPath) {
-            if (mediaPath.startsWith("/api/chat/media/")) {
-              text += (text ? "\n" : "") + "MEDIA:" + block.type + ":" + mediaPath;
-            } else {
-              text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
-            }
-          }
-        }
-      }
-      const mediaUrls = content?.openclawDelivery?.mediaUrls;
-      if (mediaUrls && mediaUrls.length > 0) {
-        const audioParts = [];
-        for (const mediaPath of mediaUrls) {
-          const audioTag = await this.convertMediaToMarkdown(mediaPath);
-          if (audioTag)
-            audioParts.push(audioTag);
-        }
-        if (audioParts.length > 0) {
-          text += (text ? "\n" : "") + audioParts.join("\n");
-        }
-      }
-      return await this.resolveMediaPaths(text);
-    }
+  return result;
+}
+function genId() {
+  return Math.random().toString(36).substring(2, 12);
+}
+var MIME_MAP = {
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".js": "application/javascript",
+  ".ts": "application/typescript",
+  ".jsx": "application/javascript",
+  ".tsx": "application/typescript",
+  ".py": "text/x-python",
+  ".rb": "text/x-ruby",
+  ".go": "text/x-go",
+  ".rs": "text/x-rust",
+  ".java": "text/x-java",
+  ".c": "text/x-c",
+  ".cpp": "text/x-c++",
+  ".h": "text/x-c",
+  ".hpp": "text/x-c++",
+  ".cs": "text/x-csharp",
+  ".php": "text/x-php",
+  ".swift": "text/x-swift",
+  ".kt": "text/x-kotlin",
+  ".scala": "text/x-scala",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".css": "text/css",
+  ".scss": "text/x-scss",
+  ".less": "text/x-less",
+  ".xml": "application/xml",
+  ".yaml": "application/yaml",
+  ".yml": "application/yaml",
+  ".toml": "application/toml",
+  ".ini": "text/plain",
+  ".cfg": "text/plain",
+  ".sh": "text/x-shellscript",
+  ".bash": "text/x-shellscript",
+  ".zsh": "text/x-shellscript",
+  ".fish": "text/x-shellscript",
+  ".bat": "text/plain",
+  ".cmd": "text/plain",
+  ".ps1": "text/plain",
+  ".sql": "text/x-sql",
+  ".graphql": "text/x-graphql",
+  ".env": "text/plain",
+  ".gitignore": "text/plain",
+  ".dockerignore": "text/plain",
+  ".csv": "text/csv",
+  ".tsv": "text/tab-separated-values",
+  ".log": "text/plain",
+  ".conf": "text/plain",
+  ".config": "text/plain",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".tiff": "image/tiff",
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".gz": "application/gzip",
+  ".tar": "application/x-tar",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".wav": "audio/wav",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".wasm": "application/wasm"
+};
+function getMimeType(filePath) {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1)
+    return "text/plain";
+  const ext = filePath.substring(dot).toLowerCase();
+  return MIME_MAP[ext] || "text/plain";
+}
+function stripMedia(text) {
+  if (!text)
     return "";
-  }
-  resolveSession(sessionKey) {
-    if (!sessionKey)
-      return this.currentSessionKey;
-    const prefix = this.agentPrefix;
-    if (prefix && sessionKey.startsWith(prefix)) {
-      return sessionKey.slice(prefix.length);
-    }
-    const match = sessionKey.match(/^agent:[^:]+:(.+)$/);
-    if (match)
-      return match[1];
-    return sessionKey;
-  }
-  resolveWebviewView(webviewView, _context, _token) {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: []
-    };
-    webviewView.webview.html = this.getHtml();
-    webviewView.webview.onDidReceiveMessage(async (msg) => {
-      switch (msg.type) {
-        case "webviewReady":
-          if (this.gateway.connected) {
-            await this.handleRequestAgents();
-            await this.handleRequestModels();
-            await this.handleRequestSessions();
-            await this.handleRequestTasks();
-            await this.handleLoadDefaults();
-            await this.handleLoadMessages(this.currentSessionKey);
-          }
-          this.postToWebview({
-            type: "init",
-            sessionKey: this.currentSessionKey,
-            gwSessionKey: this.gwSessionKey(),
-            model: this.currentModel,
-            connected: this.gateway.connected,
-            agent: this.activeAgent,
-            gatewayUrl: this.gatewayUrl,
-            thinkingLevel: this.thinkingLevel,
-            verboseLevel: this.verboseLevel,
-            messageHistory: this.messageHistory,
-            supervisionEnabled: this.supervisionEnabled,
-            version: this.serverVersion
-          });
-          break;
-        case "sendMessage":
-          await this.handleSendMessage(msg.text, msg.fileRefs, msg.attachments);
-          break;
-        case "stopStream":
-          await this.handleStopStream();
-          break;
-        case "selectModel":
-          this.currentModel = msg.model;
-          break;
-        case "cycleThinking":
-          await this.cycleThinking();
-          break;
-        case "cycleVerbose":
-          await this.cycleVerbose();
-          break;
-        case "requestModels":
-          await this.handleRequestModels();
-          break;
-        case "requestSessions":
-          await this.handleRequestSessions();
-          break;
-        case "requestAgents":
-          await this.handleRequestAgents();
-          break;
-        case "requestAgentsTree":
-          await this.handleRequestAgentsTree();
-          break;
-        case "requestTasks":
-          await this.handleRequestTasks();
-          break;
-        case "switchSession": {
-          const ssGwKey = msg.sessionKey || "";
-          const agentMatch = ssGwKey.match(/^agent:([^:]+):/);
-          let sessionAgentId;
-          if (agentMatch) {
-            sessionAgentId = agentMatch[1];
-            const ag = this.agents.find((a) => a.id === sessionAgentId);
-            if (ag && (!this.activeAgent || this.activeAgent.id !== sessionAgentId)) {
-              this.activeAgent = ag;
-              this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-            }
-          }
-          const ssLocalKey = this.resolveSession(ssGwKey);
-          this.currentSessionKey = ssLocalKey;
-          await this.handleLoadMessages(ssLocalKey, sessionAgentId, msg.sessionId);
-          break;
+  let t = String(text);
+  t = t.replace(/<audio[^>]*>[\s\S]*?<\/audio>/gi, "");
+  t = t.replace(/<audio[\s\S]*?>/gi, "");
+  t = t.split("\n").filter((line) => !line.startsWith("MEDIA:")).join("\n");
+  return t.trim();
+}
+function normText(text) {
+  if (!text)
+    return "";
+  return String(text).replace(/\s+/g, " ").trim();
+}
+function isPreamble(text, seenPreambleTexts) {
+  if (!seenPreambleTexts.length)
+    return false;
+  const norm = normText(stripMedia(text));
+  if (!norm)
+    return false;
+  return seenPreambleTexts.some((p) => normText(p) === norm);
+}
+
+// src/webviewHandler.ts
+var fs2 = __toESM(require("fs"));
+var path3 = __toESM(require("path"));
+var vscode = __toESM(require("vscode"));
+
+// src/agentTree.ts
+var fs = __toESM(require("fs"));
+var path2 = __toESM(require("path"));
+function buildAgentsTree(dir, maxDepth = 3, depth = 0, log2 = (msg) => log(msg, LOG_INFO)) {
+  const children = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith("."))
+        continue;
+      const fullPath = path2.join(dir, entry.name);
+      const node = { name: entry.name, path: fullPath };
+      if (entry.isDirectory()) {
+        node.type = "directory";
+        if (depth < maxDepth) {
+          node.children = buildAgentsTree(fullPath, maxDepth, depth + 1, log2).children;
+        } else {
+          node.children = [];
         }
-        case "switchTab":
-          if (msg.sessionKey) {
-            const match = msg.sessionKey.match(/^agent:([^:]+):/);
-            if (match) {
-              const agentId = match[1];
-              const ag = this.agents.find((a) => a.id === agentId);
-              if (ag) {
-                this.activeAgent = ag;
+      } else if (entry.isFile()) {
+        node.type = "file";
+        node.children = void 0;
+      } else {
+        node.type = "file";
+        node.children = void 0;
+      }
+      children.push(node);
+    }
+  } catch (err) {
+    log2(`buildAgentsTree: read ${dir} failed: ${err?.message || err}`);
+  }
+  children.sort((a, b) => {
+    if (a.type === "directory" && b.type !== "directory")
+      return -1;
+    if (a.type !== "directory" && b.type === "directory")
+      return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { name: path2.basename(dir) || dir, path: dir, type: "directory", children };
+}
+function handleRequestAgentsTree(agentsDir, postToWebview, log2) {
+  try {
+    const dir = agentsDir;
+    if (!dir || !fs.existsSync(dir)) {
+      postToWebview({ type: "agentsTree", tree: null, dir: dir || "" });
+      return;
+    }
+    const tree = buildAgentsTree(dir, 3, 0, log2);
+    postToWebview({ type: "agentsTree", tree, dir });
+  } catch (err) {
+    log2(`handleRequestAgentsTree error: ${err?.message || err}`);
+    postToWebview({ type: "agentsTree", tree: null, dir: agentsDir });
+  }
+}
+
+// src/webviewHandler.ts
+async function handleWebviewMessage(msg, ctx, webviewView) {
+  switch (msg.type) {
+    case "webviewReady":
+      if (ctx.gateway.connected) {
+        await ctx.handleRequestAgents();
+        await ctx.handleRequestModels();
+        await ctx.handleRequestSessions();
+        await ctx.handleRequestTasks();
+        await ctx.handleLoadDefaults();
+        await ctx.handleLoadMessages(ctx.currentSessionKey);
+      }
+      ctx.postToWebview({
+        type: "init",
+        sessionKey: ctx.currentSessionKey,
+        gwSessionKey: ctx.gwSessionKey(),
+        model: ctx.currentModel,
+        connected: ctx.gateway.connected,
+        agent: ctx.activeAgent,
+        gatewayUrl: ctx.gatewayUrl,
+        thinkingLevel: ctx.thinkingLevel,
+        verboseLevel: ctx.verboseLevel,
+        messageHistory: ctx.messageHistory,
+        supervisionEnabled: ctx.supervisionEnabled,
+        version: ctx.serverVersion
+      });
+      break;
+    case "sendMessage":
+      await ctx.handleSendMessage(msg.text, msg.fileRefs, msg.attachments);
+      break;
+    case "stopStream":
+      await ctx.handleStopStream();
+      break;
+    case "selectModel":
+      ctx.currentModel = msg.model;
+      break;
+    case "cycleThinking":
+      await ctx.cycleThinking();
+      break;
+    case "cycleVerbose":
+      await ctx.cycleVerbose();
+      break;
+    case "requestModels":
+      await ctx.handleRequestModels();
+      break;
+    case "requestSessions":
+      await ctx.handleRequestSessions();
+      break;
+    case "requestAgents":
+      await ctx.handleRequestAgents();
+      break;
+    case "requestAgentsTree":
+      await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+      break;
+    case "requestTasks":
+      await ctx.handleRequestTasks();
+      break;
+    case "switchSession": {
+      const ssGwKey = msg.sessionKey || "";
+      const agentMatch = ssGwKey.match(/^agent:([^:]+):/);
+      let sessionAgentId;
+      if (agentMatch) {
+        sessionAgentId = agentMatch[1];
+        const ag = ctx.agents.find((a) => a.id === sessionAgentId);
+        if (ag && (!ctx.activeAgent || ctx.activeAgent.id !== sessionAgentId)) {
+          ctx.activeAgent = ag;
+          ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
+        }
+      }
+      const ssLocalKey = ctx.resolveSession(ssGwKey);
+      ctx.currentSessionKey = ssLocalKey;
+      await ctx.handleLoadMessages(ssLocalKey, sessionAgentId, msg.sessionId);
+      break;
+    }
+    case "switchTab":
+      if (msg.sessionKey) {
+        const match = msg.sessionKey.match(/^agent:([^:]+):/);
+        if (match) {
+          const agentId = match[1];
+          const ag = ctx.agents.find((a) => a.id === agentId);
+          if (ag) {
+            ctx.activeAgent = ag;
+          }
+        }
+      }
+      if (msg.agentId && (!ctx.activeAgent || ctx.activeAgent.id !== msg.agentId)) {
+        const ag = ctx.agents.find((a) => a.id === msg.agentId);
+        if (ag) {
+          ctx.activeAgent = ag;
+        } else {
+          const byName = ctx.agents.find((a) => (a.name || "") === msg.agentId);
+          if (byName)
+            ctx.activeAgent = byName;
+        }
+      }
+      const localSessionKey = ctx.resolveSession(msg.sessionKey || "main");
+      ctx.currentSessionKey = localSessionKey;
+      await ctx.handleLoadMessages(localSessionKey, void 0, msg.sessionId);
+      ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
+      break;
+    case "deleteSession":
+      await ctx.handleDeleteSession(msg.sessionKey);
+      break;
+    case "addChatTabFromSession": {
+      const sessionKey = msg.sessionKey || "";
+      const deviceName = msg.deviceName || sessionKey;
+      const parts = deviceName.split(":");
+      let tabLabel = parts[0].trim();
+      if (tabLabel.length > 15)
+        tabLabel = tabLabel.substring(0, 15) + "\u2026";
+      let tabAgentId = "main";
+      const match = sessionKey.match(/^agent:([^:]+):/);
+      if (match)
+        tabAgentId = match[1];
+      const newTab = {
+        id: "tab-" + sessionKey + "-" + Date.now(),
+        label: tabLabel,
+        agentId: tabAgentId,
+        sessionKey,
+        sessionId: msg.sessionId,
+        messages: []
+      };
+      ctx.postToWebview({ type: "addChatTab", tab: newTab });
+      ctx.currentSessionKey = ctx.resolveSession(sessionKey);
+      await ctx.handleLoadMessages(ctx.currentSessionKey, tabAgentId, msg.sessionId);
+      break;
+    }
+    case "switchAgent":
+      await ctx.handleSwitchAgent(msg.agentId);
+      break;
+    case "copyCommand":
+      await vscode.env.clipboard.writeText(msg.text);
+      vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
+      break;
+    case "copyImage": {
+      const dataUrl = msg.dataUrl;
+      if (dataUrl && typeof dataUrl === "string") {
+        try {
+          const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+          const os2 = require("os");
+          const tmpB64 = path3.join(os2.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+          fs2.writeFileSync(tmpB64, base64Data, "utf8");
+          const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
+          const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+          const child_process = require("child_process");
+          child_process.exec(
+            "powershell -NoProfile -STA -EncodedCommand " + encoded,
+            { timeout: 15e3 },
+            (pErr, pStdout) => {
+              try {
+                fs2.unlinkSync(tmpB64);
+              } catch (e) {
+              }
+              if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
+                console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
+                vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
+              } else {
+                console.log("[copyImage] clipboard write OK");
               }
             }
-          }
-          if (msg.agentId && (!this.activeAgent || this.activeAgent.id !== msg.agentId)) {
-            const ag = this.agents.find((a) => a.id === msg.agentId);
-            if (ag) {
-              this.activeAgent = ag;
-            } else {
-              const byName = this.agents.find((a) => (a.name || "") === msg.agentId);
-              if (byName)
-                this.activeAgent = byName;
-            }
-          }
-          const localSessionKey = this.resolveSession(msg.sessionKey || "main");
-          this.currentSessionKey = localSessionKey;
-          await this.handleLoadMessages(localSessionKey, void 0, msg.sessionId);
-          this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-          break;
-        case "deleteSession":
-          await this.handleDeleteSession(msg.sessionKey);
-          break;
-        case "addChatTabFromSession": {
-          const sessionKey = msg.sessionKey || "";
-          const deviceName = msg.deviceName || sessionKey;
-          const parts = deviceName.split(":");
-          let tabLabel = parts[0].trim();
-          if (tabLabel.length > 15)
-            tabLabel = tabLabel.substring(0, 15) + "\u2026";
-          let tabAgentId = "main";
-          const match = sessionKey.match(/^agent:([^:]+):/);
-          if (match)
-            tabAgentId = match[1];
-          const newTab = {
-            id: "tab-" + sessionKey + "-" + Date.now(),
-            label: tabLabel,
-            agentId: tabAgentId,
-            sessionKey,
-            sessionId: msg.sessionId,
-            messages: []
-          };
-          this.postToWebview({ type: "addChatTab", tab: newTab });
-          this.currentSessionKey = this.resolveSession(sessionKey);
-          await this.handleLoadMessages(this.currentSessionKey, tabAgentId, msg.sessionId);
-          break;
-        }
-        case "switchAgent":
-          await this.handleSwitchAgent(msg.agentId);
-          break;
-        case "copyCommand":
-          await vscode.env.clipboard.writeText(msg.text);
-          vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
-          break;
-        case "copyImage": {
-          const dataUrl = msg.dataUrl;
-          if (dataUrl && typeof dataUrl === "string") {
-            try {
-              const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-              const os2 = require("os");
-              const tmpB64 = path.join(os2.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
-              fs.writeFileSync(tmpB64, base64Data, "utf8");
-              const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
-              const encoded = Buffer.from(psScript, "utf16le").toString("base64");
-              const child_process = require("child_process");
-              child_process.exec(
-                "powershell -NoProfile -STA -EncodedCommand " + encoded,
-                { timeout: 15e3 },
-                (pErr, pStdout) => {
-                  try {
-                    fs.unlinkSync(tmpB64);
-                  } catch (e) {
-                  }
-                  if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
-                    console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
-                    vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
-                  } else {
-                    console.log("[copyImage] clipboard write OK");
-                  }
-                }
-              );
-            } catch (copyErr) {
-              console.error("copyImage failed:", copyErr);
-              vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
-            }
-          }
-          break;
-        }
-        case "exportImage": {
-          const dataUrl = msg.dataUrl;
-          if (!dataUrl || typeof dataUrl !== "string") {
-            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
-            break;
-          }
-          try {
-            const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-            const ts = Date.now();
-            const defaultName = "mermaid-" + ts + ".png";
-            const saveUri = await vscode.window.showSaveDialog({
-              title: vscode.l10n.t("Export Mermaid diagram as PNG"),
-              defaultUri: vscode.Uri.file(path.join(require("os").homedir(), "Downloads", defaultName)),
-              filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
-            });
-            if (!saveUri) {
-              console.log("[exportImage] user cancelled save dialog");
-              break;
-            }
-            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
-            console.log("[exportImage] file written:", saveUri.fsPath);
-            vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
-          } catch (exportErr) {
-            console.error("exportImage failed:", exportErr);
-            vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
-          }
-          break;
-        }
-        case "notify":
-          if (msg && typeof msg.text === "string" && msg.text) {
-            vscode.window.showInformationMessage(msg.text);
-          }
-          break;
-        case "mermaidError":
-          if (msg.text) {
-            vscode.window.showWarningMessage(
-              vscode.l10n.t("Mermaid diagram render failed: {0}", msg.text)
-            );
-          }
-          break;
-        case "openSettings":
-          vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
-          break;
-        case "openModelPicker":
-          vscode.commands.executeCommand("openclaw.settings");
-          break;
-        case "searchFiles":
-          await this.handleSearchFiles(msg.query, msg.requestId);
-          break;
-        case "openWorkdir":
-          await this.handleOpenWorkdir();
-          break;
-        case "openFile": {
-          const p = msg.path;
-          if (p) {
-            try {
-              const uri = vscode.Uri.file(p);
-              const doc = await vscode.workspace.openTextDocument(uri);
-              await vscode.window.showTextDocument(doc, { preview: true });
-            } catch (e) {
-              vscode.window.showErrorMessage(vscode.l10n.t("Failed to open file") + ": " + (e?.message || e));
-            }
-          }
-          break;
-        }
-        case "toggleSupervision":
-          await this.handleToggleSupervision(msg.enabled);
-          break;
-        case "reconnect":
-          vscode.commands.executeCommand("openclaw.reconnect");
-          break;
-      }
-    });
-  }
-  async handleSendMessage(text, fileRefs, webviewAttachments) {
-    if (!text.trim())
-      return;
-    if (!this.gateway.connected) {
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Not connected to gateway"));
-      return;
-    }
-    if (this.autoContinueCount > 0) {
-      this.autoContinueCount = 0;
-      this.context.globalState.update("openclaw.autoContinueCount", 0);
-    }
-    const userMsg = {
-      role: "user",
-      text,
-      timestamp: Date.now()
-    };
-    let attachments = [];
-    if (webviewAttachments && webviewAttachments.length > 0) {
-      attachments = webviewAttachments.map((a) => ({
-        type: "file",
-        mimeType: a.mimeType,
-        fileName: a.name,
-        content: a.data
-      }));
-    } else if (fileRefs) {
-      attachments = await this.buildAttachments(fileRefs);
-    }
-    this.messages.push(userMsg);
-    this.messageHistory.push(text);
-    if (this.messageHistory.length > 200) {
-      this.messageHistory = this.messageHistory.slice(-200);
-    }
-    this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
-    const msgWithAttachments = webviewAttachments && webviewAttachments.length > 0 || attachments.length > 0 ? {
-      ...userMsg,
-      attachments: webviewAttachments || []
-    } : userMsg;
-    this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
-    this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
-    const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
-    try {
-      let res;
-      try {
-        res = await this.gateway.request("chat.send", {
-          sessionKey: this.gwSessionKey(),
-          message: text,
-          deliver: false,
-          idempotencyKey: runId,
-          ...attachments.length > 0 ? { attachments } : {}
-        });
-      } catch (sendErr) {
-        const errMsg = sendErr?.message || "";
-        if (errMsg.includes("ended during restart recovery")) {
-          this.log(`Session ended, sending /new to create replacement...`);
-          try {
-            await this.gateway.request("chat.send", {
-              sessionKey: this.gwSessionKey(),
-              message: "/new",
-              deliver: false,
-              idempotencyKey: this.genId()
-            });
-            await new Promise((r) => setTimeout(r, 1e3));
-            this.log(`Retrying send after /new...`);
-            res = await this.gateway.request("chat.send", {
-              sessionKey: this.gwSessionKey(),
-              message: text,
-              deliver: false,
-              idempotencyKey: runId,
-              ...attachments.length > 0 ? { attachments } : {}
-            });
-          } catch (retryErr) {
-            this.log(`Retry after /new failed: ${retryErr?.message}`);
-            throw sendErr;
-          }
-        } else {
-          throw sendErr;
+          );
+        } catch (copyErr) {
+          console.error("copyImage failed:", copyErr);
+          vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
         }
       }
-      this.setBusy(true);
-      if (res && typeof res === "object" && res.aborted === false && (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
-        this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
-        const replyText = this.formatCommandResponse(text, res);
-        const assistantMsg = {
-          role: "assistant",
-          text: replyText,
-          timestamp: Date.now()
-        };
-        this.messages.push(assistantMsg);
-        this.postToWebview({ type: "userMessage", message: assistantMsg, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
-        this.setBusy(false);
-      }
-    } catch (err) {
-      this.messages.push({
-        role: "assistant",
-        text: `Error: ${err}`,
-        timestamp: Date.now()
-      });
-      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
-      this.setBusy(false);
+      break;
     }
-  }
-  /**
-   * Send a message without adding it to local history (used for auto-continue).
-   * Note: do NOT call setBusy(true) here -- the parent send is already busy.
-   * The parent busyCount will be decremented when the final/aborted/error state arrives.
-   */
-  async sendContinueMessage() {
-    if (!this.gateway.connected)
-      return;
-    const runId = this.genId();
-    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
-    try {
-      try {
-        await this.gateway.request("chat.send", {
-          sessionKey: this.gwSessionKey(),
-          message: "Continue",
-          deliver: false,
-          idempotencyKey: runId
-        });
-      } catch (sendErr) {
-        const errMsg = sendErr?.message || "";
-        if (errMsg.includes("ended during restart recovery")) {
-          this.log(`Continue: session ended, sending /new...`);
-          await this.gateway.request("chat.send", {
-            sessionKey: this.gwSessionKey(),
-            message: "/new",
-            deliver: false,
-            idempotencyKey: this.genId()
-          });
-          await new Promise((r) => setTimeout(r, 1e3));
-          await this.gateway.request("chat.send", {
-            sessionKey: this.gwSessionKey(),
-            message: "Continue",
-            deliver: false,
-            idempotencyKey: runId
-          });
-        } else {
-          throw sendErr;
-        }
-      }
-    } catch {
-      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
-      this.setBusy(false);
-    }
-  }
-  async buildAttachments(fileRefs) {
-    if (!fileRefs || fileRefs.length === 0)
-      return [];
-    const attachments = [];
-    const MAX_TOTAL = 20 * 1024 * 1024;
-    let totalSize = 0;
-    const folders = vscode.workspace.workspaceFolders;
-    const rootUri = folders && folders.length > 0 ? folders[0].uri : void 0;
-    for (const relPath of fileRefs) {
-      if (totalSize >= MAX_TOTAL)
+    case "exportImage": {
+      const dataUrl = msg.dataUrl;
+      if (!dataUrl || typeof dataUrl !== "string") {
+        vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
         break;
+      }
       try {
-        if (!rootUri)
-          continue;
-        const fileUri = vscode.Uri.joinPath(rootUri, relPath);
-        const stat = await vscode.workspace.fs.stat(fileUri);
-        if (stat.size > MAX_TOTAL)
-          continue;
-        if (totalSize + stat.size > MAX_TOTAL)
-          continue;
-        const bytes = await vscode.workspace.fs.readFile(fileUri);
-        const mimeType = getMimeType(relPath);
-        const content = Buffer.from(bytes).toString("base64");
-        attachments.push({
-          type: "file",
-          mimeType,
-          fileName: relPath.split("/").pop() || relPath,
-          content
+        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+        const ts = Date.now();
+        const defaultName = "mermaid-" + ts + ".png";
+        const saveUri = await vscode.window.showSaveDialog({
+          title: vscode.l10n.t("Export Mermaid diagram as PNG"),
+          defaultUri: vscode.Uri.file(path3.join(require("os").homedir(), "Downloads", defaultName)),
+          filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
         });
-        totalSize += stat.size;
-      } catch {
-      }
-    }
-    return attachments;
-  }
-  formatCommandResponse(command, response) {
-    const cmd = command.trim().toLowerCase();
-    if (!response)
-      return "No response";
-    if (cmd === "/stop") {
-      if (response.aborted === true) {
-        return "Stream stopped successfully";
-      } else {
-        return "No active stream to stop";
-      }
-    }
-    if (cmd === "/new") {
-      return "New chat session started";
-    }
-    if (cmd === "/models") {
-      if (response.models && Array.isArray(response.models)) {
-        return `Available models: ${response.models.join(", ")}`;
-      }
-      return "Models list retrieved";
-    }
-    if (cmd === "/help") {
-      return "Available commands: /stop /new /models /help";
-    }
-    if (response.message)
-      return response.message;
-    if (response.ok !== void 0) {
-      const okStr = response.ok === true ? "Success" : "Failed";
-      if (response.aborted !== void 0) {
-        return `${okStr}${response.aborted ? " (aborted)" : ""}`;
-      }
-      return okStr;
-    }
-    return JSON.stringify(response);
-  }
-  async handleStopStream() {
-    try {
-      await this.gateway.request("chat.abort", {
-        sessionKey: this.gwSessionKey()
-      });
-    } catch {
-    }
-  }
-  async handleSearchFiles(query, requestId) {
-    try {
-      const folders = vscode.workspace.workspaceFolders;
-      if (!folders || folders.length === 0) {
-        this.postToWebview({ type: "fileResults", requestId, files: [] });
-        return;
-      }
-      let pattern = "**/*";
-      const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
-      let isRootFolder = false;
-      if (!query) {
-        pattern = "**/*";
-      } else {
-        const lastSlashIndex = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
-        if (lastSlashIndex > 0) {
-          let dirPrefix = query.substring(0, lastSlashIndex).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-          const fileKeyword = query.substring(lastSlashIndex + 1);
-          const rootFolderNames = folders.map((f) => f.name.toLowerCase());
-          isRootFolder = rootFolderNames.includes(dirPrefix.toLowerCase());
-          if (isRootFolder) {
-            const targetFolder = folders.find((f) => f.name.toLowerCase() === dirPrefix.toLowerCase());
-            if (!targetFolder) {
-              return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
-            }
-            const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
-            const relativePattern = new vscode.RelativePattern(targetFolder, basePattern);
-            const uris2 = await vscode.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
-            return this.processSearchResults(uris2, [...folders], cleanQuery, requestId, isRootFolder);
-          } else if (fileKeyword) {
-            pattern = `${dirPrefix}/**/*${fileKeyword}*`;
-          } else if (lastSlashIndex === query.length - 1) {
-            pattern = `${dirPrefix}/**/*`;
-          }
-        } else {
-          pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
+        if (!saveUri) {
+          console.log("[exportImage] user cancelled save dialog");
+          break;
         }
+        await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
+        console.log("[exportImage] file written:", saveUri.fsPath);
+        vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
+      } catch (exportErr) {
+        console.error("exportImage failed:", exportErr);
+        vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
       }
-      const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200);
-      return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
-    } catch {
-      this.postToWebview({ type: "fileResults", requestId, files: [] });
+      break;
     }
-  }
-  async processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder) {
-    const files = [];
-    const seen = /* @__PURE__ */ new Set();
-    if (cleanQuery) {
-      let browseUri;
-      let displayPrefix = "";
-      if (folders.length === 1) {
-        const folder = folders[0];
-        if (isRootFolder) {
-          browseUri = folder.uri;
-          displayPrefix = "";
-        } else {
-          browseUri = vscode.Uri.joinPath(folder.uri, cleanQuery);
-          displayPrefix = cleanQuery;
-        }
-      } else {
-        const sep = cleanQuery.indexOf("/");
-        if (sep > 0) {
-          const folderName = cleanQuery.substring(0, sep);
-          const folder = folders.find((f) => f.name.toLowerCase() === folderName.toLowerCase());
-          if (folder) {
-            const relPath = cleanQuery.substring(sep + 1);
-            browseUri = vscode.Uri.joinPath(folder.uri, relPath);
-            displayPrefix = cleanQuery;
-          }
-        } else if (isRootFolder) {
-          const folder = folders.find((f) => f.name.toLowerCase() === cleanQuery.toLowerCase());
-          if (folder) {
-            browseUri = folder.uri;
-            displayPrefix = folder.name;
-          }
-        }
+    case "notify":
+      if (msg && typeof msg.text === "string" && msg.text) {
+        vscode.window.showInformationMessage(msg.text);
       }
-      if (browseUri) {
-        try {
-          const entries = await vscode.workspace.fs.readDirectory(browseUri);
-          for (const [name, type] of entries) {
-            if (name.startsWith("."))
-              continue;
-            const isDir = (type & vscode.FileType.Directory) !== 0;
-            const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
-            if (!seen.has(fullPath)) {
-              seen.add(fullPath);
-              files.push({ path: fullPath, isDir });
-            }
-          }
-        } catch {
-        }
-      }
-    }
-    for (const uri of uris) {
-      const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
-      const relativePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
-      let fullPath;
-      if (folders.length > 1 && workspaceFolder) {
-        fullPath = `${workspaceFolder.name}/${relativePath}`;
-      } else {
-        fullPath = relativePath;
-      }
-      if (seen.has(fullPath))
-        continue;
-      seen.add(fullPath);
-      const parts = fullPath.split("/");
-      let isDir = false;
-      try {
-        const stat = await vscode.workspace.fs.stat(uri);
-        isDir = (stat.type & vscode.FileType.Directory) !== 0;
-      } catch {
-        isDir = false;
-      }
-      if (cleanQuery && !isRootFolder) {
-        const q = cleanQuery.toLowerCase();
-        const name = parts[parts.length - 1].toLowerCase();
-        const full = fullPath.toLowerCase();
-        if (!name.includes(q) && !full.includes(q))
-          continue;
-      }
-      files.push({ path: fullPath, isDir });
-      if (files.length >= 30)
-        break;
-    }
-    const folders2 = [];
-    if (!isRootFolder) {
-      for (const folder of folders) {
-        const folderName = folder.name;
-        if (cleanQuery && !folderName.toLowerCase().includes(cleanQuery.toLowerCase()))
-          continue;
-        folders2.push({ path: folderName, isDir: true });
-      }
-    }
-    this.postToWebview({
-      type: "fileResults",
-      requestId,
-      files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
-    });
-  }
-  async handleRequestModels() {
-    try {
-      const res = await this.gateway.request("models.list", {});
-      this.postToWebview({ type: "modelsList", models: res?.models || [] });
-    } catch {
-      this.postToWebview({ type: "modelsList", models: [] });
-    }
-  }
-  async handleRequestSessions() {
-    try {
-      const res = await this.gateway.request("sessions.list", {
-        archived: false,
-        includeGlobal: true,
-        includeUnknown: true,
-        includeDerivedTitles: true,
-        limit: 100
-      });
-      this.sessions = res?.sessions || [];
-      this.log(`sessions.list: ${this.sessions.length} \u6761`);
-      for (const s of this.sessions || []) {
-        this.log(`  session: key=${JSON.stringify(s?.key || "")} id=${s?.sessionId || "-"} name=${JSON.stringify(s?.["device-info"]?.["device-name"] || s?.displayName || s?.derivedTitle || "")}`);
-      }
-      this.postToWebview({ type: "sessionsList", sessions: this.sessions });
-    } catch (err) {
-      this.log(`sessions.list error: ${err.message}`);
-      this.postToWebview({ type: "sessionsList", sessions: [] });
-    }
-  }
-  resolveActiveAgent() {
-    if (!this.agents || this.agents.length === 0)
-      return;
-    const currentId = this.activeAgent?.id;
-    if (!currentId)
-      return;
-    let match = this.agents.find((a) => a.id === currentId);
-    if (!match) {
-      match = this.agents.find((a) => (a.name || "") === currentId);
-    }
-    if (match) {
-      this.activeAgent = {
-        id: match.id,
-        name: match.name || match.id,
-        emoji: match.emoji || "\u{1F916}"
-      };
-    }
-  }
-  async handleRequestAgents() {
-    try {
-      const res = await this.gateway.request("agents.list", {});
-      this.agents = res?.agents || [];
-      if (this.agents.length === 0)
-        this.agents = [{ id: "main", name: "Agent" }];
-      this.resolveActiveAgent();
-      this.postToWebview({ type: "agentsList", agents: this.agents });
-      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
-    } catch {
-      this.postToWebview({ type: "agentsList", agents: [] });
-    }
-  }
-  /**
-   * 构建目录树（host 侧，使用 Node fs API）
-   * - 隐藏 dotfile（文件名以 . 开头的条目跳过）
-   * - 递归深度限制由 maxDepth 控制（默认 3 层）
-   * - 目录读取失败时返回空数组（不中断调用）
-   */
-  buildAgentsTree(dir, maxDepth = 3, depth = 0) {
-    const children = [];
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith("."))
-          continue;
-        const fullPath = path.join(dir, entry.name);
-        const node = { name: entry.name, path: fullPath };
-        if (entry.isDirectory()) {
-          node.type = "directory";
-          if (depth < maxDepth) {
-            node.children = this.buildAgentsTree(fullPath, maxDepth, depth + 1).children;
-          } else {
-            node.children = [];
-          }
-        } else if (entry.isFile()) {
-          node.type = "file";
-          node.children = void 0;
-        } else {
-          node.type = "file";
-          node.children = void 0;
-        }
-        children.push(node);
-      }
-    } catch (err) {
-      this.log(`buildAgentsTree: read ${dir} failed: ${err?.message || err}`);
-    }
-    children.sort((a, b) => {
-      if (a.type === "directory" && b.type !== "directory")
-        return -1;
-      if (a.type !== "directory" && b.type === "directory")
-        return 1;
-      return a.name.localeCompare(b.name);
-    });
-    return { name: path.basename(dir) || dir, path: dir, type: "directory", children };
-  }
-  /**
-   * 处理 requestAgentsTree 消息：读取 agentsDir 并构建目录树，发送给 webview
-   */
-  async handleRequestAgentsTree() {
-    try {
-      const dir = this.agentsDir;
-      if (!dir || !fs.existsSync(dir)) {
-        this.postToWebview({ type: "agentsTree", tree: null, dir: dir || "" });
-        return;
-      }
-      const tree = this.buildAgentsTree(dir, 3, 0);
-      this.postToWebview({ type: "agentsTree", tree, dir });
-    } catch (err) {
-      this.log(`handleRequestAgentsTree error: ${err?.message || err}`);
-      this.postToWebview({ type: "agentsTree", tree: null, dir: this.agentsDir });
-    }
-  }
-  async handleRequestTasks() {
-    try {
-      const res = await this.gateway.request("tasks.list", {
-        limit: 500
-      });
-      const allTasks = res?.tasks || [];
-      const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
-      this.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
-      this.postToWebview({ type: "tasksList", tasks: activeTasks });
-    } catch (err) {
-      this.log(`tasks.list error: ${err.message}`);
-      this.postToWebview({ type: "tasksList", tasks: [] });
-    }
-  }
-  async handleLoadDefaults() {
-    try {
-      const res = await this.gateway.request("config.get", {});
-      const config = res?.config || res || {};
-      const agentDefaults = config?.agents?.defaults || {};
-      this.thinkingLevel = agentDefaults.thinkingDefault || "";
-      this.verboseLevel = agentDefaults.verboseDefault || "";
-      this.postToWebview({
-        type: "defaultsLoaded",
-        thinkingLevel: this.thinkingLevel,
-        verboseLevel: this.verboseLevel
-      });
-    } catch {
-    }
-  }
-  async cycleThinking() {
-    const levels = ["", "off", "low", "medium", "high"];
-    const idx = levels.indexOf(this.thinkingLevel);
-    this.thinkingLevel = levels[(idx + 1) % levels.length];
-    this.postToWebview({ type: "thinkingChanged", level: this.thinkingLevel });
-  }
-  async cycleVerbose() {
-    const levels = ["", "off", "on", "full"];
-    const idx = levels.indexOf(this.verboseLevel);
-    this.verboseLevel = levels[(idx + 1) % levels.length];
-    this.postToWebview({ type: "verboseChanged", level: this.verboseLevel });
-  }
-  async handleOpenWorkdir() {
-    try {
-      const agentListRes = await this.gateway.request("agents.list", {});
-      const agents = agentListRes?.agents || [];
-      const agent = agents.find((a) => a.id === this.activeAgent.id);
-      let workspace3 = agent?.workspace || "";
-      if (!workspace3) {
-        const configRes = await this.gateway.request("config.get", {});
-        const config = configRes?.config || configRes || {};
-        workspace3 = config?.agents?.defaults?.workspace || config?.workspace || "";
-      }
-      if (!workspace3) {
-        vscode.window.showWarningMessage(vscode.l10n.t("Could not determine working directory"));
-        return;
-      }
-      const normalizedPath = workspace3.replace(/^[a-z]:/i, (match) => match.toUpperCase());
-      const workspaceUri = vscode.Uri.file(normalizedPath);
-      const folders = vscode.workspace.workspaceFolders;
-      let alreadyExists = false;
-      if (folders) {
-        for (const folder of folders) {
-          if (folder.uri.fsPath.toLowerCase() === workspaceUri.fsPath.toLowerCase()) {
-            alreadyExists = true;
-            break;
-          }
-        }
-      }
-      if (alreadyExists) {
-        await vscode.commands.executeCommand("workbench.view.explorer");
-        await vscode.commands.executeCommand("revealInExplorer", workspaceUri);
-        await vscode.commands.executeCommand("list.expand");
-        vscode.window.showInformationMessage(vscode.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
-        return;
-      }
-      const currentFolders = vscode.workspace.workspaceFolders;
-      const replaceFolders = currentFolders ? currentFolders.map((f) => ({ uri: f.uri })) : [];
-      replaceFolders.push({ uri: workspaceUri });
-      const success = vscode.workspace.updateWorkspaceFolders(
-        0,
-        currentFolders ? currentFolders.length : 0,
-        ...replaceFolders
-      );
-      if (success) {
-        vscode.window.showInformationMessage(vscode.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
-      } else {
-        vscode.window.showErrorMessage(
-          `Failed to add folder to workspace: ${workspaceUri.fsPath}. You may need to open a workspace (.code-workspace) file first.`
+      break;
+    case "mermaidError":
+      if (msg.text) {
+        vscode.window.showWarningMessage(
+          vscode.l10n.t("Mermaid diagram render failed: {0}", msg.text)
         );
       }
-    } catch (err) {
-      this.log(`openWorkdir error: ${err.message}`);
-      vscode.window.showErrorMessage(vscode.l10n.t("Failed to open working directory: {0}", err.message));
-    }
-  }
-  async handleToggleSupervision(enabled) {
-    this.log(`handleToggleSupervision called with enabled=${enabled}`);
-    this.supervisionEnabled = enabled;
-    this.log(`Supervision ${enabled ? "enabled" : "disabled"}`);
-    this.postToWebview({ type: "supervisionState", enabled });
-    if (enabled) {
-      this.log("About to call startSupervision()");
-      await this.startSupervision();
-      this.log("startSupervision() returned");
-    } else {
-      this.log("About to call stopSupervision()");
-      this.stopSupervision();
-      this.log("stopSupervision() returned");
-    }
-  }
-  async startSupervision() {
-    this.log(`startSupervision called, supervisionEnabled=${this.supervisionEnabled}, timer=${this.supervisionTimer !== null}`);
-    if (this.supervisionTimer) {
-      this.log("Timer already running, skipping start");
-      return;
-    }
-    const config = vscode.workspace.getConfiguration("openclaw");
-    const intervalMinutes = config.get("supervisor.intervalMinutes", 5) || 5;
-    const reminderMessage = config.get("supervisor.reminderMessage", "") || "";
-    const agentId = config.get("supervisor.agentId", "") || "";
-    const stopInquiryMethod = config.get("supervisor.stopInquiryMethod", "") || "";
-    const stopSignalReply = config.get("supervisor.stopSignalReply", "yes") || "yes";
-    const stopSignalContent = config.get("supervisor.stopSignalContent", "") || "";
-    this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
-    if (!agentId) {
-      this.log("ERROR: agentId is empty! Cannot start supervision.");
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenClaw: Supervisor agent ID not configured"));
-      this.supervisionEnabled = false;
-      return;
-    }
-    this.log(`Starting supervision with interval ${intervalMinutes}min, agent=${agentId}`);
-    const supervisorSessionKey = `agent:${agentId}:main`;
-    const HELLO_MESSAGE = "hello\uFF0C Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
-    this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
-    try {
-      const runId = this.genId();
-      await this.gateway.request("chat.send", {
-        sessionKey: supervisorSessionKey,
-        message: HELLO_MESSAGE,
-        deliver: false,
-        idempotencyKey: runId
-      });
-      const handshakeReply = await this.waitForSupervisorResponse(supervisorSessionKey, 3e4);
-      this.log(`Supervisor handshake completed. Supervisor agent reply: ${handshakeReply ? handshakeReply : "(no reply within timeout)"}`);
-    } catch (err) {
-      this.log(`Supervisor handshake failed: ${err?.message || err}`);
-    }
-    this.supervisionTimer = setInterval(async () => {
-      this.log("Interval timer fired, calling runSupervisionCheck...");
-      await this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent);
-      this.log("runSupervisionCheck completed");
-    }, intervalMinutes * 60 * 1e3);
-    this.log("Running immediate supervision check...");
-    this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent).then(() => {
-      this.log("Immediate supervision check completed");
-    }).catch((err) => {
-      this.log(`Immediate supervision check error: ${err.message}`);
-    });
-  }
-  stopSupervision() {
-    this.log(`stopSupervision called, timer=${this.supervisionTimer !== null}`);
-    if (this.supervisionTimer) {
-      clearInterval(this.supervisionTimer);
-      this.supervisionTimer = null;
-      this.log("Supervision timer cleared");
-    }
-    if (this.supervisorBusy) {
-      this.log("WARNING: supervisorBusy is still true, clearing it");
-      this.supervisorBusy = false;
-    }
-    if (this.supervisorTimeout) {
-      clearTimeout(this.supervisorTimeout);
-      this.supervisorTimeout = null;
-      this.log("Supervisor request timeout cleared");
-    }
-    this.supervisorPendingSessionKey = null;
-    this.supervisorResponseResolver = null;
-    this.supervisorAccumulated = "";
-    this.log("Supervision stopped");
-  }
-  async runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent) {
-    this.log(`runSupervisionCheck called: supervisionEnabled=${this.supervisionEnabled}, supervisorBusy=${this.supervisorBusy}`);
-    if (!this.supervisionEnabled) {
-      this.log("Supervision not enabled, returning");
-      return;
-    }
-    try {
-      this.log(`Fetching chat history for session: ${this.gwSessionKey()}`);
-      const res = await this.gateway.request("chat.history", {
-        sessionKey: this.gwSessionKey(),
-        limit: 10
-      });
-      const msgs = res?.messages || [];
-      this.log(`chat.history returned ${msgs.length} messages`);
-      let lastContent = "";
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
-        if (m.role === "assistant") {
-          const text = await this.extractHistoryContent(m.content);
-          this.log(`  Assistant message text length: ${text?.length || 0}`);
-          if (text && !text.startsWith("HEARTBEAT")) {
-            lastContent = text;
-            this.log(`  Found last assistant content (length=${lastContent.length}), breaking`);
-            break;
-          }
+      break;
+    case "openSettings":
+      vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
+      break;
+    case "openModelPicker":
+      vscode.commands.executeCommand("openclaw.settings");
+      break;
+    case "searchFiles":
+      await ctx.handleSearchFiles(msg.query, msg.requestId);
+      break;
+    case "openWorkdir":
+      await ctx.handleOpenWorkdir();
+      break;
+    case "openFile": {
+      const p = msg.path;
+      if (p) {
+        try {
+          const uri = vscode.Uri.file(p);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await vscode.window.showTextDocument(doc, { preview: true });
+        } catch (e) {
+          vscode.window.showErrorMessage(vscode.l10n.t("Failed to open file") + ": " + (e?.message || e));
         }
       }
-      this.log(`Supervision check: last content length=${lastContent.length}, previous=${this.lastSupervisedContent.length}`);
-      const isFirstCheck = this.lastSupervisedContent.length === 0;
-      if (this.supervisorBusy) {
-        this.log(`Supervisor inquiry skipped: already busy`);
-        return;
-      }
-      this.supervisorBusy = true;
-      this.log(`Inquiring supervisor every check: ${agentId}`);
-      const inquiry = `${stopInquiryMethod}\uFF1A${lastContent}`;
-      const supervisorSessionKey = `agent:${agentId}:main`;
-      this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
-      const runId = this.genId();
-      try {
-        await this.gateway.request("chat.send", {
-          sessionKey: supervisorSessionKey,
-          message: inquiry,
-          deliver: false,
-          idempotencyKey: runId
-        });
-        this.log(`Waiting for supervisor response (timeout 120s)...`);
-        const reply = await this.waitForSupervisorResponse(supervisorSessionKey);
-        if (reply && reply.toLowerCase().trim() === stopSignalReply.toLowerCase().trim()) {
-          this.log(`Supervisor replied with stop signal: "${reply}"`);
-          this.supervisionEnabled = false;
-          this.stopSupervision();
-          this.postToWebview({ type: "supervisionState", enabled: false });
-          vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped by supervisor agent"));
-          this.supervisorBusy = false;
-          return;
-        } else {
-          this.log(`Supervisor replied: ${reply?.substring(0, 50)}... (not stop signal, continuing)`);
-        }
-        this.supervisorBusy = false;
-      } catch (err) {
-        this.log(`Supervisor inquiry failed: ${err.message}`);
-        this.supervisorBusy = false;
-      }
-      if (isFirstCheck) {
-        this.log(`First check, storing content baseline (length=${lastContent.length})`);
-        this.lastSupervisedContent = lastContent;
-        return;
-      }
-      if (lastContent === this.lastSupervisedContent && lastContent.length > 0) {
-        this.log(`Content SAME (length=${lastContent.length}) \u2192 sending reminder`);
-        if (reminderMessage) {
-          this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
-          const runId2 = this.genId();
-          try {
-            await this.gateway.request("chat.send", {
-              sessionKey: this.gwSessionKey(),
-              message: reminderMessage,
-              deliver: false,
-              idempotencyKey: runId2
-            });
-            this.log(`Reminder sent successfully`);
-          } catch (err) {
-            this.log(`Reminder send failed: ${err.message}`);
-          }
-        } else {
-          this.log(`WARNING: reminderMessage is empty, skip sending`);
-        }
-      } else if (lastContent !== this.lastSupervisedContent && lastContent.length > 0) {
-        this.log(`Content DIFFERENT: previous=${this.lastSupervisedContent.length}, current=${lastContent.length}`);
-        if (stopSignalContent) {
-          const stopSignals = stopSignalContent.split("|").map((s) => s.trim()).filter((s) => s.length > 0);
-          if (stopSignals.some((signal) => lastContent.includes(signal))) {
-            this.log(`stopSignalContent matched in changed content: "${stopSignalContent.substring(0, 30)}"`);
-            this.supervisionEnabled = false;
-            this.stopSupervision();
-            this.postToWebview({ type: "supervisionState", enabled: false });
-            vscode.window.showInformationMessage(vscode.l10n.t("Supervision stopped: stop signal content detected"));
-            return;
-          } else {
-            this.log(`stopSignalContent not matched (or empty), continuing`);
-          }
-        }
-      } else {
-        this.log(`Last content is empty, updating baseline`);
-      }
-      this.lastSupervisedContent = lastContent;
-    } catch (err) {
-      this.log(`Supervision check error: ${err.message}`);
+      break;
     }
+    case "toggleSupervision":
+      await ctx.handleToggleSupervision(msg.enabled);
+      break;
+    case "reconnect":
+      vscode.commands.executeCommand("openclaw.reconnect");
+      break;
   }
-  waitForSupervisorResponse(supervisorSessionKey, timeoutMs = 12e4) {
-    return new Promise((resolve2) => {
-      this.supervisorPendingSessionKey = supervisorSessionKey;
-      this.supervisorResponseResolver = resolve2;
-      this.supervisorAccumulated = "";
-      const timeout = setTimeout(() => {
-        this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
-        this.supervisorTimeout = null;
-        this.supervisorPendingSessionKey = null;
-        this.supervisorResponseResolver = null;
-        resolve2(this.supervisorAccumulated || null);
-      }, timeoutMs);
-      this.supervisorTimeout = timeout;
-    });
-  }
-  stripMedia(text) {
-    if (!text)
-      return "";
-    let t = String(text);
-    t = t.replace(/<audio[^>]*>[\s\S]*?<\/audio>/gi, "");
-    t = t.replace(/<audio[\s\S]*?>/gi, "");
-    t = t.split("\n").filter((line) => !line.startsWith("MEDIA:")).join("\n");
-    return t.trim();
-  }
-  normText(text) {
-    if (!text)
-      return "";
-    return String(text).replace(/\s+/g, " ").trim();
-  }
-  isPreamble(text) {
-    if (!this.seenPreambleTexts.length)
-      return false;
-    const norm = this.normText(this.stripMedia(text));
-    if (!norm)
-      return false;
-    return this.seenPreambleTexts.some((p) => this.normText(p) === norm);
-  }
-  async handleLoadMessages(sessionKey, agentId, sessionId) {
-    const targetAgentId = agentId || this.activeAgent.id;
-    try {
-      const res = await this.gateway.request("chat.history", {
-        sessionKey: `agent:${targetAgentId}:${sessionKey}`,
-        limit: 200
-      });
-      const msgs = res?.messages || [];
-      this.log(`history: ${msgs.length} messages (key=agent:${targetAgentId}:${sessionKey} id=${res?.sessionId || sessionId || "-"})`);
-      const parsed = await Promise.all(
-        msgs.filter((m) => m.role === "user" || m.role === "assistant").map(async (m) => ({
-          role: m.role,
-          text: await this.extractHistoryContent(m.content),
-          timestamp: m.timestamp || Date.now(),
-          contentBlocks: Array.isArray(m.content) ? m.content : void 0
-        }))
-      );
-      let filtered = parsed.filter((m) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
-      if (filtered.length > 0 && filtered[0].role === "user") {
-        filtered.shift();
-      }
-      const preambleFiltered = filtered.filter((m) => {
-        if (m.role !== "assistant" || !this.seenPreambleTexts.length)
-          return true;
-        return !this.isPreamble(m.text);
-      });
-      const seen = /* @__PURE__ */ new Set();
-      const merged = [];
-      for (const m of preambleFiltered) {
-        const cleanText = this.normText(this.stripMedia(m.text));
-        if (!cleanText && /<audio/i.test(m.text)) {
-          merged.push(m);
-          continue;
-        }
-        const key = m.role + "\0" + cleanText;
-        const isMedia = /<audio/i.test(m.text) || m.text.indexOf("MEDIA:") === 0;
-        if (isMedia) {
-          const idx = merged.findIndex((x) => x.role + "\0" + this.normText(this.stripMedia(x.text)) === key);
-          if (idx >= 0) {
-            merged[idx] = m;
-          } else {
-            merged.push(m);
-          }
-          seen.add(key);
-        } else {
-          if (seen.has(key))
-            continue;
-          seen.add(key);
-          merged.push(m);
-        }
-      }
-      this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
-      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: merged });
-    } catch (err) {
-      this.log(`history error: ${err.message}`);
-      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: [] });
-    }
-  }
-  async handleDeleteSession(sessionKey) {
-    try {
-      await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
-      await this.handleRequestSessions();
-    } catch {
-    }
-  }
-  async handleSwitchAgent(agentId) {
-    const agent = this.agents.find((a) => a.id === agentId);
-    if (agent) {
-      this.activeAgent = agent;
-      this.currentSessionKey = "main";
-      this.postToWebview({
-        type: "agentSwitched",
-        agent: this.activeAgent
-      });
-      await this.handleLoadMessages("main");
-      await this.handleRequestSessions();
-    }
-  }
-  postToWebview(msg) {
-    this.view?.webview.postMessage(msg);
-  }
-  /**
-   * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
-   * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
-   */
-  scheduleHistoryReload(sessionKey, agentId) {
-    if (this.historyReloadTimer)
-      clearTimeout(this.historyReloadTimer);
-    const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
-    const targetAgentId = agentId || this.activeAgent.id;
-    this.historyReloadTimer = setTimeout(async () => {
-      this.historyReloadTimer = null;
-      try {
-        await this.handleLoadMessages(localKey, targetAgentId);
-      } catch {
-      }
-    }, 900);
-  }
-  setBusy(active) {
-    if (active)
-      this.busyCount = Math.max(1, this.busyCount + 1);
-    else
-      this.busyCount = Math.max(0, this.busyCount - 1);
-    const n = this.busyCount;
-    this.postToWebview({
-      type: "busyState",
-      busy: n > 0,
-      label: n > 1 ? vscode.l10n.t("Processing ({0} queued)", n) : vscode.l10n.t("Processing...")
-    });
-    this.updateYieldState();
-  }
-  /**
-   * Start (or reset) the subagent activity timeout timer.
-   * When no subagent event arrives within SUBAGENT_ACTIVITY_TIMEOUT_MS,
-   * the indicator is hidden automatically.
-   */
-  startSubagentTimer() {
-    if (this.subagentTimer)
-      clearTimeout(this.subagentTimer);
-    this.subagentTimer = setTimeout(() => {
-      this.subagentTimer = null;
-      this.activeSubagentCount = 0;
-      this.postToWebview({
-        type: "subagentState",
-        active: false,
-        label: "",
-        state: ""
-      });
-      this.updateYieldState();
-    }, _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS);
-  }
-  /**
-   * Requirement B: heuristic sessions_yield detection.
-   * Yield state = busyCount > 0 AND there is recent subagent activity.
-   */
-  updateYieldState() {
-    const shouldYield = this.busyCount > 0 && Date.now() - this.lastSubagentEventMs < _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS && this.activeSubagentCount > 0;
-    if (shouldYield === this.yieldState)
-      return;
-    this.yieldState = shouldYield;
-    this.postToWebview({
-      type: "yieldState",
-      active: shouldYield,
-      label: shouldYield ? vscode.l10n.t("Waiting for subagent\u2026") : ""
-    });
-  }
-  genId() {
-    return Math.random().toString(36).substring(2, 12);
-  }
-  getHtml() {
-    const nonce = getNonce();
-    return (
-      /*html*/
-      `<!DOCTYPE html>
+}
+
+// src/uiRenderer.ts
+var vscode2 = __toESM(require("vscode"));
+function getHtml() {
+  const nonce = getNonce();
+  return (
+    /*html*/
+    `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3809,7 +2441,7 @@ body {
         <div class="agent-name" id="agentName">Agent</div>
         <div style="display:flex;align-items:center;">
           <div class="agent-status" id="agentStatus">Connecting...</div>
-          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode.l10n.t("Reconnect")}</button>
+          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode2.l10n.t("Reconnect")}</button>
         </div>
       </div>
     </div>
@@ -3863,53 +2495,53 @@ body {
     <div id="messages-container">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
-    <button class="hud-toggle" id="hudToggle" title="${vscode.l10n.t("Toggle HUD Panel")}">
+    <button class="hud-toggle" id="hudToggle" title="${vscode2.l10n.t("Toggle HUD Panel")}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
     <div class="tab-item active" data-session="main">Chat</div>
-    <button class="tab-add" id="btnAddTab" title="${vscode.l10n.t("New chat")}">+</button>
+    <button class="tab-add" id="btnAddTab" title="${vscode2.l10n.t("New chat")}">+</button>
   </div>
   <div class="messages" id="messages">
     <div class="empty-state" id="emptyState">
       <div class="empty-icon">\u{1F4AC}</div>
-      <div class="empty-text">${vscode.l10n.t("Start a conversation with your AI agent")}</div>
+      <div class="empty-text">${vscode2.l10n.t("Start a conversation with your AI agent")}</div>
     </div>
   </div>
   <div class="typing" id="typing">
     <div class="typing-dots"><span></span><span></span><span></span></div>
-    <span id="typingText">${vscode.l10n.t("Thinking...")}</span>
+    <span id="typingText">${vscode2.l10n.t("Thinking...")}</span>
   </div>
   <div id="busyIndicator" class="busy-indicator hidden"></div>
   <div id="subagentIndicator" class="subagent-indicator hidden"></div>
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
-  <div class="resize-handle" id="resizeHandle" title="${vscode.l10n.t("Drag to resize")}"></div>
+  <div class="resize-handle" id="resizeHandle" title="${vscode2.l10n.t("Drag to resize")}"></div>
   </div> <!-- /messages-container -->
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t("Progress Notes")}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t("Tasks")}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t("Sessions")}</div>
-        <div class="panel-tab" data-tab="agents">${vscode.l10n.t("Agents")}</div>
-        <button id="progress-note-panel-toggle" title="${vscode.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
+        <div class="panel-tab active" data-tab="notes">${vscode2.l10n.t("Progress Notes")}</div>
+        <div class="panel-tab" data-tab="tasks">${vscode2.l10n.t("Tasks")}</div>
+        <div class="panel-tab" data-tab="sessions">${vscode2.l10n.t("Sessions")}</div>
+        <div class="panel-tab" data-tab="agents">${vscode2.l10n.t("Agents")}</div>
+        <button id="progress-note-panel-toggle" title="${vscode2.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode.l10n.t("Progress Notes")}</span>
+            <span id="progress-note-panel-title">${vscode2.l10n.t("Progress Notes")}</span>
           </div>
           <div id="progress-note-panel-content">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("Progress notes will appear here")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("Progress notes will appear here")}</div>
           </div>
         </div>
         <div id="tab-tasks" class="tab-pane">
           <div id="tasksListContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("No tasks")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("No tasks")}</div>
           </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
           <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t("No sessions")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("No sessions")}</div>
           </div>
         </div>
         <div id="tab-agents" class="tab-pane">
@@ -3927,25 +2559,25 @@ body {
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">\xB7</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
-      <label class="supervision-check" title="${vscode.l10n.t("Automatic supervision agent.\nAutomatically disable after task execution is completed")}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" id="supervisionCheck" title="${vscode.l10n.t("Supervision")}">
-        <span>${vscode.l10n.t("Supervision")}</span>
+      <label class="supervision-check" title="${vscode2.l10n.t("Automatic supervision agent.\nAutomatically disable after task execution is completed")}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="supervisionCheck" title="${vscode2.l10n.t("Supervision")}">
+        <span>${vscode2.l10n.t("Supervision")}</span>
       </label>
-      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode.l10n.t("Open the current agent workspace")}" style="display:none;">\u{1F4C1}</button>
+      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode2.l10n.t("Open the current agent workspace")}" style="display:none;">\u{1F4C1}</button>
     </div>
     <div class="attachment-preview" id="attachmentPreview"></div>
     <div class="input-row" style="position:relative;">
-      <button class="stop-btn" id="stopBtn" title="${vscode.l10n.t("Stop")}">
+      <button class="stop-btn" id="stopBtn" title="${vscode2.l10n.t("Stop")}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="attach-btn" id="attachBtn" title="${vscode.l10n.t("Attach files")}">\u{1F4CE}</button>
+      <button class="attach-btn" id="attachBtn" title="${vscode2.l10n.t("Attach files")}">\u{1F4CE}</button>
       <input type="file" id="attachInput" multiple style="visibility:hidden;position:absolute;left:-9999px;top:-9999px;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
-        <textarea class="input-box" id="inputBox" placeholder="${vscode.l10n.t("Message OpenClaw...")}" rows="1" style="width:100%;"></textarea>
+        <textarea class="input-box" id="inputBox" placeholder="${vscode2.l10n.t("Message OpenClaw...")}" rows="1" style="width:100%;"></textarea>
       </div>
-      <button class="send-btn" id="sendBtn" title="${vscode.l10n.t("Send")}">
+      <button class="send-btn" id="sendBtn" title="${vscode2.l10n.t("Send")}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
     </div>
@@ -4606,7 +3238,7 @@ if (resizeHandle) {
         }
         updateAgentCard();
         updateChips();
-        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode.l10n.t("not configured")}';
+        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode2.l10n.t("not configured")}';
         if (msg.sessionKey) currentSession = msg.gwSessionKey || msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
@@ -4765,7 +3397,7 @@ if (resizeHandle) {
           streamEl = null;
         }
         streaming = true;
-        showTyping(true, '${vscode.l10n.t("Thinking...")}');
+        showTyping(true, '${vscode2.l10n.t("Thinking...")}');
         sendBtn.style.display = 'none';
         stopBtn.classList.add('active');
         attachBtnEl.style.display = 'none';
@@ -4828,7 +3460,7 @@ if (resizeHandle) {
       }
       case 'toolCall':
         emptyState.style.display = 'none';
-        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode.l10n.t("Thinking...")}');
+        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode2.l10n.t("Thinking...")}');
         break;
       case 'historyUpdated':
         messageHistory = msg.messageHistory || [];
@@ -4843,12 +3475,12 @@ if (resizeHandle) {
       case 'autoContinueFailed': {
         if (!tabForStreamEvent(msg)) break;
         streaming = false;
-        appendMessage({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
+        appendMessage({ role: 'assistant', text: '${vscode2.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
         attachBtnEl.style.display = '';
-        activeTabMessages.push({ role: 'assistant', text: '${vscode.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
+        activeTabMessages.push({ role: 'assistant', text: '${vscode2.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         this.setBusy(false);
         break;
       }
@@ -4947,7 +3579,7 @@ if (resizeHandle) {
   function renderAtDropdown() {
     if (!atVisible) return;
     if (atFiles.length === 0) {
-      atDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t("No matching files")}</div>';
+      atDropdown.innerHTML = '<div class="at-empty">${vscode2.l10n.t("No matching files")}</div>';
       return;
     }
     atDropdown.innerHTML = '';
@@ -5062,7 +3694,7 @@ if (resizeHandle) {
     if (!slashVisible) return;
     const filtered = getFilteredSlashCommands();
     if (filtered.length === 0) {
-      slashDropdown.innerHTML = '<div class="at-empty">${vscode.l10n.t("No matching commands")}</div>';
+      slashDropdown.innerHTML = '<div class="at-empty">${vscode2.l10n.t("No matching commands")}</div>';
       return;
     }
     slashDropdown.innerHTML = '';
@@ -5454,12 +4086,12 @@ if (resizeHandle) {
           const img = document.createElement('img');
           img.src = 'data:' + att.mimeType + ';base64,' + att.data;
           img.className = 'msg-attachment-img';
-          img.alt = att.name || '${vscode.l10n.t("attachment")}';
+          img.alt = att.name || '${vscode2.l10n.t("attachment")}';
           attachDiv.appendChild(img);
         } else if (att.data) {
           const link = document.createElement('a');
           link.href = 'data:' + att.mimeType + ';base64,' + att.data;
-          link.textContent = att.name || '${vscode.l10n.t("attachment")}';
+          link.textContent = att.name || '${vscode2.l10n.t("attachment")}';
           link.download = att.name || 'download';
           attachDiv.appendChild(link);
         }
@@ -5502,7 +4134,7 @@ if (resizeHandle) {
     console.log('[Mermaid Export] start, svgEl=', !!svgEl);
     if (!svgEl) {
       console.error('[Mermaid Export] No SVG found');
-      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("SVG not found, cannot export")}' });
+      vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("SVG not found, cannot export")}' });
       return;
     }
     try {
@@ -5568,7 +4200,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t("Exported")}';
+        btnEl.textContent = '${vscode2.l10n.t("Exported")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -5577,11 +4209,11 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t("Export failed")}';
+        btnEl.textContent = '${vscode2.l10n.t("Export failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
-      vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("Export failed")}: ' + (err && err.message ? err.message : String(err)) });
+      vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("Export failed")}: ' + (err && err.message ? err.message : String(err)) });
     }
   }
 
@@ -5677,7 +4309,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode.l10n.t("Copy failed")}';
+        btnEl.textContent = '${vscode2.l10n.t("Copy failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -5688,7 +4320,7 @@ if (resizeHandle) {
     if (!btnEl) return;
     const originalText = btnEl.dataset.originalText || btnEl.textContent;
     btnEl.dataset.originalText = originalText;
-    btnEl.textContent = '${vscode.l10n.t("Copied")}';
+    btnEl.textContent = '${vscode2.l10n.t("Copied")}';
     btnEl.classList.add('copied');
     setTimeout(() => {
       btnEl.textContent = originalText;
@@ -5732,7 +4364,7 @@ if (resizeHandle) {
             header.className = 'mermaid-header';
             const label = document.createElement('span');
             label.className = 'mermaid-label';
-            label.textContent = '${vscode.l10n.t("Mermaid")}';
+            label.textContent = '${vscode2.l10n.t("Mermaid")}';
             
             const svgContainer = document.createElement('div');
             svgContainer.className = 'mermaid-container';
@@ -5743,11 +4375,11 @@ if (resizeHandle) {
             viewToggle.className = 'mermaid-view-toggle';
             const btnGraphic = document.createElement('button');
             btnGraphic.className = 'mermaid-btn mermaid-btn-graphic active';
-            btnGraphic.textContent = '${vscode.l10n.t("Image")}';
+            btnGraphic.textContent = '${vscode2.l10n.t("Image")}';
             btnGraphic.type = 'button';
             const btnSource = document.createElement('button');
             btnSource.className = 'mermaid-btn mermaid-btn-source';
-            btnSource.textContent = '${vscode.l10n.t("Source")}';
+            btnSource.textContent = '${vscode2.l10n.t("Source")}';
             btnSource.type = 'button';
             
             // \u5207\u6362\u663E\u793A\u903B\u8F91
@@ -5764,7 +4396,7 @@ if (resizeHandle) {
             // \u590D\u5236\u6309\u94AE\uFF08\u6839\u636E\u5F53\u524D\u6FC0\u6D3B\u89C6\u56FE\u590D\u5236\u5BF9\u5E94\u5185\u5BB9\uFF09
             const copyBtn = document.createElement('button');
             copyBtn.className = 'mermaid-btn mermaid-copy-btn';
-            copyBtn.textContent = '${vscode.l10n.t("Copy")}';
+            copyBtn.textContent = '${vscode2.l10n.t("Copy")}';
             copyBtn.type = 'button';
             copyBtn.addEventListener('click', () => {
               if (btnGraphic.classList.contains('active')) {
@@ -5777,12 +4409,12 @@ if (resizeHandle) {
             // \u5BFC\u51FA\u6309\u94AE\uFF08\u56FE\u6A21\u5F0F \u2192 PNG \u5BFC\u51FA\u4E3A\u672C\u5730\u6587\u4EF6\uFF1B\u6E90\u7801\u6A21\u5F0F\u7981\u7528\uFF09
             const exportBtn = document.createElement('button');
             exportBtn.className = 'mermaid-btn mermaid-export-btn';
-            exportBtn.textContent = '${vscode.l10n.t("Export")}';
+            exportBtn.textContent = '${vscode2.l10n.t("Export")}';
             exportBtn.type = 'button';
-            exportBtn.title = '${vscode.l10n.t("Export current Mermaid diagram as PNG file")}';
+            exportBtn.title = '${vscode2.l10n.t("Export current Mermaid diagram as PNG file")}';
             exportBtn.addEventListener('click', () => {
               if (!btnGraphic.classList.contains('active')) {
-                vscode.postMessage({ type: 'notify', text: '${vscode.l10n.t("Please switch to diagram mode before exporting")}' });
+                vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("Please switch to diagram mode before exporting")}' });
                 return;
               }
               exportSvgToPng(svgContainer, exportBtn);
@@ -5861,8 +4493,8 @@ if (resizeHandle) {
   function updateAgentCard() {
     agentOrb.textContent = agent.emoji || '\u{1F916}';
     agentOrb.className = 'agent-orb' + (connected ? ' online' : '');
-    agentNameEl.textContent = agent.name || agent.id || '${vscode.l10n.t("Agent")}';
-    agentStatusEl.textContent = connected ? '${vscode.l10n.t("online")}' : '${vscode.l10n.t("disconnected")}';
+    agentNameEl.textContent = agent.name || agent.id || '${vscode2.l10n.t("Agent")}';
+    agentStatusEl.textContent = connected ? '${vscode2.l10n.t("online")}' : '${vscode2.l10n.t("disconnected")}';
     agentStatusEl.className = 'agent-status' + (connected ? ' online' : '');
     const btnReconnectEl = document.getElementById('btnReconnect');
     if (btnReconnectEl) {
@@ -5877,13 +4509,13 @@ if (resizeHandle) {
   }
 
   function updateChips() {
-    thinkingChip.textContent = '${vscode.l10n.t("think: ")}' + (thinkingLevel || '${vscode.l10n.t("default")}');
-    verboseChip.textContent = '${vscode.l10n.t("steps: ")}' + (verboseLevel || '${vscode.l10n.t("default")}');
-    reliabilityValue.textContent = (thinkingLevel || '${vscode.l10n.t("default")}') + ' \xB7 ' + (verboseLevel || '${vscode.l10n.t("default")}');
+    thinkingChip.textContent = '${vscode2.l10n.t("think: ")}' + (thinkingLevel || '${vscode2.l10n.t("default")}');
+    verboseChip.textContent = '${vscode2.l10n.t("steps: ")}' + (verboseLevel || '${vscode2.l10n.t("default")}');
+    reliabilityValue.textContent = (thinkingLevel || '${vscode2.l10n.t("default")}') + ' \xB7 ' + (verboseLevel || '${vscode2.l10n.t("default")}');
   }
 
   function renderModels(models) {
-    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode.l10n.t("default")}';
+    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode2.l10n.t("default")}';
   }
 
   function renderTasks(tasks) {
@@ -6268,95 +4900,1475 @@ if (resizeHandle) {
 </script>
 </body>
 </html>`
-    );
+  );
+}
+
+// src/chatView.ts
+var OpenClawChatView = class _OpenClawChatView {
+  constructor(context, gateway2, channel) {
+    this.messages = [];
+    this.sessions = [];
+    this.agents = [];
+    this.activeAgent = { id: "main", name: "Agent", emoji: "\u{1F916}" };
+    this.currentModel = "";
+    this.currentSessionKey = "main";
+    this.thinkingLevel = "";
+    this.verboseLevel = "";
+    this.gatewayUrl = "";
+    this.agentsDir = "";
+    this.messageHistory = [];
+    this.autoContinueCount = 0;
+    this.supervisionEnabled = false;
+    this.supervisionTimer = null;
+    this.lastSupervisedContent = "";
+    this.supervisorBusy = false;
+    this.supervisorPendingSessionKey = null;
+    this.supervisorResponseResolver = null;
+    this.supervisorTimeout = null;
+    this.supervisorAccumulated = "";
+    this.busyCount = 0;
+    this.serverVersion = "";
+    this.seenPreambleTexts = [];
+    // Subagent activity tracking (Requirement A)
+    this.lastSubagentEventMs = 0;
+    this.activeSubagentCount = 0;
+    this.subagentTimer = null;
+    // sessions_yield tracking (Requirement B): set when busy + active subagent
+    this.yieldState = false;
+    this.yieldTimer = null;
+    this.historyReloadTimer = null;
+    this.context = context;
+    this.gateway = gateway2;
+    const ch = channel;
+    this.log = (msg) => log(msg, LOG_INFO, ch);
+    this.messageHistory = context.globalState.get("openclaw.messageHistory", []);
+    const config = vscode3.workspace.getConfiguration("openclaw");
+    this.gatewayUrl = config.get("gatewayUrl", "ws://127.0.0.1:18789");
+    const configAgentId = config.get("agentId", "");
+    const configSessionKey = config.get("sessionKey", "");
+    if (configAgentId) {
+      this.activeAgent = { id: configAgentId, name: configAgentId, emoji: "\u{1F916}" };
+    }
+    if (configSessionKey) {
+      this.currentSessionKey = configSessionKey;
+    }
+    const configAgentsDir = config.get("agentsDir", "");
+    this.agentsDir = resolveAgentsDir(configAgentsDir);
+    try {
+      if (!fs3.existsSync(this.agentsDir)) {
+        fs3.mkdirSync(this.agentsDir, { recursive: true });
+        log(`AgentsDIR created: ${this.agentsDir}`, LOG_INFO, ch);
+      }
+    } catch (mkdirErr) {
+      log(`AgentsDIR create failed: ${mkdirErr?.message || mkdirErr}`, LOG_INFO, ch);
+    }
+    this.gateway.on("task.ended", () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on("task.updated", () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on("session.updated", () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on("session.created", () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on("session.deleted", () => {
+      this.handleRequestSessions();
+    });
+  }
+  static {
+    this.viewType = "openclaw.chatView";
+  }
+  static {
+    this.SUBAGENT_ACTIVITY_TIMEOUT_MS = 6e4;
+  }
+  static {
+    this.AUTO_CONTINUE_MAX = 3;
+  }
+  static {
+    this.ERROR_PATTERNS = [
+      "The agent run failed before producing a reply",
+      // ✅ GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT
+      "Agent run ended before producing a complete result",
+      // ✅ formatAbandonedLivenessError 产出
+      "Agent run blocked before producing a usable result",
+      // ✅ formatBlockedLivenessError 产出
+      "Agent failed before reply",
+      // ✅ AGENT_FAILED_BEFORE_REPLY_TEXT
+      "Agent run failed",
+      // ✅ 通用后备文本
+      "ACP turn failed before completion"
+      // ✅ ACP 轮次失败
+    ];
+  }
+  get agentPrefix() {
+    return `agent:${this.activeAgent.id}:`;
+  }
+  gwSessionKey(localKey) {
+    return this.agentPrefix + (localKey || this.currentSessionKey);
+  }
+  show() {
+    this.view?.webview.postMessage({ type: "show" });
+  }
+  /** 已解析的 AgentsDIR（绝对路径，默认 <home>/.openclaw/agents），已确保目录存在 */
+  get agentsDirectory() {
+    return this.agentsDir;
+  }
+  setInputText(text) {
+    this.postToWebview({ type: "setInputText", text });
+  }
+  newChat() {
+    this.messages = [];
+    this.currentSessionKey = "main";
+    this.postToWebview({ type: "clearMessages" });
+  }
+  updateConnectionStatus(connected, serverVersion) {
+    this.serverVersion = serverVersion || this.serverVersion;
+    this.postToWebview({
+      type: "init",
+      sessionKey: this.currentSessionKey,
+      gwSessionKey: this.gwSessionKey(),
+      model: this.currentModel,
+      connected,
+      agent: this.activeAgent,
+      gatewayUrl: this.gatewayUrl,
+      thinkingLevel: this.thinkingLevel,
+      verboseLevel: this.verboseLevel,
+      messageHistory: this.messageHistory,
+      supervisionEnabled: this.supervisionEnabled,
+      version: this.serverVersion
+    });
+    this.postToWebview({
+      type: "connectionStatus",
+      connected,
+      agent: this.activeAgent
+    });
+    if (connected) {
+      this.handleRequestModels().catch(() => {
+      });
+      this.handleRequestSessions().catch(() => {
+      });
+      this.handleRequestAgents().catch(() => {
+      });
+      this.handleRequestTasks().catch(() => {
+      });
+      this.handleLoadMessages(this.currentSessionKey).catch(() => {
+      });
+    } else {
+      this.busyCount = 0;
+      this.postToWebview({ type: "busyState", busy: false, label: "" });
+      this.activeSubagentCount = 0;
+      this.postToWebview({ type: "subagentState", active: false, label: "", state: "" });
+      this.updateYieldState();
+    }
+  }
+  /**
+   * Public method to send text to the chat view
+   * @param text The text to send
+   */
+  async sendText(text) {
+    await this.handleSendMessage(text);
+  }
+  /**
+   * 处理进度卡片更新
+   * @param card 进度卡片对象，null 表示清除
+   */
+  handleProgressCardUpdate(card) {
+    if (!this.view)
+      return;
+    if (card) {
+      this.postToWebview({
+        type: "progressCard",
+        data: {
+          title: card.title,
+          description: card.description,
+          progress: card.progress,
+          status: card.status,
+          steps: card.steps || card.plan,
+          // 优先使用 card.steps，回退到 card.plan
+          plan: card.plan,
+          markdown: card.markdown,
+          revision: card.revision
+        }
+      });
+    } else {
+      this.postToWebview({ type: "progressCard", data: null });
+    }
+  }
+  // Match Obsidian plugin's handleChatEvent
+  async handleChatEvent(payload) {
+    const sessionKey = this.resolveSession(payload?.sessionKey);
+    const rawSessionKey = payload?.sessionKey || "";
+    const state = typeof payload?.state === "string" ? payload.state : "";
+    if (this.supervisorPendingSessionKey && rawSessionKey === this.supervisorPendingSessionKey) {
+      if (state === "delta") {
+        const text = await this.extractDeltaText(payload?.message);
+        if (text) {
+          this.supervisorAccumulated += text;
+          this.log(`Supervisor delta chunk: +${text.length} chars (total=${this.supervisorAccumulated.length})`);
+        }
+      } else if (state === "final") {
+        const finalText = await this.extractDeltaText(payload?.message);
+        const fullReply = finalText || this.supervisorAccumulated;
+        this.log(`Supervisor final reply: ${fullReply.substring(0, 80)}...`);
+        if (this.supervisorTimeout) {
+          clearTimeout(this.supervisorTimeout);
+          this.supervisorTimeout = null;
+        }
+        this.supervisorPendingSessionKey = null;
+        const resolver = this.supervisorResponseResolver;
+        this.supervisorResponseResolver = null;
+        this.supervisorAccumulated = "";
+        if (resolver) {
+          resolver(fullReply);
+        }
+        return;
+      } else if (state === "error") {
+        if (this.supervisorTimeout) {
+          clearTimeout(this.supervisorTimeout);
+          this.supervisorTimeout = null;
+        }
+        this.supervisorPendingSessionKey = null;
+        const resolver = this.supervisorResponseResolver;
+        this.supervisorResponseResolver = null;
+        this.supervisorAccumulated = "";
+        if (resolver) {
+          resolver(null);
+        }
+        return;
+      }
+    }
+    if (rawSessionKey && rawSessionKey.includes("subagent")) {
+      const m = rawSessionKey.match(/^agent:([^:]+):/);
+      if (m && m[1] === this.activeAgent.id) {
+        this.lastSubagentEventMs = Date.now();
+        this.activeSubagentCount++;
+        this.startSubagentTimer();
+        const tail = rawSessionKey.split(":").pop() || "subagent";
+        const shortLabel = tail.length > 12 ? tail.substring(0, 8) + "\u2026" : tail;
+        this.postToWebview({
+          type: "subagentState",
+          active: true,
+          label: vscode3.l10n.t("Subagent active: {0}", shortLabel),
+          state
+        });
+        this.updateYieldState();
+      }
+      return;
+    }
+    if (rawSessionKey) {
+      const m = rawSessionKey.match(/^agent:([^:]+):/);
+      if (m && m[1] !== this.activeAgent.id) {
+        this.log(`chatEvent discarded: agent=${m[1]} != current=${this.activeAgent.id}`);
+        return;
+      }
+    }
+    this.log(`chatEvent: state=${state} session=${sessionKey} hasMsg=${!!payload?.message}`);
+    if (state === "delta") {
+      const text = await this.extractDeltaText(payload?.message);
+      this.log(`delta len=${text.length} preview=${text.substring(0, 80)}`);
+      if (text) {
+        this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text });
+      }
+    } else if (state === "final") {
+      this.log(`stream final`);
+      const finalMsg = payload?.message;
+      if (finalMsg) {
+        const finalText = await this.extractDeltaText(finalMsg);
+        this.log(`final text len=${finalText.length}`);
+        if (finalText) {
+          const isErrorResponse = _OpenClawChatView.ERROR_PATTERNS.some(
+            (pattern) => finalText.includes(pattern)
+          );
+          if (isErrorResponse) {
+            this.autoContinueCount++;
+            this.log(`Auto-continue retry ${this.autoContinueCount}/${_OpenClawChatView.AUTO_CONTINUE_MAX}`);
+            if (this.autoContinueCount >= _OpenClawChatView.AUTO_CONTINUE_MAX) {
+              this.postToWebview({
+                type: "autoContinueFailed",
+                sessionKey,
+                count: this.autoContinueCount
+              });
+              this.autoContinueCount = 0;
+            } else {
+              this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
+              this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
+              this.sendContinueMessage();
+              return;
+            }
+          } else {
+            if (this.autoContinueCount > 0) {
+              this.autoContinueCount = 0;
+              this.context.globalState.update("openclaw.autoContinueCount", 0);
+            }
+            this.postToWebview({ type: "streamDelta", sessionKey, agentId: this.activeAgent.id, text: finalText });
+          }
+        }
+      }
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
+      this.setBusy(false);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
+    } else if (state === "aborted") {
+      this.log(`stream aborted`);
+      this.postToWebview({ type: "streamDone", sessionKey, agentId: this.activeAgent.id });
+      this.setBusy(false);
+      this.scheduleHistoryReload(sessionKey, this.activeAgent.id);
+    } else if (state === "error") {
+      const errorMsg = payload?.errorMessage || "unknown error";
+      this.log(`stream error: ${errorMsg}`);
+      this.postToWebview({ type: "streamError", sessionKey, agentId: this.activeAgent.id, error: errorMsg });
+      this.setBusy(false);
+    } else {
+      this.log(`unknown chat state: ${state}`);
+    }
+  }
+  // Match Obsidian plugin's handleStreamEvent
+  handleStreamEvent(payload) {
+    const stream = typeof payload?.stream === "string" ? payload.stream : "";
+    const state = typeof payload?.state === "string" ? payload.state : "";
+    const data = payload?.data || {};
+    const toolName = data.name || data.toolName || payload?.toolName || payload?.name || "";
+    const phase = data.phase || payload?.phase || "";
+    this.log(`streamEvent: stream=${stream} state=${state} tool=${toolName} phase=${phase}`);
+    if (data.kind === "preamble" && typeof data.progressText === "string" && data.progressText.trim()) {
+      const t = data.progressText.trim();
+      if (!this.seenPreambleTexts.includes(t)) {
+        this.seenPreambleTexts.push(t);
+        if (this.seenPreambleTexts.length > 50)
+          this.seenPreambleTexts.shift();
+      }
+      return;
+    }
+    if (toolName && (phase === "start" || state === "tool_use")) {
+      const label = `${toolName}`;
+      this.postToWebview({ type: "toolCall", label, phase: "start" });
+    } else if (toolName && phase === "result") {
+      this.postToWebview({ type: "toolCall", label: toolName, phase: "result" });
+    }
+  }
+  async extractDeltaText(message) {
+    if (typeof message === "string")
+      return await this.resolveMediaPaths(message);
+    if (!message)
+      return "";
+    const content = message.content ?? message;
+    let text = "";
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        if (typeof item === "string") {
+          text += item;
+        } else if (item && typeof item === "object" && "text" in item) {
+          text += (text ? "\n" : "") + String(item.text);
+        }
+      }
+    } else if (typeof content === "string") {
+      text = content;
+    } else {
+      text = message.text || "";
+    }
+    const mediaUrls = message.openclawDelivery?.mediaUrls;
+    if (mediaUrls && mediaUrls.length > 0) {
+      const audioParts = [];
+      for (const mediaPath of mediaUrls) {
+        const audioTag = await this.convertMediaToMarkdown(mediaPath);
+        if (audioTag) {
+          audioParts.push(audioTag);
+        }
+      }
+      if (audioParts.length > 0) {
+        text = text + "\n" + audioParts.join("\n");
+      }
+    }
+    return await this.resolveMediaPaths(text);
+  }
+  async resolveMediaPaths(text) {
+    if (!text || text.indexOf("MEDIA:") === -1)
+      return text;
+    const segments = text.split("\n");
+    const resolvedSegments = [];
+    for (const segment of segments) {
+      if (segment.indexOf("MEDIA:") === 0) {
+        const rest = segment.slice(6).trim();
+        const typePrefixMatch = rest.match(/^(audio|video|img|image):(.+)$/);
+        let mediaPath;
+        let forcedTag;
+        if (typePrefixMatch) {
+          forcedTag = typePrefixMatch[1] === "image" ? "img" : typePrefixMatch[1];
+          mediaPath = typePrefixMatch[2].trim();
+        } else {
+          mediaPath = rest;
+        }
+        const result = await this.convertMediaToMarkdown(mediaPath, forcedTag);
+        if (result) {
+          resolvedSegments.push(result);
+        }
+      } else {
+        resolvedSegments.push(segment);
+      }
+    }
+    return resolvedSegments.join("\n");
+  }
+  async convertMediaToMarkdown(mediaPath, forcedTag) {
+    try {
+      if (!mediaPath)
+        return null;
+      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
+        const tag2 = await this.buildRemoteMediaTag(mediaPath);
+        if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
+          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
+          return this.buildMediaTag(forcedTag, absoluteUrl);
+        }
+        return tag2;
+      }
+      const normalizedPath = mediaPath.replace(/\\/g, "/");
+      let buffer;
+      try {
+        buffer = fs3.readFileSync(mediaPath);
+      } catch {
+        try {
+          buffer = fs3.readFileSync(normalizedPath);
+        } catch {
+          return null;
+        }
+      }
+      const ext = path4.extname(mediaPath).toLowerCase();
+      const mediaInfo = getMediaInfo(ext);
+      let mimeType = mediaInfo.mimeType;
+      let tag = mediaInfo.tag;
+      const base64 = buffer.toString("base64");
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      return this.buildMediaTag(tag, dataUrl);
+    } catch {
+      return null;
+    }
+  }
+  /**
+    * 将网关媒体相对路径（/api/chat/media/...）转为带 mediaTicket 的绝对 HTTP URL。
+  * webview 中相对路径会解析到 vscode-webview:// 基址（非 HTTP 服务器），无法加载媒体；
+  * 网关地址为 ws:// 或 wss://，据此推导出对应 http/https 基址。
+  * 通过 RPC artifacts.download 获取包含 mediaTicket 鉴权的完整 URL。
+  */
+  async toAbsoluteMediaUrl(url) {
+    if (!url.startsWith("/api/chat/media/"))
+      return url;
+    const match = url.match(/\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full/);
+    if (!match) {
+      const httpBase2 = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
+      return `${httpBase2}${url}`;
+    }
+    const [, sessionKeyEncoded, attachmentId] = match;
+    const sessionKey = decodeURIComponent(sessionKeyEncoded);
+    const httpBase = this.gatewayUrl.replace(/^ws:\/\//, "http://").replace(/^wss:\/\//, "https://").replace(/\/+$/, "");
+    for (const prefix of ["artifact_managed_media_", "artifact_managed_image_"]) {
+      try {
+        const artifactId = prefix + attachmentId;
+        const result = await this.gateway.request("artifacts.download", {
+          artifactId,
+          sessionKey
+        });
+        if (result?.url) {
+          const absoluteUrl = result.url.startsWith("/") ? httpBase + result.url : result.url;
+          this.log(`toAbsoluteMediaUrl: resolved ${sessionKey}/${attachmentId} -> ${absoluteUrl}`);
+          return absoluteUrl;
+        }
+      } catch (err) {
+        this.log(`toAbsoluteMediaUrl: artifacts.download(${prefix}) failed for ${sessionKey}/${attachmentId}: ${err?.message || err}`);
+      }
+    }
+    return `${httpBase}${url}`;
+  }
+  /**
+   * 为远程 URL 直接生成 HTML 标签（video/audio/img）。
+   * 外部 URL 直接作为 src 使用，webview 需开启 enableResourceLoading 才能加载。
+   * 网关媒体相对路径（/api/chat/media/...）自动转绝对 HTTP URL，避免解析到 vscode-webview:// 基址。
+   */
+  async buildRemoteMediaTag(url) {
+    const cleanUrl = url.split("#")[0].split("?")[0];
+    const ext = path4.extname(cleanUrl).toLowerCase();
+    let { tag } = getMediaInfo(ext);
+    if (!ext) {
+      const lower = url.toLowerCase();
+      if (lower.includes("/audio/") || lower.endsWith("/audio")) {
+        tag = "audio";
+      } else if (lower.includes("/video/") || lower.endsWith("/video")) {
+        tag = "video";
+      } else {
+        tag = "audio";
+      }
+    }
+    const src = await this.toAbsoluteMediaUrl(url);
+    return this.buildMediaTag(tag, src);
+  }
+  /**
+   * 根据标签名与数据源生成最终 HTML 标签。
+   * video/audio 添加 controls 属性；img 添加样式限制大小。
+   */
+  buildMediaTag(tag, src) {
+    if (tag === "video") {
+      return `<video src="${src}" controls preload="metadata" style="max-width:100%;max-height:400px;border-radius:6px;"></video>`;
+    } else if (tag === "audio") {
+      return `<audio src="${src}" controls preload="metadata" style="max-width:100%;"></audio>`;
+    } else {
+      return `<img src="${src}" alt="media" style="max-width:100%;max-height:400px;border-radius:6px;" />`;
+    }
+  }
+  async extractHistoryContent(content) {
+    if (typeof content === "string")
+      return await this.resolveMediaPaths(content);
+    if (!content)
+      return "";
+    if (Array.isArray(content)) {
+      let text = "";
+      for (const block of content) {
+        if (block.type === "text" && block.text) {
+          text += (text ? "\n" : "") + block.text;
+        } else if (block.type === "tool_result" && block.content) {
+          if (typeof block.content === "string") {
+            text += (text ? "\n" : "") + block.content;
+          } else if (Array.isArray(block.content)) {
+            for (const sub of block.content) {
+              if (sub?.type === "text" && sub.text) {
+                text += (text ? "\n" : "") + sub.text;
+              }
+            }
+          }
+        } else if ((block.type === "audio" || block.type === "file" || block.type === "media") && (block.content || block.url)) {
+          let mediaPath = "";
+          if (typeof block.url === "string" && block.url) {
+            mediaPath = block.url;
+          } else if (typeof block.content === "string") {
+            mediaPath = block.content;
+          } else if (block.content && typeof block.content === "object") {
+            mediaPath = block.content.path || block.content.url || "";
+          }
+          if (mediaPath) {
+            if (mediaPath.startsWith("/api/chat/media/")) {
+              text += (text ? "\n" : "") + "MEDIA:" + block.type + ":" + mediaPath;
+            } else {
+              text += (text ? "\n" : "") + "MEDIA:" + mediaPath;
+            }
+          }
+        }
+      }
+      const mediaUrls = content?.openclawDelivery?.mediaUrls;
+      if (mediaUrls && mediaUrls.length > 0) {
+        const audioParts = [];
+        for (const mediaPath of mediaUrls) {
+          const audioTag = await this.convertMediaToMarkdown(mediaPath);
+          if (audioTag)
+            audioParts.push(audioTag);
+        }
+        if (audioParts.length > 0) {
+          text += (text ? "\n" : "") + audioParts.join("\n");
+        }
+      }
+      return await this.resolveMediaPaths(text);
+    }
+    return "";
+  }
+  resolveSession(sessionKey) {
+    if (!sessionKey)
+      return this.currentSessionKey;
+    const prefix = this.agentPrefix;
+    if (prefix && sessionKey.startsWith(prefix)) {
+      return sessionKey.slice(prefix.length);
+    }
+    const match = sessionKey.match(/^agent:[^:]+:(.+)$/);
+    if (match)
+      return match[1];
+    return sessionKey;
+  }
+  resolveWebviewView(webviewView, _context, _token) {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: []
+    };
+    webviewView.webview.html = this.getHtml();
+    webviewView.webview.onDidReceiveMessage(async (msg) => {
+      handleWebviewMessage(msg, this);
+    });
+  }
+  async handleSendMessage(text, fileRefs, webviewAttachments) {
+    if (!text.trim())
+      return;
+    if (!this.gateway.connected) {
+      vscode3.window.showWarningMessage(vscode3.l10n.t("OpenClaw: Not connected to gateway"));
+      return;
+    }
+    if (this.autoContinueCount > 0) {
+      this.autoContinueCount = 0;
+      this.context.globalState.update("openclaw.autoContinueCount", 0);
+    }
+    const userMsg = {
+      role: "user",
+      text,
+      timestamp: Date.now()
+    };
+    let attachments = [];
+    if (webviewAttachments && webviewAttachments.length > 0) {
+      attachments = webviewAttachments.map((a) => ({
+        type: "file",
+        mimeType: a.mimeType,
+        fileName: a.name,
+        content: a.data
+      }));
+    } else if (fileRefs) {
+      attachments = await this.buildAttachments(fileRefs);
+    }
+    this.messages.push(userMsg);
+    this.messageHistory.push(text);
+    if (this.messageHistory.length > 200) {
+      this.messageHistory = this.messageHistory.slice(-200);
+    }
+    this.context.globalState.update("openclaw.messageHistory", this.messageHistory);
+    const msgWithAttachments = webviewAttachments && webviewAttachments.length > 0 || attachments.length > 0 ? {
+      ...userMsg,
+      attachments: webviewAttachments || []
+    } : userMsg;
+    this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
+    this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
+    const runId = genId();
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
+    try {
+      let res;
+      try {
+        res = await this.gateway.request("chat.send", {
+          sessionKey: this.gwSessionKey(),
+          message: text,
+          deliver: false,
+          idempotencyKey: runId,
+          ...attachments.length > 0 ? { attachments } : {}
+        });
+      } catch (sendErr) {
+        const errMsg = sendErr?.message || "";
+        if (errMsg.includes("ended during restart recovery")) {
+          this.log(`Session ended, sending /new to create replacement...`);
+          try {
+            await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: "/new",
+              deliver: false,
+              idempotencyKey: genId()
+            });
+            await new Promise((r) => setTimeout(r, 1e3));
+            this.log(`Retrying send after /new...`);
+            res = await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: text,
+              deliver: false,
+              idempotencyKey: runId,
+              ...attachments.length > 0 ? { attachments } : {}
+            });
+          } catch (retryErr) {
+            this.log(`Retry after /new failed: ${retryErr?.message}`);
+            throw sendErr;
+          }
+        } else {
+          throw sendErr;
+        }
+      }
+      this.setBusy(true);
+      if (res && typeof res === "object" && res.aborted === false && (!Array.isArray(res.runIds) || res.runIds.length === 0)) {
+        this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
+        const replyText = this.formatCommandResponse(text, res);
+        const assistantMsg = {
+          role: "assistant",
+          text: replyText,
+          timestamp: Date.now()
+        };
+        this.messages.push(assistantMsg);
+        this.postToWebview({ type: "userMessage", message: assistantMsg, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
+        this.setBusy(false);
+      }
+    } catch (err) {
+      this.messages.push({
+        role: "assistant",
+        text: `Error: ${err}`,
+        timestamp: Date.now()
+      });
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
+      this.setBusy(false);
+    }
+  }
+  /**
+   * Send a message without adding it to local history (used for auto-continue).
+   * Note: do NOT call setBusy(true) here -- the parent send is already busy.
+   * The parent busyCount will be decremented when the final/aborted/error state arrives.
+   */
+  async sendContinueMessage() {
+    if (!this.gateway.connected)
+      return;
+    const runId = genId();
+    this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
+    try {
+      try {
+        await this.gateway.request("chat.send", {
+          sessionKey: this.gwSessionKey(),
+          message: "Continue",
+          deliver: false,
+          idempotencyKey: runId
+        });
+      } catch (sendErr) {
+        const errMsg = sendErr?.message || "";
+        if (errMsg.includes("ended during restart recovery")) {
+          this.log(`Continue: session ended, sending /new...`);
+          await this.gateway.request("chat.send", {
+            sessionKey: this.gwSessionKey(),
+            message: "/new",
+            deliver: false,
+            idempotencyKey: genId()
+          });
+          await new Promise((r) => setTimeout(r, 1e3));
+          await this.gateway.request("chat.send", {
+            sessionKey: this.gwSessionKey(),
+            message: "Continue",
+            deliver: false,
+            idempotencyKey: runId
+          });
+        } else {
+          throw sendErr;
+        }
+      }
+    } catch {
+      this.postToWebview({ type: "streamDone", runId, agentId: this.activeAgent.id });
+      this.setBusy(false);
+    }
+  }
+  async buildAttachments(fileRefs) {
+    if (!fileRefs || fileRefs.length === 0)
+      return [];
+    const attachments = [];
+    const MAX_TOTAL = 20 * 1024 * 1024;
+    let totalSize = 0;
+    const folders = vscode3.workspace.workspaceFolders;
+    const rootUri = folders && folders.length > 0 ? folders[0].uri : void 0;
+    for (const relPath of fileRefs) {
+      if (totalSize >= MAX_TOTAL)
+        break;
+      try {
+        if (!rootUri)
+          continue;
+        const fileUri = vscode3.Uri.joinPath(rootUri, relPath);
+        const stat = await vscode3.workspace.fs.stat(fileUri);
+        if (stat.size > MAX_TOTAL)
+          continue;
+        if (totalSize + stat.size > MAX_TOTAL)
+          continue;
+        const bytes = await vscode3.workspace.fs.readFile(fileUri);
+        const mimeType = getMimeType(relPath);
+        const content = Buffer.from(bytes).toString("base64");
+        attachments.push({
+          type: "file",
+          mimeType,
+          fileName: relPath.split("/").pop() || relPath,
+          content
+        });
+        totalSize += stat.size;
+      } catch {
+      }
+    }
+    return attachments;
+  }
+  formatCommandResponse(command, response) {
+    const cmd = command.trim().toLowerCase();
+    if (!response)
+      return "No response";
+    if (cmd === "/stop") {
+      if (response.aborted === true) {
+        return "Stream stopped successfully";
+      } else {
+        return "No active stream to stop";
+      }
+    }
+    if (cmd === "/new") {
+      return "New chat session started";
+    }
+    if (cmd === "/models") {
+      if (response.models && Array.isArray(response.models)) {
+        return `Available models: ${response.models.join(", ")}`;
+      }
+      return "Models list retrieved";
+    }
+    if (cmd === "/help") {
+      return "Available commands: /stop /new /models /help";
+    }
+    if (response.message)
+      return response.message;
+    if (response.ok !== void 0) {
+      const okStr = response.ok === true ? "Success" : "Failed";
+      if (response.aborted !== void 0) {
+        return `${okStr}${response.aborted ? " (aborted)" : ""}`;
+      }
+      return okStr;
+    }
+    return JSON.stringify(response);
+  }
+  async handleStopStream() {
+    try {
+      await this.gateway.request("chat.abort", {
+        sessionKey: this.gwSessionKey()
+      });
+    } catch {
+    }
+  }
+  async handleSearchFiles(query, requestId) {
+    try {
+      const folders = vscode3.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        this.postToWebview({ type: "fileResults", requestId, files: [] });
+        return;
+      }
+      let pattern = "**/*";
+      const cleanQuery = query ? query.replace(/[/\\]+$/, "") : "";
+      let isRootFolder = false;
+      if (!query) {
+        pattern = "**/*";
+      } else {
+        const lastSlashIndex = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
+        if (lastSlashIndex > 0) {
+          let dirPrefix = query.substring(0, lastSlashIndex).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+          const fileKeyword = query.substring(lastSlashIndex + 1);
+          const rootFolderNames = folders.map((f) => f.name.toLowerCase());
+          isRootFolder = rootFolderNames.includes(dirPrefix.toLowerCase());
+          if (isRootFolder) {
+            const targetFolder = folders.find((f) => f.name.toLowerCase() === dirPrefix.toLowerCase());
+            if (!targetFolder) {
+              return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
+            }
+            const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
+            const relativePattern = new vscode3.RelativePattern(targetFolder, basePattern);
+            const uris2 = await vscode3.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
+            return this.processSearchResults(uris2, [...folders], cleanQuery, requestId, isRootFolder);
+          } else if (fileKeyword) {
+            pattern = `${dirPrefix}/**/*${fileKeyword}*`;
+          } else if (lastSlashIndex === query.length - 1) {
+            pattern = `${dirPrefix}/**/*`;
+          }
+        } else {
+          pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
+        }
+      }
+      const uris = await vscode3.workspace.findFiles(pattern, "**/node_modules/**", 200);
+      return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
+    } catch {
+      this.postToWebview({ type: "fileResults", requestId, files: [] });
+    }
+  }
+  async processSearchResults(uris, folders, cleanQuery, requestId, isRootFolder) {
+    const files = [];
+    const seen = /* @__PURE__ */ new Set();
+    if (cleanQuery) {
+      let browseUri;
+      let displayPrefix = "";
+      if (folders.length === 1) {
+        const folder = folders[0];
+        if (isRootFolder) {
+          browseUri = folder.uri;
+          displayPrefix = "";
+        } else {
+          browseUri = vscode3.Uri.joinPath(folder.uri, cleanQuery);
+          displayPrefix = cleanQuery;
+        }
+      } else {
+        const sep = cleanQuery.indexOf("/");
+        if (sep > 0) {
+          const folderName = cleanQuery.substring(0, sep);
+          const folder = folders.find((f) => f.name.toLowerCase() === folderName.toLowerCase());
+          if (folder) {
+            const relPath = cleanQuery.substring(sep + 1);
+            browseUri = vscode3.Uri.joinPath(folder.uri, relPath);
+            displayPrefix = cleanQuery;
+          }
+        } else if (isRootFolder) {
+          const folder = folders.find((f) => f.name.toLowerCase() === cleanQuery.toLowerCase());
+          if (folder) {
+            browseUri = folder.uri;
+            displayPrefix = folder.name;
+          }
+        }
+      }
+      if (browseUri) {
+        try {
+          const entries = await vscode3.workspace.fs.readDirectory(browseUri);
+          for (const [name, type] of entries) {
+            if (name.startsWith("."))
+              continue;
+            const isDir = (type & vscode3.FileType.Directory) !== 0;
+            const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
+            if (!seen.has(fullPath)) {
+              seen.add(fullPath);
+              files.push({ path: fullPath, isDir });
+            }
+          }
+        } catch {
+        }
+      }
+    }
+    for (const uri of uris) {
+      const workspaceFolder = vscode3.workspace.getWorkspaceFolder(uri);
+      const relativePath = vscode3.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+      let fullPath;
+      if (folders.length > 1 && workspaceFolder) {
+        fullPath = `${workspaceFolder.name}/${relativePath}`;
+      } else {
+        fullPath = relativePath;
+      }
+      if (seen.has(fullPath))
+        continue;
+      seen.add(fullPath);
+      const parts = fullPath.split("/");
+      let isDir = false;
+      try {
+        const stat = await vscode3.workspace.fs.stat(uri);
+        isDir = (stat.type & vscode3.FileType.Directory) !== 0;
+      } catch {
+        isDir = false;
+      }
+      if (cleanQuery && !isRootFolder) {
+        const q = cleanQuery.toLowerCase();
+        const name = parts[parts.length - 1].toLowerCase();
+        const full = fullPath.toLowerCase();
+        if (!name.includes(q) && !full.includes(q))
+          continue;
+      }
+      files.push({ path: fullPath, isDir });
+      if (files.length >= 30)
+        break;
+    }
+    const folders2 = [];
+    if (!isRootFolder) {
+      for (const folder of folders) {
+        const folderName = folder.name;
+        if (cleanQuery && !folderName.toLowerCase().includes(cleanQuery.toLowerCase()))
+          continue;
+        folders2.push({ path: folderName, isDir: true });
+      }
+    }
+    this.postToWebview({
+      type: "fileResults",
+      requestId,
+      files: [...folders2.slice(0, 5), ...files.slice(0, 30)]
+    });
+  }
+  async handleRequestModels() {
+    try {
+      const res = await this.gateway.request("models.list", {});
+      this.postToWebview({ type: "modelsList", models: res?.models || [] });
+    } catch {
+      this.postToWebview({ type: "modelsList", models: [] });
+    }
+  }
+  async handleRequestSessions() {
+    try {
+      const res = await this.gateway.request("sessions.list", {
+        archived: false,
+        includeGlobal: true,
+        includeUnknown: true,
+        includeDerivedTitles: true,
+        limit: 100
+      });
+      this.sessions = res?.sessions || [];
+      this.log(`sessions.list: ${this.sessions.length} \u6761`);
+      for (const s of this.sessions || []) {
+        this.log(`  session: key=${JSON.stringify(s?.key || "")} id=${s?.sessionId || "-"} name=${JSON.stringify(s?.["device-info"]?.["device-name"] || s?.displayName || s?.derivedTitle || "")}`);
+      }
+      this.postToWebview({ type: "sessionsList", sessions: this.sessions });
+    } catch (err) {
+      this.log(`sessions.list error: ${err.message}`);
+      this.postToWebview({ type: "sessionsList", sessions: [] });
+    }
+  }
+  resolveActiveAgent() {
+    if (!this.agents || this.agents.length === 0)
+      return;
+    const currentId = this.activeAgent?.id;
+    if (!currentId)
+      return;
+    let match = this.agents.find((a) => a.id === currentId);
+    if (!match) {
+      match = this.agents.find((a) => (a.name || "") === currentId);
+    }
+    if (match) {
+      this.activeAgent = {
+        id: match.id,
+        name: match.name || match.id,
+        emoji: match.emoji || "\u{1F916}"
+      };
+    }
+  }
+  async handleRequestAgents() {
+    try {
+      const res = await this.gateway.request("agents.list", {});
+      this.agents = res?.agents || [];
+      if (this.agents.length === 0)
+        this.agents = [{ id: "main", name: "Agent" }];
+      this.resolveActiveAgent();
+      this.postToWebview({ type: "agentsList", agents: this.agents });
+      this.postToWebview({ type: "agentSwitched", agent: this.activeAgent });
+    } catch {
+      this.postToWebview({ type: "agentsList", agents: [] });
+    }
+  }
+  async handleRequestTasks() {
+    try {
+      const res = await this.gateway.request("tasks.list", {
+        limit: 500
+      });
+      const allTasks = res?.tasks || [];
+      const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
+      this.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
+      this.postToWebview({ type: "tasksList", tasks: activeTasks });
+    } catch (err) {
+      this.log(`tasks.list error: ${err.message}`);
+      this.postToWebview({ type: "tasksList", tasks: [] });
+    }
+  }
+  async handleLoadDefaults() {
+    try {
+      const res = await this.gateway.request("config.get", {});
+      const config = res?.config || res || {};
+      const agentDefaults = config?.agents?.defaults || {};
+      this.thinkingLevel = agentDefaults.thinkingDefault || "";
+      this.verboseLevel = agentDefaults.verboseDefault || "";
+      this.postToWebview({
+        type: "defaultsLoaded",
+        thinkingLevel: this.thinkingLevel,
+        verboseLevel: this.verboseLevel
+      });
+    } catch {
+    }
+  }
+  async cycleThinking() {
+    const levels = ["", "off", "low", "medium", "high"];
+    const idx = levels.indexOf(this.thinkingLevel);
+    this.thinkingLevel = levels[(idx + 1) % levels.length];
+    this.postToWebview({ type: "thinkingChanged", level: this.thinkingLevel });
+  }
+  async cycleVerbose() {
+    const levels = ["", "off", "on", "full"];
+    const idx = levels.indexOf(this.verboseLevel);
+    this.verboseLevel = levels[(idx + 1) % levels.length];
+    this.postToWebview({ type: "verboseChanged", level: this.verboseLevel });
+  }
+  async handleOpenWorkdir() {
+    try {
+      const agentListRes = await this.gateway.request("agents.list", {});
+      const agents = agentListRes?.agents || [];
+      const agent = agents.find((a) => a.id === this.activeAgent.id);
+      let workspace4 = agent?.workspace || "";
+      if (!workspace4) {
+        const configRes = await this.gateway.request("config.get", {});
+        const config = configRes?.config || configRes || {};
+        workspace4 = config?.agents?.defaults?.workspace || config?.workspace || "";
+      }
+      if (!workspace4) {
+        vscode3.window.showWarningMessage(vscode3.l10n.t("Could not determine working directory"));
+        return;
+      }
+      const normalizedPath = workspace4.replace(/^[a-z]:/i, (match) => match.toUpperCase());
+      const workspaceUri = vscode3.Uri.file(normalizedPath);
+      const folders = vscode3.workspace.workspaceFolders;
+      let alreadyExists = false;
+      if (folders) {
+        for (const folder of folders) {
+          if (folder.uri.fsPath.toLowerCase() === workspaceUri.fsPath.toLowerCase()) {
+            alreadyExists = true;
+            break;
+          }
+        }
+      }
+      if (alreadyExists) {
+        await vscode3.commands.executeCommand("workbench.view.explorer");
+        await vscode3.commands.executeCommand("revealInExplorer", workspaceUri);
+        await vscode3.commands.executeCommand("list.expand");
+        vscode3.window.showInformationMessage(vscode3.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
+        return;
+      }
+      const currentFolders = vscode3.workspace.workspaceFolders;
+      const replaceFolders = currentFolders ? currentFolders.map((f) => ({ uri: f.uri })) : [];
+      replaceFolders.push({ uri: workspaceUri });
+      const success = vscode3.workspace.updateWorkspaceFolders(
+        0,
+        currentFolders ? currentFolders.length : 0,
+        ...replaceFolders
+      );
+      if (success) {
+        vscode3.window.showInformationMessage(vscode3.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
+      } else {
+        vscode3.window.showErrorMessage(
+          `Failed to add folder to workspace: ${workspaceUri.fsPath}. You may need to open a workspace (.code-workspace) file first.`
+        );
+      }
+    } catch (err) {
+      this.log(`openWorkdir error: ${err.message}`);
+      vscode3.window.showErrorMessage(vscode3.l10n.t("Failed to open working directory: {0}", err.message));
+    }
+  }
+  async handleToggleSupervision(enabled) {
+    this.log(`handleToggleSupervision called with enabled=${enabled}`);
+    this.supervisionEnabled = enabled;
+    this.log(`Supervision ${enabled ? "enabled" : "disabled"}`);
+    this.postToWebview({ type: "supervisionState", enabled });
+    if (enabled) {
+      this.log("About to call startSupervision()");
+      await this.startSupervision();
+      this.log("startSupervision() returned");
+    } else {
+      this.log("About to call stopSupervision()");
+      this.stopSupervision();
+      this.log("stopSupervision() returned");
+    }
+  }
+  async startSupervision() {
+    this.log(`startSupervision called, supervisionEnabled=${this.supervisionEnabled}, timer=${this.supervisionTimer !== null}`);
+    if (this.supervisionTimer) {
+      this.log("Timer already running, skipping start");
+      return;
+    }
+    const config = vscode3.workspace.getConfiguration("openclaw");
+    const intervalMinutes = config.get("supervisor.intervalMinutes", 5) || 5;
+    const reminderMessage = config.get("supervisor.reminderMessage", "") || "";
+    const agentId = config.get("supervisor.agentId", "") || "";
+    const stopInquiryMethod = config.get("supervisor.stopInquiryMethod", "") || "";
+    const stopSignalReply = config.get("supervisor.stopSignalReply", "yes") || "yes";
+    const stopSignalContent = config.get("supervisor.stopSignalContent", "") || "";
+    this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
+    if (!agentId) {
+      this.log("ERROR: agentId is empty! Cannot start supervision.");
+      vscode3.window.showWarningMessage(vscode3.l10n.t("OpenClaw: Supervisor agent ID not configured"));
+      this.supervisionEnabled = false;
+      return;
+    }
+    this.log(`Starting supervision with interval ${intervalMinutes}min, agent=${agentId}`);
+    const supervisorSessionKey = `agent:${agentId}:main`;
+    const HELLO_MESSAGE = "hello\uFF0C Next, we are ready to have a dialogue on supervision and judgment.Do not reply to the previous sentence.";
+    this.log(`Sending supervisor handshake: ${HELLO_MESSAGE}`);
+    try {
+      const runId = genId();
+      await this.gateway.request("chat.send", {
+        sessionKey: supervisorSessionKey,
+        message: HELLO_MESSAGE,
+        deliver: false,
+        idempotencyKey: runId
+      });
+      const handshakeReply = await this.waitForSupervisorResponse(supervisorSessionKey, 3e4);
+      this.log(`Supervisor handshake completed. Supervisor agent reply: ${handshakeReply ? handshakeReply : "(no reply within timeout)"}`);
+    } catch (err) {
+      this.log(`Supervisor handshake failed: ${err?.message || err}`);
+    }
+    this.supervisionTimer = setInterval(async () => {
+      this.log("Interval timer fired, calling runSupervisionCheck...");
+      await this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent);
+      this.log("runSupervisionCheck completed");
+    }, intervalMinutes * 60 * 1e3);
+    this.log("Running immediate supervision check...");
+    this.runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent).then(() => {
+      this.log("Immediate supervision check completed");
+    }).catch((err) => {
+      this.log(`Immediate supervision check error: ${err.message}`);
+    });
+  }
+  stopSupervision() {
+    this.log(`stopSupervision called, timer=${this.supervisionTimer !== null}`);
+    if (this.supervisionTimer) {
+      clearInterval(this.supervisionTimer);
+      this.supervisionTimer = null;
+      this.log("Supervision timer cleared");
+    }
+    if (this.supervisorBusy) {
+      this.log("WARNING: supervisorBusy is still true, clearing it");
+      this.supervisorBusy = false;
+    }
+    if (this.supervisorTimeout) {
+      clearTimeout(this.supervisorTimeout);
+      this.supervisorTimeout = null;
+      this.log("Supervisor request timeout cleared");
+    }
+    this.supervisorPendingSessionKey = null;
+    this.supervisorResponseResolver = null;
+    this.supervisorAccumulated = "";
+    this.log("Supervision stopped");
+  }
+  async runSupervisionCheck(intervalMinutes, reminderMessage, agentId, stopInquiryMethod, stopSignalReply, stopSignalContent) {
+    this.log(`runSupervisionCheck called: supervisionEnabled=${this.supervisionEnabled}, supervisorBusy=${this.supervisorBusy}`);
+    if (!this.supervisionEnabled) {
+      this.log("Supervision not enabled, returning");
+      return;
+    }
+    try {
+      this.log(`Fetching chat history for session: ${this.gwSessionKey()}`);
+      const res = await this.gateway.request("chat.history", {
+        sessionKey: this.gwSessionKey(),
+        limit: 10
+      });
+      const msgs = res?.messages || [];
+      this.log(`chat.history returned ${msgs.length} messages`);
+      let lastContent = "";
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        this.log(`  Checking message ${i}: role=${m.role}, hasContent=${!!m.content}`);
+        if (m.role === "assistant") {
+          const text = await this.extractHistoryContent(m.content);
+          this.log(`  Assistant message text length: ${text?.length || 0}`);
+          if (text && !text.startsWith("HEARTBEAT")) {
+            lastContent = text;
+            this.log(`  Found last assistant content (length=${lastContent.length}), breaking`);
+            break;
+          }
+        }
+      }
+      this.log(`Supervision check: last content length=${lastContent.length}, previous=${this.lastSupervisedContent.length}`);
+      const isFirstCheck = this.lastSupervisedContent.length === 0;
+      if (this.supervisorBusy) {
+        this.log(`Supervisor inquiry skipped: already busy`);
+        return;
+      }
+      this.supervisorBusy = true;
+      this.log(`Inquiring supervisor every check: ${agentId}`);
+      const inquiry = `${stopInquiryMethod}\uFF1A${lastContent}`;
+      const supervisorSessionKey = `agent:${agentId}:main`;
+      this.log(`Sending inquiry to supervisor session ${supervisorSessionKey}: ${inquiry.substring(0, 50)}...`);
+      const runId = genId();
+      try {
+        await this.gateway.request("chat.send", {
+          sessionKey: supervisorSessionKey,
+          message: inquiry,
+          deliver: false,
+          idempotencyKey: runId
+        });
+        this.log(`Waiting for supervisor response (timeout 120s)...`);
+        const reply = await this.waitForSupervisorResponse(supervisorSessionKey);
+        if (reply && reply.toLowerCase().trim() === stopSignalReply.toLowerCase().trim()) {
+          this.log(`Supervisor replied with stop signal: "${reply}"`);
+          this.supervisionEnabled = false;
+          this.stopSupervision();
+          this.postToWebview({ type: "supervisionState", enabled: false });
+          vscode3.window.showInformationMessage(vscode3.l10n.t("Supervision stopped by supervisor agent"));
+          this.supervisorBusy = false;
+          return;
+        } else {
+          this.log(`Supervisor replied: ${reply?.substring(0, 50)}... (not stop signal, continuing)`);
+        }
+        this.supervisorBusy = false;
+      } catch (err) {
+        this.log(`Supervisor inquiry failed: ${err.message}`);
+        this.supervisorBusy = false;
+      }
+      if (isFirstCheck) {
+        this.log(`First check, storing content baseline (length=${lastContent.length})`);
+        this.lastSupervisedContent = lastContent;
+        return;
+      }
+      if (lastContent === this.lastSupervisedContent && lastContent.length > 0) {
+        this.log(`Content SAME (length=${lastContent.length}) \u2192 sending reminder`);
+        if (reminderMessage) {
+          this.log(`Sending reminder to active agent: ${reminderMessage.substring(0, 50)}...`);
+          const runId2 = genId();
+          try {
+            await this.gateway.request("chat.send", {
+              sessionKey: this.gwSessionKey(),
+              message: reminderMessage,
+              deliver: false,
+              idempotencyKey: runId2
+            });
+            this.log(`Reminder sent successfully`);
+          } catch (err) {
+            this.log(`Reminder send failed: ${err.message}`);
+          }
+        } else {
+          this.log(`WARNING: reminderMessage is empty, skip sending`);
+        }
+      } else if (lastContent !== this.lastSupervisedContent && lastContent.length > 0) {
+        this.log(`Content DIFFERENT: previous=${this.lastSupervisedContent.length}, current=${lastContent.length}`);
+        if (stopSignalContent) {
+          const stopSignals = stopSignalContent.split("|").map((s) => s.trim()).filter((s) => s.length > 0);
+          if (stopSignals.some((signal) => lastContent.includes(signal))) {
+            this.log(`stopSignalContent matched in changed content: "${stopSignalContent.substring(0, 30)}"`);
+            this.supervisionEnabled = false;
+            this.stopSupervision();
+            this.postToWebview({ type: "supervisionState", enabled: false });
+            vscode3.window.showInformationMessage(vscode3.l10n.t("Supervision stopped: stop signal content detected"));
+            return;
+          } else {
+            this.log(`stopSignalContent not matched (or empty), continuing`);
+          }
+        }
+      } else {
+        this.log(`Last content is empty, updating baseline`);
+      }
+      this.lastSupervisedContent = lastContent;
+    } catch (err) {
+      this.log(`Supervision check error: ${err.message}`);
+    }
+  }
+  waitForSupervisorResponse(supervisorSessionKey, timeoutMs = 12e4) {
+    return new Promise((resolve2) => {
+      this.supervisorPendingSessionKey = supervisorSessionKey;
+      this.supervisorResponseResolver = resolve2;
+      this.supervisorAccumulated = "";
+      const timeout = setTimeout(() => {
+        this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
+        this.supervisorTimeout = null;
+        this.supervisorPendingSessionKey = null;
+        this.supervisorResponseResolver = null;
+        resolve2(this.supervisorAccumulated || null);
+      }, timeoutMs);
+      this.supervisorTimeout = timeout;
+    });
+  }
+  async handleLoadMessages(sessionKey, agentId, sessionId) {
+    const targetAgentId = agentId || this.activeAgent.id;
+    try {
+      const res = await this.gateway.request("chat.history", {
+        sessionKey: `agent:${targetAgentId}:${sessionKey}`,
+        limit: 200
+      });
+      const msgs = res?.messages || [];
+      this.log(`history: ${msgs.length} messages (key=agent:${targetAgentId}:${sessionKey} id=${res?.sessionId || sessionId || "-"})`);
+      const parsed = await Promise.all(
+        msgs.filter((m) => m.role === "user" || m.role === "assistant").map(async (m) => ({
+          role: m.role,
+          text: await this.extractHistoryContent(m.content),
+          timestamp: m.timestamp || Date.now(),
+          contentBlocks: Array.isArray(m.content) ? m.content : void 0
+        }))
+      );
+      let filtered = parsed.filter((m) => typeof m.text === "string" && m.text.trim() && !m.text.startsWith("HEARTBEAT"));
+      if (filtered.length > 0 && filtered[0].role === "user") {
+        filtered.shift();
+      }
+      const preambleFiltered = filtered.filter((m) => {
+        if (m.role !== "assistant" || !this.seenPreambleTexts.length)
+          return true;
+        return !isPreamble(m.text, this.seenPreambleTexts);
+      });
+      const seen = /* @__PURE__ */ new Set();
+      const merged = [];
+      for (const m of preambleFiltered) {
+        const cleanText = normText(stripMedia(m.text));
+        if (!cleanText && /<audio/i.test(m.text)) {
+          merged.push(m);
+          continue;
+        }
+        const key = m.role + "\0" + cleanText;
+        const isMedia = /<audio/i.test(m.text) || m.text.indexOf("MEDIA:") === 0;
+        if (isMedia) {
+          const idx = merged.findIndex((x) => x.role + "\0" + normText(stripMedia(x.text)) === key);
+          if (idx >= 0) {
+            merged[idx] = m;
+          } else {
+            merged.push(m);
+          }
+          seen.add(key);
+        } else {
+          if (seen.has(key))
+            continue;
+          seen.add(key);
+          merged.push(m);
+        }
+      }
+      this.log(`history dedup: ${parsed.length} parsed -> ${merged.length} shown (audio=${merged.filter((m) => /<audio/i.test(m.text)).length})`);
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: merged });
+    } catch (err) {
+      this.log(`history error: ${err.message}`);
+      this.postToWebview({ type: "loadMessages", sessionKey, gwKey: `agent:${targetAgentId}:${sessionKey}`, agentId: targetAgentId, sessionId, messages: [] });
+    }
+  }
+  async handleDeleteSession(sessionKey) {
+    try {
+      await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
+      await this.handleRequestSessions();
+    } catch {
+    }
+  }
+  async handleSwitchAgent(agentId) {
+    const agent = this.agents.find((a) => a.id === agentId);
+    if (agent) {
+      this.activeAgent = agent;
+      this.currentSessionKey = "main";
+      this.postToWebview({
+        type: "agentSwitched",
+        agent: this.activeAgent
+      });
+      await this.handleLoadMessages("main");
+      await this.handleRequestSessions();
+    }
+  }
+  postToWebview(msg) {
+    this.view?.webview.postMessage(msg);
+  }
+  /**
+   * 运行结束后延迟重新拉取历史，使服务端最终消息（含 TTS 语音/音频）立即呈现。
+   * 使用防抖，避免同一 run 的 final/aborted 触发多次重复刷新。
+   */
+  scheduleHistoryReload(sessionKey, agentId) {
+    if (this.historyReloadTimer)
+      clearTimeout(this.historyReloadTimer);
+    const localKey = this.resolveSession(sessionKey) || this.currentSessionKey;
+    const targetAgentId = agentId || this.activeAgent.id;
+    this.historyReloadTimer = setTimeout(async () => {
+      this.historyReloadTimer = null;
+      try {
+        await this.handleLoadMessages(localKey, targetAgentId);
+      } catch {
+      }
+    }, 900);
+  }
+  setBusy(active) {
+    if (active)
+      this.busyCount = Math.max(1, this.busyCount + 1);
+    else
+      this.busyCount = Math.max(0, this.busyCount - 1);
+    const n = this.busyCount;
+    this.postToWebview({
+      type: "busyState",
+      busy: n > 0,
+      label: n > 1 ? vscode3.l10n.t("Processing ({0} queued)", n) : vscode3.l10n.t("Processing...")
+    });
+    this.updateYieldState();
+  }
+  /**
+   * Start (or reset) the subagent activity timeout timer.
+   * When no subagent event arrives within SUBAGENT_ACTIVITY_TIMEOUT_MS,
+   * the indicator is hidden automatically.
+   */
+  startSubagentTimer() {
+    if (this.subagentTimer)
+      clearTimeout(this.subagentTimer);
+    this.subagentTimer = setTimeout(() => {
+      this.subagentTimer = null;
+      this.activeSubagentCount = 0;
+      this.postToWebview({
+        type: "subagentState",
+        active: false,
+        label: "",
+        state: ""
+      });
+      this.updateYieldState();
+    }, _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS);
+  }
+  /**
+   * Requirement B: heuristic sessions_yield detection.
+   * Yield state = busyCount > 0 AND there is recent subagent activity.
+   */
+  updateYieldState() {
+    const shouldYield = this.busyCount > 0 && Date.now() - this.lastSubagentEventMs < _OpenClawChatView.SUBAGENT_ACTIVITY_TIMEOUT_MS && this.activeSubagentCount > 0;
+    if (shouldYield === this.yieldState)
+      return;
+    this.yieldState = shouldYield;
+    this.postToWebview({
+      type: "yieldState",
+      active: shouldYield,
+      label: shouldYield ? vscode3.l10n.t("Waiting for subagent\u2026") : ""
+    });
+  }
+  getHtml() {
+    return getHtml();
   }
 };
-var MIME_MAP = {
-  ".txt": "text/plain",
-  ".md": "text/markdown",
-  ".json": "application/json",
-  ".js": "application/javascript",
-  ".ts": "application/typescript",
-  ".jsx": "application/javascript",
-  ".tsx": "application/typescript",
-  ".py": "text/x-python",
-  ".rb": "text/x-ruby",
-  ".go": "text/x-go",
-  ".rs": "text/x-rust",
-  ".java": "text/x-java",
-  ".c": "text/x-c",
-  ".cpp": "text/x-c++",
-  ".h": "text/x-c",
-  ".hpp": "text/x-c++",
-  ".cs": "text/x-csharp",
-  ".php": "text/x-php",
-  ".swift": "text/x-swift",
-  ".kt": "text/x-kotlin",
-  ".scala": "text/x-scala",
-  ".html": "text/html",
-  ".htm": "text/html",
-  ".css": "text/css",
-  ".scss": "text/x-scss",
-  ".less": "text/x-less",
-  ".xml": "application/xml",
-  ".yaml": "application/yaml",
-  ".yml": "application/yaml",
-  ".toml": "application/toml",
-  ".ini": "text/plain",
-  ".cfg": "text/plain",
-  ".sh": "text/x-shellscript",
-  ".bash": "text/x-shellscript",
-  ".zsh": "text/x-shellscript",
-  ".fish": "text/x-shellscript",
-  ".bat": "text/plain",
-  ".cmd": "text/plain",
-  ".ps1": "text/plain",
-  ".sql": "text/x-sql",
-  ".graphql": "text/x-graphql",
-  ".env": "text/plain",
-  ".gitignore": "text/plain",
-  ".dockerignore": "text/plain",
-  ".csv": "text/csv",
-  ".tsv": "text/tab-separated-values",
-  ".log": "text/plain",
-  ".conf": "text/plain",
-  ".config": "text/plain",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-  ".ico": "image/x-icon",
-  ".tiff": "image/tiff",
-  ".pdf": "application/pdf",
-  ".zip": "application/zip",
-  ".gz": "application/gzip",
-  ".tar": "application/x-tar",
-  ".mp3": "audio/mpeg",
-  ".mp4": "video/mp4",
-  ".wav": "audio/wav",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".wasm": "application/wasm"
-};
-function getMimeType(filePath) {
-  const dot = filePath.lastIndexOf(".");
-  if (dot === -1)
-    return "text/plain";
-  const ext = filePath.substring(dot).toLowerCase();
-  return MIME_MAP[ext] || "text/plain";
-}
-function getNonce() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
 
 // src/extension.ts
 var gateway;
@@ -6364,10 +6376,10 @@ var nodeHost;
 var chatView;
 var outputChannel;
 async function activate(context) {
-  outputChannel = vscode2.window.createOutputChannel("OpenClaw");
+  outputChannel = vscode4.window.createOutputChannel("OpenClaw");
   outputChannel.appendLine("Extension activating...");
   outputChannel.show(true);
-  const config = vscode2.workspace.getConfiguration("openclaw");
+  const config = vscode4.workspace.getConfiguration("openclaw");
   const url = config.get("gatewayUrl", "ws://127.0.0.1:18789");
   const token = config.get("token", "");
   gateway = new OpenClawGateway(url, token, outputChannel);
@@ -6438,25 +6450,25 @@ async function activate(context) {
     setTimeout(() => doApproveAndReconnect(), 3e3);
   });
   context.subscriptions.push(
-    vscode2.commands.registerCommand("openclaw.openChat", () => {
+    vscode4.commands.registerCommand("openclaw.openChat", () => {
       chatView.show();
     }),
-    vscode2.commands.registerCommand("openclaw.reconnect", () => {
+    vscode4.commands.registerCommand("openclaw.reconnect", () => {
       gateway.disconnect();
       nodeHost.disconnect();
       gateway.connect();
       nodeHost.connect();
     }),
-    vscode2.commands.registerCommand("openclaw.approvePairing", () => {
+    vscode4.commands.registerCommand("openclaw.approvePairing", () => {
       doApproveAndReconnect();
     }),
-    vscode2.commands.registerCommand("openclaw.newChat", () => {
+    vscode4.commands.registerCommand("openclaw.newChat", () => {
       chatView.newChat();
     }),
-    vscode2.commands.registerCommand("openclaw.settings", () => {
-      vscode2.commands.executeCommand("workbench.action.openSettings", "openclaw");
+    vscode4.commands.registerCommand("openclaw.settings", () => {
+      vscode4.commands.executeCommand("workbench.action.openSettings", "openclaw");
     }),
-    vscode2.commands.registerCommand("openclaw.resetDevice", () => {
+    vscode4.commands.registerCommand("openclaw.resetDevice", () => {
       gateway.resetDeviceIdentity({
         get(key) {
           return context.globalState.get(key);
@@ -6468,32 +6480,32 @@ async function activate(context) {
       context.globalState.update("nodeDeviceIdentityV2", void 0);
       gateway.disconnect();
       nodeHost.disconnect();
-      vscode2.window.showInformationMessage(vscode2.l10n.t("Device identities cleared. Reconnecting..."));
+      vscode4.window.showInformationMessage(vscode4.l10n.t("Device identities cleared. Reconnecting..."));
       gateway.connect();
       nodeHost.connect();
     }),
-    vscode2.window.registerWebviewViewProvider("openclaw.chatView", chatView, {
+    vscode4.window.registerWebviewViewProvider("openclaw.chatView", chatView, {
       webviewOptions: { retainContextWhenHidden: true }
     }),
-    vscode2.commands.registerCommand("openclaw.switchWorkdir", (uri) => {
+    vscode4.commands.registerCommand("openclaw.switchWorkdir", (uri) => {
       const folderPath = uri.fsPath;
       chatView.sendText(`Switch the working directory to ${folderPath}`);
       chatView.show();
     }),
-    vscode2.commands.registerCommand("openclaw.analyzeProject", (uri) => {
+    vscode4.commands.registerCommand("openclaw.analyzeProject", (uri) => {
       const folderPath = uri.fsPath;
-      chatView.sendText(vscode2.l10n.t("Analyze the code structure, file organization and tech stack of the project at {0}", folderPath));
+      chatView.sendText(vscode4.l10n.t("Analyze the code structure, file organization and tech stack of the project at {0}", folderPath));
       chatView.show();
     }),
-    vscode2.commands.registerCommand("openclaw.setInputText", (text) => {
+    vscode4.commands.registerCommand("openclaw.setInputText", (text) => {
       chatView.setInputText(text);
     }),
-    vscode2.commands.registerCommand("openclaw.setLogLevel", async () => {
+    vscode4.commands.registerCommand("openclaw.setLogLevel", async () => {
       const levels = ["None", "Error", "Warn", "Info", "Debug", "Trace"];
       const currentLevel = levels[getLogLevel()] || "Info";
-      const selected = await vscode2.window.showQuickPick(levels, {
-        placeHolder: vscode2.l10n.t("Select log level (current: {0})", currentLevel),
-        title: vscode2.l10n.t("OpenClaw: Set Log Level")
+      const selected = await vscode4.window.showQuickPick(levels, {
+        placeHolder: vscode4.l10n.t("Select log level (current: {0})", currentLevel),
+        title: vscode4.l10n.t("OpenClaw: Set Log Level")
       });
       if (selected) {
         const levelMap = {
@@ -6505,8 +6517,8 @@ async function activate(context) {
           "Trace": 5
         };
         setLogLevel(levelMap[selected]);
-        await config.update("logLevel", selected, vscode2.ConfigurationTarget.Global);
-        vscode2.window.showInformationMessage(vscode2.l10n.t("Log level changed to: {0}", selected));
+        await config.update("logLevel", selected, vscode4.ConfigurationTarget.Global);
+        vscode4.window.showInformationMessage(vscode4.l10n.t("Log level changed to: {0}", selected));
       }
     })
   );
@@ -6515,7 +6527,7 @@ async function activate(context) {
   });
   gateway.on("notification", (notif) => {
     outputChannel.appendLine(`NOTIFY: ${notif.title} - ${notif.message}`);
-    vscode2.window.showInformationMessage(`${notif.title}: ${notif.message}`);
+    vscode4.window.showInformationMessage(`${notif.title}: ${notif.message}`);
   });
   gateway.on("event", (msg) => {
     const event = msg.event;
