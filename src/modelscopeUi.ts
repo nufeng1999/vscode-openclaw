@@ -203,6 +203,44 @@ export function getModelscopeCss(): string {
   color: var(--text-muted);
   font-size: 12px;
 }
+/* 搜索框样式 */
+.modelscope-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+.modelscope-search-input {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modelscope-search-input:focus {
+  border-color: var(--accent);
+}
+.modelscope-search-clear {
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.modelscope-search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
 .modelscope-pagination {
   display: flex;
   align-items: center;
@@ -251,10 +289,15 @@ export function getModelscopeHtml(): string {
         <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
           <div id="agents-local-panel" class="agents-sub-panel active"></div>
           <div id="agents-modelscope-panel" class="agents-sub-panel">
+            <div id="modelscope-search" class="modelscope-search" style="display:none;">
+              <input type="text" id="modelscope-search-input" class="modelscope-search-input" placeholder="搜索 Modelscope Agents (名称、描述、标签...)">
+              <button type="button" id="modelscope-search-clear" class="modelscope-search-clear" title="清除搜索">清除搜索</button>
+            </div>
             <div id="modelscope-grid" class="modelscope-grid"></div>
             <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>正在加载 ModelScope 智能体...</div>
             <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
             <div id="modelscope-empty" class="modelscope-empty" style="display:none;">暂无智能体</div>
+            <div id="modelscope-no-results" class="modelscope-empty" style="display:none;">无匹配结果</div>
             <div id="modelscope-pagination" class="modelscope-pagination" style="display:none;">
               <button id="modelscope-prev" class="modelscope-page-btn" disabled>上一页</button>
               <span id="modelscope-page-info" class="modelscope-page-info">第 1 / 1 页</span>
@@ -290,6 +333,9 @@ export function getModelscopeJs(): string {
     var panelId = (tab === 'local') ? 'agents-local-panel' : 'agents-modelscope-panel';
     var panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
+    // 搜索框仅在 ModelScope 页签激活且已有数据时显示
+    var searchEl = document.getElementById('modelscope-search');
+    if (searchEl) searchEl.style.display = (tab === 'modelscope' && modelscopeState.agents && modelscopeState.agents.length > 0) ? 'flex' : 'none';
     console.log('[MS-DOM] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
     if (tab === 'modelscope') {
       if (!modelscopeState.loaded && !modelscopeState.loading) {
@@ -315,7 +361,64 @@ export function getModelscopeJs(): string {
     if (gridEl) gridEl.innerHTML = '';
     if (paginationEl) paginationEl.style.display = 'none';
     console.log('[MS] posting fetchModelscopeAgents message');
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    if (noResultsEl) noResultsEl.style.display = 'none';
     vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize });
+  }
+
+  // 按关键词本地过滤 Agent 列表（匹配 display_name/name/description/categories/custom_tags）
+  function filterAgentsByKeyword(keyword, agents) {
+    if (!keyword) return agents;
+    var kw = keyword.toLowerCase().trim();
+    return agents.filter(function(a) {
+      var haystack = (a.display_name || '') + ' ' + (a.name || '') + ' ' +
+        (a.description || '') + ' ' + (a.categories || []).join(' ') + ' ' +
+        (a.custom_tags || []).join(' ');
+      return haystack.toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+
+  // 执行本地搜索过滤：作用于当前页已加载列表；搜索激活时隐藏分页
+  function applyModelscopeSearch() {
+    var input = document.getElementById('modelscope-search-input');
+    var keyword = input ? input.value : '';
+    modelscopeState.searchKeyword = keyword;
+    var agents = modelscopeState.agents || [];
+    var filtered = filterAgentsByKeyword(keyword, agents);
+    console.log('[MS-Search] keyword:', keyword, 'loaded:', agents.length, 'matched:', filtered.length);
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    var emptyEl = document.getElementById('modelscope-empty');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (keyword.trim()) {
+      // 搜索激活：隐藏分页，显示过滤结果或"无匹配结果"占位
+      if (paginationEl) paginationEl.style.display = 'none';
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (filtered.length === 0) {
+        var grid = document.getElementById('modelscope-grid');
+        if (grid) grid.innerHTML = '';
+        if (noResultsEl) noResultsEl.style.display = 'block';
+      } else {
+        if (noResultsEl) noResultsEl.style.display = 'none';
+        renderModelscopeGrid(filtered);
+      }
+    } else {
+      // 清除搜索：恢复完整列表与分页控件
+      if (noResultsEl) noResultsEl.style.display = 'none';
+      if (agents.length === 0) {
+        if (emptyEl && modelscopeState.loaded) emptyEl.style.display = 'block';
+      } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        renderModelscopeGrid(agents);
+        renderModelscopePagination();
+      }
+    }
+  }
+
+  // 搜索输入防抖：300ms 后执行本地过滤，避免频繁触发
+  var msSearchTimer = null;
+  function onModelscopeSearchInput() {
+    if (msSearchTimer) clearTimeout(msSearchTimer);
+    msSearchTimer = setTimeout(applyModelscopeSearch, 300);
   }
 
   // Open agent detail on modelscope.cn
@@ -355,17 +458,6 @@ export function getModelscopeJs(): string {
     }
     grid.innerHTML = html;
     console.log('[MS-DOM] renderModelscopeGrid: grid child count=' + grid.children.length, 'grid rect=' + JSON.stringify(grid.getBoundingClientRect()));
-    // Event delegation for card clicks
-    grid.addEventListener('click', function(e) {
-      var openBtn = e.target.closest('.modelscope-open-btn');
-      if (openBtn) {
-        e.stopPropagation();
-        openModelscopeAgent(openBtn.dataset.agentId);
-        return;
-      }
-      var card = e.target.closest('.modelscope-agent-card');
-      if (card) openModelscopeAgent(card.dataset.agentId);
-    });
   }
 
   // Render pagination controls
@@ -394,6 +486,35 @@ export function getModelscopeJs(): string {
     });
   }
 
+  // 搜索输入框绑定：input 事件 + 300ms 防抖触发本地过滤
+  var msSearchInput = document.getElementById('modelscope-search-input');
+  if (msSearchInput) {
+    msSearchInput.addEventListener('input', onModelscopeSearchInput);
+  }
+  // 清除搜索按钮：清空输入并恢复完整列表
+  var msSearchClear = document.getElementById('modelscope-search-clear');
+  if (msSearchClear) {
+    msSearchClear.addEventListener('click', function() {
+      var input = document.getElementById('modelscope-search-input');
+      if (input) input.value = '';
+      applyModelscopeSearch();
+    });
+  }
+
+  // Initialize event delegation for ModelScope grid (bind ONCE)
+  var msGrid = document.getElementById('modelscope-grid');
+  if (msGrid) {
+    msGrid.addEventListener('click', function(e) {
+      var openBtn = e.target.closest('.modelscope-open-btn');
+      if (openBtn) {
+        e.stopPropagation();
+        openModelscopeAgent(openBtn.dataset.agentId);
+        return;
+      }
+      var card = e.target.closest('.modelscope-agent-card');
+      if (card) openModelscopeAgent(card.dataset.agentId);
+    });
+  }
   // Bind agents-sub-tab click events
   (function() {
     var btns = document.querySelectorAll('.agents-sub-tab');

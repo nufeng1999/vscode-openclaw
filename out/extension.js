@@ -5598,6 +5598,44 @@ function getModelscopeCss() {
   color: var(--text-muted);
   font-size: 12px;
 }
+/* \u641C\u7D22\u6846\u6837\u5F0F */
+.modelscope-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+.modelscope-search-input {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modelscope-search-input:focus {
+  border-color: var(--accent);
+}
+.modelscope-search-clear {
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.modelscope-search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
 .modelscope-pagination {
   display: flex;
   align-items: center;
@@ -5645,10 +5683,15 @@ function getModelscopeHtml() {
         <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
           <div id="agents-local-panel" class="agents-sub-panel active"></div>
           <div id="agents-modelscope-panel" class="agents-sub-panel">
+            <div id="modelscope-search" class="modelscope-search" style="display:none;">
+              <input type="text" id="modelscope-search-input" class="modelscope-search-input" placeholder="\u641C\u7D22 Modelscope Agents (\u540D\u79F0\u3001\u63CF\u8FF0\u3001\u6807\u7B7E...)">
+              <button type="button" id="modelscope-search-clear" class="modelscope-search-clear" title="\u6E05\u9664\u641C\u7D22">\u6E05\u9664\u641C\u7D22</button>
+            </div>
             <div id="modelscope-grid" class="modelscope-grid"></div>
             <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>\u6B63\u5728\u52A0\u8F7D ModelScope \u667A\u80FD\u4F53...</div>
             <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
             <div id="modelscope-empty" class="modelscope-empty" style="display:none;">\u6682\u65E0\u667A\u80FD\u4F53</div>
+            <div id="modelscope-no-results" class="modelscope-empty" style="display:none;">\u65E0\u5339\u914D\u7ED3\u679C</div>
             <div id="modelscope-pagination" class="modelscope-pagination" style="display:none;">
               <button id="modelscope-prev" class="modelscope-page-btn" disabled>\u4E0A\u4E00\u9875</button>
               <span id="modelscope-page-info" class="modelscope-page-info">\u7B2C 1 / 1 \u9875</span>
@@ -5683,6 +5726,9 @@ function getModelscopeJs() {
     var panelId = (tab === 'local') ? 'agents-local-panel' : 'agents-modelscope-panel';
     var panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
+    // \u641C\u7D22\u6846\u4EC5\u5728 ModelScope \u9875\u7B7E\u6FC0\u6D3B\u4E14\u5DF2\u6709\u6570\u636E\u65F6\u663E\u793A
+    var searchEl = document.getElementById('modelscope-search');
+    if (searchEl) searchEl.style.display = (tab === 'modelscope' && modelscopeState.agents && modelscopeState.agents.length > 0) ? 'flex' : 'none';
     console.log('[MS-DOM] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
     if (tab === 'modelscope') {
       if (!modelscopeState.loaded && !modelscopeState.loading) {
@@ -5708,7 +5754,64 @@ function getModelscopeJs() {
     if (gridEl) gridEl.innerHTML = '';
     if (paginationEl) paginationEl.style.display = 'none';
     console.log('[MS] posting fetchModelscopeAgents message');
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    if (noResultsEl) noResultsEl.style.display = 'none';
     vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize });
+  }
+
+  // \u6309\u5173\u952E\u8BCD\u672C\u5730\u8FC7\u6EE4 Agent \u5217\u8868\uFF08\u5339\u914D display_name/name/description/categories/custom_tags\uFF09
+  function filterAgentsByKeyword(keyword, agents) {
+    if (!keyword) return agents;
+    var kw = keyword.toLowerCase().trim();
+    return agents.filter(function(a) {
+      var haystack = (a.display_name || '') + ' ' + (a.name || '') + ' ' +
+        (a.description || '') + ' ' + (a.categories || []).join(' ') + ' ' +
+        (a.custom_tags || []).join(' ');
+      return haystack.toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+
+  // \u6267\u884C\u672C\u5730\u641C\u7D22\u8FC7\u6EE4\uFF1A\u4F5C\u7528\u4E8E\u5F53\u524D\u9875\u5DF2\u52A0\u8F7D\u5217\u8868\uFF1B\u641C\u7D22\u6FC0\u6D3B\u65F6\u9690\u85CF\u5206\u9875
+  function applyModelscopeSearch() {
+    var input = document.getElementById('modelscope-search-input');
+    var keyword = input ? input.value : '';
+    modelscopeState.searchKeyword = keyword;
+    var agents = modelscopeState.agents || [];
+    var filtered = filterAgentsByKeyword(keyword, agents);
+    console.log('[MS-Search] keyword:', keyword, 'loaded:', agents.length, 'matched:', filtered.length);
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    var emptyEl = document.getElementById('modelscope-empty');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (keyword.trim()) {
+      // \u641C\u7D22\u6FC0\u6D3B\uFF1A\u9690\u85CF\u5206\u9875\uFF0C\u663E\u793A\u8FC7\u6EE4\u7ED3\u679C\u6216"\u65E0\u5339\u914D\u7ED3\u679C"\u5360\u4F4D
+      if (paginationEl) paginationEl.style.display = 'none';
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (filtered.length === 0) {
+        var grid = document.getElementById('modelscope-grid');
+        if (grid) grid.innerHTML = '';
+        if (noResultsEl) noResultsEl.style.display = 'block';
+      } else {
+        if (noResultsEl) noResultsEl.style.display = 'none';
+        renderModelscopeGrid(filtered);
+      }
+    } else {
+      // \u6E05\u9664\u641C\u7D22\uFF1A\u6062\u590D\u5B8C\u6574\u5217\u8868\u4E0E\u5206\u9875\u63A7\u4EF6
+      if (noResultsEl) noResultsEl.style.display = 'none';
+      if (agents.length === 0) {
+        if (emptyEl && modelscopeState.loaded) emptyEl.style.display = 'block';
+      } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        renderModelscopeGrid(agents);
+        renderModelscopePagination();
+      }
+    }
+  }
+
+  // \u641C\u7D22\u8F93\u5165\u9632\u6296\uFF1A300ms \u540E\u6267\u884C\u672C\u5730\u8FC7\u6EE4\uFF0C\u907F\u514D\u9891\u7E41\u89E6\u53D1
+  var msSearchTimer = null;
+  function onModelscopeSearchInput() {
+    if (msSearchTimer) clearTimeout(msSearchTimer);
+    msSearchTimer = setTimeout(applyModelscopeSearch, 300);
   }
 
   // Open agent detail on modelscope.cn
@@ -5748,17 +5851,6 @@ function getModelscopeJs() {
     }
     grid.innerHTML = html;
     console.log('[MS-DOM] renderModelscopeGrid: grid child count=' + grid.children.length, 'grid rect=' + JSON.stringify(grid.getBoundingClientRect()));
-    // Event delegation for card clicks
-    grid.addEventListener('click', function(e) {
-      var openBtn = e.target.closest('.modelscope-open-btn');
-      if (openBtn) {
-        e.stopPropagation();
-        openModelscopeAgent(openBtn.dataset.agentId);
-        return;
-      }
-      var card = e.target.closest('.modelscope-agent-card');
-      if (card) openModelscopeAgent(card.dataset.agentId);
-    });
   }
 
   // Render pagination controls
@@ -5787,6 +5879,35 @@ function getModelscopeJs() {
     });
   }
 
+  // \u641C\u7D22\u8F93\u5165\u6846\u7ED1\u5B9A\uFF1Ainput \u4E8B\u4EF6 + 300ms \u9632\u6296\u89E6\u53D1\u672C\u5730\u8FC7\u6EE4
+  var msSearchInput = document.getElementById('modelscope-search-input');
+  if (msSearchInput) {
+    msSearchInput.addEventListener('input', onModelscopeSearchInput);
+  }
+  // \u6E05\u9664\u641C\u7D22\u6309\u94AE\uFF1A\u6E05\u7A7A\u8F93\u5165\u5E76\u6062\u590D\u5B8C\u6574\u5217\u8868
+  var msSearchClear = document.getElementById('modelscope-search-clear');
+  if (msSearchClear) {
+    msSearchClear.addEventListener('click', function() {
+      var input = document.getElementById('modelscope-search-input');
+      if (input) input.value = '';
+      applyModelscopeSearch();
+    });
+  }
+
+  // Initialize event delegation for ModelScope grid (bind ONCE)
+  var msGrid = document.getElementById('modelscope-grid');
+  if (msGrid) {
+    msGrid.addEventListener('click', function(e) {
+      var openBtn = e.target.closest('.modelscope-open-btn');
+      if (openBtn) {
+        e.stopPropagation();
+        openModelscopeAgent(openBtn.dataset.agentId);
+        return;
+      }
+      var card = e.target.closest('.modelscope-agent-card');
+      if (card) openModelscopeAgent(card.dataset.agentId);
+    });
+  }
   // Bind agents-sub-tab click events
   (function() {
     var btns = document.querySelectorAll('.agents-sub-tab');
@@ -6918,7 +7039,8 @@ ${getModelscopeHtml()}
     totalCount: 0,
     agents: [],
     loading: false,
-    loaded: false
+    loaded: false,
+    searchKeyword: ''
   };
   // Inject ModelScope JS functions
   ${getModelscopeJs()}
@@ -7615,16 +7737,40 @@ if (resizeHandle) {
         var msLoadingEl = document.getElementById('modelscope-loading');
         var msErrorEl = document.getElementById('modelscope-error');
         var msEmptyEl = document.getElementById('modelscope-empty');
+        var msNoResultsEl = document.getElementById('modelscope-no-results');
+        var msSearchEl = document.getElementById('modelscope-search');
         if (msLoadingEl) msLoadingEl.style.display = 'none';
         if (msErrorEl) msErrorEl.style.display = 'none';
-        if (modelscopeState.agents.length === 0) {
-          if (msEmptyEl) msEmptyEl.style.display = 'block';
-          var msPagEl = document.getElementById('modelscope-pagination');
-          if (msPagEl) msPagEl.style.display = 'none';
-        } else {
+        // \u663E\u793A\u641C\u7D22\u6846\uFF08\u6570\u636E\u5230\u8FBE\u540E\uFF09
+        if (msSearchEl) msSearchEl.style.display = 'flex';
+        // \u82E5\u5B58\u5728\u641C\u7D22\u5173\u952E\u8BCD\uFF0C\u5E94\u7528\u672C\u5730\u8FC7\u6EE4\u540E\u518D\u6E32\u67D3
+        var currentKeyword = modelscopeState.searchKeyword || '';
+        var filteredAgents = filterAgentsByKeyword(currentKeyword, modelscopeState.agents);
+        if (currentKeyword.trim()) {
+          // \u641C\u7D22\u6FC0\u6D3B\u72B6\u6001\uFF1A\u9690\u85CF\u5206\u9875\uFF0C\u6309\u8FC7\u6EE4\u7ED3\u679C\u6E32\u67D3
           if (msEmptyEl) msEmptyEl.style.display = 'none';
-          renderModelscopeGrid(modelscopeState.agents);
-          renderModelscopePagination();
+          var msPagEl2 = document.getElementById('modelscope-pagination');
+          if (msPagEl2) msPagEl2.style.display = 'none';
+          if (filteredAgents.length === 0) {
+            var msGridEl2 = document.getElementById('modelscope-grid');
+            if (msGridEl2) msGridEl2.innerHTML = '';
+            if (msNoResultsEl) msNoResultsEl.style.display = 'block';
+          } else {
+            if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+            renderModelscopeGrid(filteredAgents);
+          }
+        } else {
+          // \u65E0\u641C\u7D22\u5173\u952E\u8BCD\uFF1A\u6B63\u5E38\u6E32\u67D3\u5B8C\u6574\u5217\u8868
+          if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+          if (modelscopeState.agents.length === 0) {
+            if (msEmptyEl) msEmptyEl.style.display = 'block';
+            var msPagEl3 = document.getElementById('modelscope-pagination');
+            if (msPagEl3) msPagEl3.style.display = 'none';
+          } else {
+            if (msEmptyEl) msEmptyEl.style.display = 'none';
+            renderModelscopeGrid(modelscopeState.agents);
+            renderModelscopePagination();
+          }
         }
         var msGridEl = document.getElementById('modelscope-grid');
         var msPanelEl = document.getElementById('agents-modelscope-panel');
@@ -9803,7 +9949,11 @@ var _OpenClawChatView = class _OpenClawChatView {
       localResourceRoots: []
     };
     webviewView.webview.html = this.getHtml();
-    webviewView.webview.onDidReceiveMessage(async (msg) => {
+    if (this._messageHandlerDisposable) {
+      this._messageHandlerDisposable.dispose();
+      this._messageHandlerDisposable = void 0;
+    }
+    this._messageHandlerDisposable = webviewView.webview.onDidReceiveMessage(async (msg) => {
       handleWebviewMessage(msg, this);
     });
   }

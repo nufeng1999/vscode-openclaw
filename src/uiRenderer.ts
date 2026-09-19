@@ -1122,7 +1122,8 @@ ${getModelscopeHtml()}
     totalCount: 0,
     agents: [],
     loading: false,
-    loaded: false
+    loaded: false,
+    searchKeyword: ''
   };
   // Inject ModelScope JS functions
   ${getModelscopeJs()}
@@ -1819,16 +1820,40 @@ if (resizeHandle) {
         var msLoadingEl = document.getElementById('modelscope-loading');
         var msErrorEl = document.getElementById('modelscope-error');
         var msEmptyEl = document.getElementById('modelscope-empty');
+        var msNoResultsEl = document.getElementById('modelscope-no-results');
+        var msSearchEl = document.getElementById('modelscope-search');
         if (msLoadingEl) msLoadingEl.style.display = 'none';
         if (msErrorEl) msErrorEl.style.display = 'none';
-        if (modelscopeState.agents.length === 0) {
-          if (msEmptyEl) msEmptyEl.style.display = 'block';
-          var msPagEl = document.getElementById('modelscope-pagination');
-          if (msPagEl) msPagEl.style.display = 'none';
-        } else {
+        // 显示搜索框（数据到达后）
+        if (msSearchEl) msSearchEl.style.display = 'flex';
+        // 若存在搜索关键词，应用本地过滤后再渲染
+        var currentKeyword = modelscopeState.searchKeyword || '';
+        var filteredAgents = filterAgentsByKeyword(currentKeyword, modelscopeState.agents);
+        if (currentKeyword.trim()) {
+          // 搜索激活状态：隐藏分页，按过滤结果渲染
           if (msEmptyEl) msEmptyEl.style.display = 'none';
-          renderModelscopeGrid(modelscopeState.agents);
-          renderModelscopePagination();
+          var msPagEl2 = document.getElementById('modelscope-pagination');
+          if (msPagEl2) msPagEl2.style.display = 'none';
+          if (filteredAgents.length === 0) {
+            var msGridEl2 = document.getElementById('modelscope-grid');
+            if (msGridEl2) msGridEl2.innerHTML = '';
+            if (msNoResultsEl) msNoResultsEl.style.display = 'block';
+          } else {
+            if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+            renderModelscopeGrid(filteredAgents);
+          }
+        } else {
+          // 无搜索关键词：正常渲染完整列表
+          if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+          if (modelscopeState.agents.length === 0) {
+            if (msEmptyEl) msEmptyEl.style.display = 'block';
+            var msPagEl3 = document.getElementById('modelscope-pagination');
+            if (msPagEl3) msPagEl3.style.display = 'none';
+          } else {
+            if (msEmptyEl) msEmptyEl.style.display = 'none';
+            renderModelscopeGrid(modelscopeState.agents);
+            renderModelscopePagination();
+          }
         }
         var msGridEl = document.getElementById('modelscope-grid');
         var msPanelEl = document.getElementById('agents-modelscope-panel');

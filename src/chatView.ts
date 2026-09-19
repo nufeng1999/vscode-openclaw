@@ -42,6 +42,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private context: vscode.ExtensionContext;
   private gateway: OpenClawGateway;
   private log: (msg: string) => void;
+  // 存储 webview 消息处理器的 Disposable，用于清理旧监听器
+  private _messageHandlerDisposable?: vscode.Disposable;
   private messages: ChatMessage[] = [];
   private sessions: Session[] = [];
   private agents: Agent[] = [];
@@ -719,7 +721,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.getHtml();
 
-    webviewView.webview.onDidReceiveMessage(async (msg) => {
+    // 清理旧的监听器（如果存在），防止多次面板刷新时累积
+    if (this._messageHandlerDisposable) {
+      this._messageHandlerDisposable.dispose();
+      this._messageHandlerDisposable = undefined;
+    }
+
+    this._messageHandlerDisposable = webviewView.webview.onDidReceiveMessage(async (msg) => {
       handleWebviewMessage(msg, this as any);
     });
   }
