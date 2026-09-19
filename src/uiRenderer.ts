@@ -1,6 +1,7 @@
 import { formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce } from "./utils";
 import * as fs from "fs";
 import * as vscode from "vscode";
+import { getModelscopeCss, getModelscopeHtml, getModelscopeJs } from "./modelscopeUi";
 
 /**
  * Generate the complete webview HTML.
@@ -859,6 +860,7 @@ body {
 .agents-tree {
   padding: 8px;
 }
+${getModelscopeCss()}
 .agents-tree-item {
   display: flex;
   align-items: center;
@@ -1039,11 +1041,7 @@ body {
           </div>
         </div>
         <div id="tab-agents" class="tab-pane">
-          <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">工具栏</span>
-          </div>
-          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-          </div>
+${getModelscopeHtml()}
         </div>
       </div>
     </div>
@@ -1117,6 +1115,17 @@ body {
   let hudVisible = false;
   let agentsTreeData = null;
   let agentsTreeDir = '';
+  // ModelScope agents state
+  let modelscopeState = {
+    page: 1,
+    pageSize: 9,
+    totalCount: 0,
+    agents: [],
+    loading: false,
+    loaded: false
+  };
+  // Inject ModelScope JS functions
+  ${getModelscopeJs()}
   let messageHistory = [];
   let historyIndex = -1;
 
@@ -1715,6 +1724,7 @@ if (resizeHandle) {
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
+    console.log('[MS] Received message type:', msg.type);
     switch (msg.type) {
       case 'init':
         connected = msg.connected;
@@ -1792,12 +1802,48 @@ if (resizeHandle) {
       case 'agentsList':
         agents = msg.agents || [];
         renderAgentButtons();
-        renderAgentsTab();
+        renderLocalAgentsTree();
         break;
       case 'agentsTree':
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
-        renderAgentsTab();
+        renderLocalAgentsTree();
+        break;
+      case 'modelscopeAgentsResult':
+        console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
+        modelscopeState.loading = false;
+        modelscopeState.loaded = true;
+        modelscopeState.agents = msg.agents || [];
+        modelscopeState.totalCount = msg.totalCount || 0;
+        modelscopeState.page = msg.page || 1;
+        var msLoadingEl = document.getElementById('modelscope-loading');
+        var msErrorEl = document.getElementById('modelscope-error');
+        var msEmptyEl = document.getElementById('modelscope-empty');
+        if (msLoadingEl) msLoadingEl.style.display = 'none';
+        if (msErrorEl) msErrorEl.style.display = 'none';
+        if (modelscopeState.agents.length === 0) {
+          if (msEmptyEl) msEmptyEl.style.display = 'block';
+          var msPagEl = document.getElementById('modelscope-pagination');
+          if (msPagEl) msPagEl.style.display = 'none';
+        } else {
+          if (msEmptyEl) msEmptyEl.style.display = 'none';
+          renderModelscopeGrid(modelscopeState.agents);
+          renderModelscopePagination();
+        }
+        var msGridEl = document.getElementById('modelscope-grid');
+        var msPanelEl = document.getElementById('agents-modelscope-panel');
+        console.log('[MS-DOM] result handler: grid exists=' + !!msGridEl, 'grid innerHTML length=' + (msGridEl ? msGridEl.innerHTML.length : 0), 'panel class=' + (msPanelEl ? msPanelEl.className : 'null'), 'panel display=' + (msPanelEl ? getComputedStyle(msPanelEl).display : 'null'));
+        break;
+      case 'modelscopeAgentsError':
+        console.log('[MS] modelscopeAgentsError handler, error:', msg.error);
+        modelscopeState.loading = false;
+        var msLoadingEl2 = document.getElementById('modelscope-loading');
+        var msErrorEl2 = document.getElementById('modelscope-error');
+        if (msLoadingEl2) msLoadingEl2.style.display = 'none';
+        if (msErrorEl2) {
+          msErrorEl2.style.display = 'block';
+          msErrorEl2.innerHTML = '加载失败: ' + escapeHtml(msg.error || '未知错误') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ')">重试</button>';
+        }
         break;
       case 'defaultsLoaded':
         thinkingLevel = msg.thinkingLevel || '';
@@ -3217,8 +3263,10 @@ if (resizeHandle) {
     }
   }
 
-  function renderAgentsTab() {
-    const container = document.getElementById('tabAgentsContent');
+  function renderLocalAgentsTree() {
+    // 渲染到 agents-local-panel 内部（避免清空 modelscope 面板），若不存在则回退到 tabAgentsContent
+    var container = document.getElementById('agents-local-panel');
+    if (!container) container = document.getElementById('tabAgentsContent');
     if (!container) return;
     container.innerHTML = '';
     // vs10n: webview l10n helper with Chinese fallback

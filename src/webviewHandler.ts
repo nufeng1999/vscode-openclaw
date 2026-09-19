@@ -3,6 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { handleRequestAgentsTree } from "./agentTree";
+import { handleFetchModelscopeAgents as _handleFetchModelscopeAgents } from "./modelscopeHandler";
+import type { ModelScopeAgentItem, ModelScopeAgentListResponse } from "./modelscopeTypes";
 
 /**
  * Handle messages from the webview.
@@ -99,6 +101,14 @@ export async function handleWebviewMessage(
           break;
         case "requestAgentsTree":
           await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          break;
+        case "fetchModelscopeAgents":
+          await _handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 9);
+          break;
+        case "openModelscopeAgent":
+          if (msg.agentId) {
+            vscode.env.openExternal(vscode.Uri.parse("https://modelscope.cn/agents/" + msg.agentId));
+          }
           break;
         case "requestTasks":
           await ctx.handleRequestTasks();
@@ -300,3 +310,5 @@ export async function handleWebviewMessage(
           break;
       }
 }
+
+

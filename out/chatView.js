@@ -31,7 +31,7 @@
   ));
 
   // src/chatView.ts
-  var vscode3 = __toESM(__require("vscode"));
+  var vscode4 = __toESM(__require("vscode"));
 
   // src/logLevel.ts
   var LOG_NONE = 0;
@@ -228,7 +228,7 @@
   // src/webviewHandler.ts
   var fs2 = __toESM(__require("fs"));
   var path3 = __toESM(__require("path"));
-  var vscode = __toESM(__require("vscode"));
+  var vscode2 = __toESM(__require("vscode"));
 
   // src/agentTree.ts
   var fs = __toESM(__require("fs"));
@@ -285,6 +285,50 @@
     }
   }
 
+  // src/modelscopeHandler.ts
+  var vscode = __toESM(__require("vscode"));
+  async function handleFetchModelscopeAgents(ctx, page, pageSize) {
+    try {
+      console.log("[MS-H] handleFetchModelscopeAgents called, page:", page, "pageSize:", pageSize);
+      const url = "https://modelscope.cn/api/v1/agents?PageNumber=" + page + "&PageSize=" + pageSize;
+      const response = await fetch(url);
+      console.log("[MS-H] API response status:", response.status);
+      const data = await response.json();
+      if (data.Success && data.Data && Array.isArray(data.Data.AgentList)) {
+        const agents = data.Data.AgentList.map((raw) => {
+          const id = String(raw.Name || raw.id || "");
+          return {
+            id,
+            name: String(raw.Name || ""),
+            display_name: String(raw.DisplayName || raw.Name || ""),
+            description: String(raw.Description || ""),
+            categories: Array.isArray(raw.Catalogues) ? raw.Catalogues : [],
+            custom_tags: Array.isArray(raw.CustomTags) ? raw.CustomTags : [],
+            framework: String(raw.Framework || ""),
+            downloads: Number(raw.Downloads || 0),
+            likes: Number(raw.Stars || 0),
+            logo_url: String(raw.LogoUrl || "")
+          };
+        });
+        console.log("[MS-H] Posting result, agents count:", agents.length);
+        ctx.postToWebview({
+          type: "modelscopeAgentsResult",
+          agents,
+          totalCount: Number(data.Data.TotalCount || 0),
+          page,
+          pageSize
+        });
+      } else {
+        ctx.postToWebview({ type: "modelscopeAgentsError", error: String(data.Message || "\u8BF7\u6C42\u5931\u8D25") });
+      }
+    } catch (error) {
+      ctx.postToWebview({
+        type: "modelscopeAgentsError",
+        error: error instanceof Error ? error.message : "\u7F51\u7EDC\u9519\u8BEF"
+      });
+    }
+  }
+
   // src/webviewHandler.ts
   async function handleWebviewMessage(msg, ctx, webviewView) {
     switch (msg.type) {
@@ -338,6 +382,14 @@
         break;
       case "requestAgentsTree":
         await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+        break;
+      case "fetchModelscopeAgents":
+        await handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 9);
+        break;
+      case "openModelscopeAgent":
+        if (msg.agentId) {
+          vscode2.env.openExternal(vscode2.Uri.parse("https://modelscope.cn/agents/" + msg.agentId));
+        }
         break;
       case "requestTasks":
         await ctx.handleRequestTasks();
@@ -416,8 +468,8 @@
         await ctx.handleSwitchAgent(msg.agentId);
         break;
       case "copyCommand":
-        await vscode.env.clipboard.writeText(msg.text);
-        vscode.window.showInformationMessage(vscode.l10n.t("Copied to clipboard"));
+        await vscode2.env.clipboard.writeText(msg.text);
+        vscode2.window.showInformationMessage(vscode2.l10n.t("Copied to clipboard"));
         break;
       case "copyImage": {
         const dataUrl = msg.dataUrl;
@@ -440,7 +492,7 @@
                 }
                 if (pErr || !String(pStdout || "").includes("CLIP_SET_OK")) {
                   console.error("[copyImage] clipboard write failed:", pErr ? String(pErr) : "marker missing", String(pStdout || ""));
-                  vscode.window.showErrorMessage(vscode.l10n.t("Failed to copy image, please check output log"));
+                  vscode2.window.showErrorMessage(vscode2.l10n.t("Failed to copy image, please check output log"));
                 } else {
                   console.log("[copyImage] clipboard write OK");
                 }
@@ -448,7 +500,7 @@
             );
           } catch (copyErr) {
             console.error("copyImage failed:", copyErr);
-            vscode.window.showErrorMessage(vscode.l10n.t("Copy image failed: {0}", String(copyErr)));
+            vscode2.window.showErrorMessage(vscode2.l10n.t("Copy image failed: {0}", String(copyErr)));
           }
         }
         break;
@@ -456,48 +508,48 @@
       case "exportImage": {
         const dataUrl = msg.dataUrl;
         if (!dataUrl || typeof dataUrl !== "string") {
-          vscode.window.showErrorMessage(vscode.l10n.t("Export failed: no image data received"));
+          vscode2.window.showErrorMessage(vscode2.l10n.t("Export failed: no image data received"));
           break;
         }
         try {
           const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
           const ts = Date.now();
           const defaultName = "mermaid-" + ts + ".png";
-          const saveUri = await vscode.window.showSaveDialog({
-            title: vscode.l10n.t("Export Mermaid diagram as PNG"),
-            defaultUri: vscode.Uri.file(path3.join(__require("os").homedir(), "Downloads", defaultName)),
-            filters: { [vscode.l10n.t("PNG Image (*.png)")]: ["png"] }
+          const saveUri = await vscode2.window.showSaveDialog({
+            title: vscode2.l10n.t("Export Mermaid diagram as PNG"),
+            defaultUri: vscode2.Uri.file(path3.join(__require("os").homedir(), "Downloads", defaultName)),
+            filters: { [vscode2.l10n.t("PNG Image (*.png)")]: ["png"] }
           });
           if (!saveUri) {
             console.log("[exportImage] user cancelled save dialog");
             break;
           }
-          await vscode.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
+          await vscode2.workspace.fs.writeFile(saveUri, Buffer.from(base64Data, "base64"));
           console.log("[exportImage] file written:", saveUri.fsPath);
-          vscode.window.showInformationMessage(vscode.l10n.t("Exported: {0}", saveUri.fsPath));
+          vscode2.window.showInformationMessage(vscode2.l10n.t("Exported: {0}", saveUri.fsPath));
         } catch (exportErr) {
           console.error("exportImage failed:", exportErr);
-          vscode.window.showErrorMessage(vscode.l10n.t("Export failed: {0}", String(exportErr)));
+          vscode2.window.showErrorMessage(vscode2.l10n.t("Export failed: {0}", String(exportErr)));
         }
         break;
       }
       case "notify":
         if (msg && typeof msg.text === "string" && msg.text) {
-          vscode.window.showInformationMessage(msg.text);
+          vscode2.window.showInformationMessage(msg.text);
         }
         break;
       case "mermaidError":
         if (msg.text) {
-          vscode.window.showWarningMessage(
-            vscode.l10n.t("Mermaid diagram render failed: {0}", msg.text)
+          vscode2.window.showWarningMessage(
+            vscode2.l10n.t("Mermaid diagram render failed: {0}", msg.text)
           );
         }
         break;
       case "openSettings":
-        vscode.commands.executeCommand("workbench.action.openSettings", "openclaw");
+        vscode2.commands.executeCommand("workbench.action.openSettings", "openclaw");
         break;
       case "openModelPicker":
-        vscode.commands.executeCommand("openclaw.settings");
+        vscode2.commands.executeCommand("openclaw.settings");
         break;
       case "searchFiles":
         await ctx.handleSearchFiles(msg.query, msg.requestId);
@@ -509,11 +561,11 @@
         const p = msg.path;
         if (p) {
           try {
-            const uri = vscode.Uri.file(p);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: true });
+            const uri = vscode2.Uri.file(p);
+            const doc = await vscode2.workspace.openTextDocument(uri);
+            await vscode2.window.showTextDocument(doc, { preview: true });
           } catch (e) {
-            vscode.window.showErrorMessage(vscode.l10n.t("Failed to open file") + ": " + (e?.message || e));
+            vscode2.window.showErrorMessage(vscode2.l10n.t("Failed to open file") + ": " + (e?.message || e));
           }
         }
         break;
@@ -522,7 +574,7 @@
         await ctx.handleToggleSupervision(msg.enabled);
         break;
       case "reconnect":
-        vscode.commands.executeCommand("openclaw.reconnect");
+        vscode2.commands.executeCommand("openclaw.reconnect");
         break;
     }
   }
@@ -575,7 +627,422 @@
   }
 
   // src/uiRenderer.ts
-  var vscode2 = __toESM(__require("vscode"));
+  var vscode3 = __toESM(__require("vscode"));
+
+  // src/modelscopeUi.ts
+  function getModelscopeCss() {
+    return `
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+   Agents SUB-TABS (\u672C\u5730 / ModelScope)
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
+.agents-sub-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.agents-sub-tab {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.agents-sub-tab:hover {
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text);
+}
+.agents-sub-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.agents-sub-panel {
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+}
+.agents-sub-panel.active {
+  display: flex;
+}
+
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+   ModelScope Panel
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
+.modelscope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 8px;
+}
+.modelscope-agent-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(128, 128, 128, 0.04);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  overflow: hidden;
+  min-width: 0;
+}
+.modelscope-agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-color: var(--accent);
+}
+.modelscope-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.modelscope-card-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(128, 128, 128, 0.12);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--text-muted);
+}
+.modelscope-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.modelscope-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 3.2em;
+}
+.modelscope-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.modelscope-card-meta .ms-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.modelscope-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.modelscope-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.modelscope-tag.cat {
+  background: rgba(55, 148, 255, 0.15);
+  color: var(--accent);
+}
+/* \u5361\u7247\u5185\u90E8\u5C0F\u6309\u94AE\u6761 */
+.modelscope-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 2px;
+}
+.modelscope-open-btn {
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  background: transparent;
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.modelscope-open-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.modelscope-loading {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.modelscope-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 10px;
+}
+.modelscope-error {
+  text-align: center;
+  padding: 24px 12px;
+  color: #cc4444;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.modelscope-error .retry-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.modelscope-error .retry-btn:hover {
+  background: var(--hover);
+}
+.modelscope-empty {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.modelscope-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.modelscope-page-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.modelscope-page-btn:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.14);
+}
+.modelscope-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.modelscope-page-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+`;
+  }
+  function getModelscopeHtml() {
+    return `
+        <div id="progress-note-panel-header">
+          <span id="progress-note-panel-title">Agents</span>
+          <div class="agents-sub-tabs">
+            <button class="agents-sub-tab active" data-subtab="local">\u672C\u5730</button>
+            <button class="agents-sub-tab" data-subtab="modelscope">ModelScope</button>
+          </div>
+        </div>
+        <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
+          <div id="agents-local-panel" class="agents-sub-panel active"></div>
+          <div id="agents-modelscope-panel" class="agents-sub-panel">
+            <div id="modelscope-grid" class="modelscope-grid"></div>
+            <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>\u6B63\u5728\u52A0\u8F7D ModelScope \u667A\u80FD\u4F53...</div>
+            <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
+            <div id="modelscope-empty" class="modelscope-empty" style="display:none;">\u6682\u65E0\u667A\u80FD\u4F53</div>
+            <div id="modelscope-pagination" class="modelscope-pagination" style="display:none;">
+              <button id="modelscope-prev" class="modelscope-page-btn" disabled>\u4E0A\u4E00\u9875</button>
+              <span id="modelscope-page-info" class="modelscope-page-info">\u7B2C 1 / 1 \u9875</span>
+              <button id="modelscope-next" class="modelscope-page-btn" disabled>\u4E0B\u4E00\u9875</button>
+            </div>
+          </div>
+        </div>
+`;
+  }
+  function getModelscopeJs() {
+    return `
+  // HTML escape utility
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, function(c) {
+      return ({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'})[c];
+    });
+  }
+
+  // Switch between Local / ModelScope sub-panels
+  function switchAgentsSubTab(tab) {
+    console.log('[MS] switchAgentsSubTab called, tab:', tab);
+    document.querySelectorAll('.agents-sub-tab').forEach(function(el) {
+      el.classList.remove('active');
+    });
+    var btn = document.querySelector('[data-subtab="' + tab + '"]');
+    if (btn) btn.classList.add('active');
+    document.querySelectorAll('.agents-sub-panel').forEach(function(el) {
+      el.classList.remove('active');
+    });
+    console.log('[MS] modelscopeState.loaded:', modelscopeState.loaded, 'loading:', modelscopeState.loading);
+    var panelId = (tab === 'local') ? 'agents-local-panel' : 'agents-modelscope-panel';
+    var panel = document.getElementById(panelId);
+    if (panel) panel.classList.add('active');
+    console.log('[MS-DOM] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
+    if (tab === 'modelscope') {
+      if (!modelscopeState.loaded && !modelscopeState.loading) {
+        console.log('[MS] calling fetchModelscopeAgents(1)');
+        fetchModelscopeAgents(1);
+      }
+    }
+  }
+
+  // Fetch ModelScope agents from extension host
+  function fetchModelscopeAgents(page) {
+    console.log('[MS] fetchModelscopeAgents called, page:', page);
+    modelscopeState.loading = true;
+    modelscopeState.page = page;
+    var loadingEl = document.getElementById('modelscope-loading');
+    var errorEl = document.getElementById('modelscope-error');
+    var emptyEl = document.getElementById('modelscope-empty');
+    var gridEl = document.getElementById('modelscope-grid');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (errorEl) errorEl.style.display = 'none';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (gridEl) gridEl.innerHTML = '';
+    if (paginationEl) paginationEl.style.display = 'none';
+    console.log('[MS] posting fetchModelscopeAgents message');
+    vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize });
+  }
+
+  // Open agent detail on modelscope.cn
+  function openModelscopeAgent(agentId) {
+    vscode.postMessage({ type: 'openModelscopeAgent', agentId: agentId });
+  }
+
+  // Render agent cards grid (event delegation, no inline handlers)
+  function renderModelscopeGrid(agents) {
+    var grid = document.getElementById('modelscope-grid');
+    if (!grid) return;
+    var html = '';
+    for (var i = 0; i < agents.length; i++) {
+      var a = agents[i];
+      var tags = (a.custom_tags || []).slice(0, 3).map(function(t) {
+        return '<span class="modelscope-tag">' + escapeHtml(t) + '</span>';
+      }).join('');
+      var cats = (a.categories || []).slice(0, 2).map(function(c) {
+        return '<span class="modelscope-tag cat">' + escapeHtml(c) + '</span>';
+      }).join('');
+      var safeId = String(a.id || ''); // escapeHtml will handle XSS
+      html += '<div class="modelscope-agent-card" data-agent-id="' + escapeHtml(safeId) + '">'
+        + '<div class="modelscope-card-header">'
+        + (a.logo_url ? '<img class="modelscope-card-logo" src="' + escapeHtml(a.logo_url) + '" alt="">' : '<div class="modelscope-card-logo">&#129302;</div>')
+        + '<div class="modelscope-card-title" title="' + escapeHtml(a.display_name || '') + '">' + escapeHtml(a.display_name || a.id || '') + '</div>'
+        + '</div>'
+        + '<div class="modelscope-card-desc">' + escapeHtml((a.description || '').substring(0, 120)) + '</div>'
+        + '<div class="modelscope-card-meta">'
+        + '<span class="ms-meta-item">&#11015; ' + (a.downloads || 0) + '</span>'
+        + '<span class="ms-meta-item">&#9733; ' + (a.likes || 0) + '</span>'
+        + (a.framework ? '<span class="ms-meta-item">' + escapeHtml(a.framework) + '</span>' : '')
+        + '</div>'
+        + '<div class="modelscope-card-tags">' + cats + tags + '</div>'
+        + '<div class="modelscope-card-actions">'
+        + '<button class="modelscope-open-btn" data-action="open" data-agent-id="' + escapeHtml(safeId) + '">&#25171;&#24320;&#35814;&#24773;</button>'
+        + '</div></div>';
+    }
+    grid.innerHTML = html;
+    console.log('[MS-DOM] renderModelscopeGrid: grid child count=' + grid.children.length, 'grid rect=' + JSON.stringify(grid.getBoundingClientRect()));
+    // Event delegation for card clicks
+    grid.addEventListener('click', function(e) {
+      var openBtn = e.target.closest('.modelscope-open-btn');
+      if (openBtn) {
+        e.stopPropagation();
+        openModelscopeAgent(openBtn.dataset.agentId);
+        return;
+      }
+      var card = e.target.closest('.modelscope-agent-card');
+      if (card) openModelscopeAgent(card.dataset.agentId);
+    });
+  }
+
+  // Render pagination controls
+  function renderModelscopePagination() {
+    var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
+    var pageInfoEl = document.getElementById('modelscope-page-info');
+    var prevBtn = document.getElementById('modelscope-prev');
+    var nextBtn = document.getElementById('modelscope-next');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (pageInfoEl) pageInfoEl.textContent = '\u7B2C ' + modelscopeState.page + ' / ' + totalPages + ' \u9875 (\u5171 ' + modelscopeState.totalCount + ')';
+    if (prevBtn) prevBtn.disabled = modelscopeState.page <= 1;
+    if (nextBtn) nextBtn.disabled = modelscopeState.page >= totalPages;
+    if (paginationEl) paginationEl.style.display = 'flex';
+  }
+  // ModelScope sub-tab switching
+  document.querySelectorAll('.agents-sub-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchAgentsSubTab(btn.dataset.subtab));
+  });
+
+  // ModelScope pagination buttons
+  const msPrevBtn = document.getElementById('modelscope-prev');
+  const msNextBtn = document.getElementById('modelscope-next');
+  if (msPrevBtn) {
+    msPrevBtn.addEventListener('click', () => {
+      if (modelscopeState.page > 1) fetchModelscopeAgents(modelscopeState.page - 1);
+    });
+  }
+  if (msNextBtn) {
+    msNextBtn.addEventListener('click', () => {
+      fetchModelscopeAgents(modelscopeState.page + 1);
+    });
+  }
+
+  // Bind agents-sub-tab click events
+  (function() {
+    var btns = document.querySelectorAll('.agents-sub-tab');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function() {
+        var tab = this.getAttribute('data-subtab');
+        switchAgentsSubTab(tab);
+      });
+    }
+  })();
+`;
+  }
+
+  // src/uiRenderer.ts
   function getHtml() {
     const nonce = getNonce();
     return (
@@ -1431,6 +1898,7 @@ body {
 .agents-tree {
   padding: 8px;
 }
+${getModelscopeCss()}
 .agents-tree-item {
   display: flex;
   align-items: center;
@@ -1507,7 +1975,7 @@ body {
         <div class="agent-name" id="agentName">Agent</div>
         <div style="display:flex;align-items:center;">
           <div class="agent-status" id="agentStatus">Connecting...</div>
-          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode2.l10n.t("Reconnect")}</button>
+          <button class="btn-reconnect" id="btnReconnect" style="display:none;">${vscode3.l10n.t("Reconnect")}</button>
         </div>
       </div>
     </div>
@@ -1561,61 +2029,57 @@ body {
     <div id="messages-container">
   <div class="context-bar"><div class="context-fill" id="contextFill"></div></div>
   <div class="tabs-bar" id="tabsBar">
-    <button class="hud-toggle" id="hudToggle" title="${vscode2.l10n.t("Toggle HUD Panel")}">
+    <button class="hud-toggle" id="hudToggle" title="${vscode3.l10n.t("Toggle HUD Panel")}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     </button>
     <div class="tab-item active" data-session="main">Chat</div>
-    <button class="tab-add" id="btnAddTab" title="${vscode2.l10n.t("New chat")}">+</button>
+    <button class="tab-add" id="btnAddTab" title="${vscode3.l10n.t("New chat")}">+</button>
   </div>
   <div class="messages" id="messages">
     <div class="empty-state" id="emptyState">
       <div class="empty-icon">\u{1F4AC}</div>
-      <div class="empty-text">${vscode2.l10n.t("Start a conversation with your AI agent")}</div>
+      <div class="empty-text">${vscode3.l10n.t("Start a conversation with your AI agent")}</div>
     </div>
   </div>
   <div class="typing" id="typing">
     <div class="typing-dots"><span></span><span></span><span></span></div>
-    <span id="typingText">${vscode2.l10n.t("Thinking...")}</span>
+    <span id="typingText">${vscode3.l10n.t("Thinking...")}</span>
   </div>
   <div id="busyIndicator" class="busy-indicator hidden"></div>
   <div id="subagentIndicator" class="subagent-indicator hidden"></div>
   <div id="yieldIndicator" class="yield-indicator hidden"></div>
-  <div class="resize-handle" id="resizeHandle" title="${vscode2.l10n.t("Drag to resize")}"></div>
+  <div class="resize-handle" id="resizeHandle" title="${vscode3.l10n.t("Drag to resize")}"></div>
   </div> <!-- /messages-container -->
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode2.l10n.t("Progress Notes")}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode2.l10n.t("Tasks")}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode2.l10n.t("Sessions")}</div>
-        <div class="panel-tab" data-tab="agents">${vscode2.l10n.t("Agents")}</div>
-        <button id="progress-note-panel-toggle" title="${vscode2.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
+        <div class="panel-tab active" data-tab="notes">${vscode3.l10n.t("Progress Notes")}</div>
+        <div class="panel-tab" data-tab="tasks">${vscode3.l10n.t("Tasks")}</div>
+        <div class="panel-tab" data-tab="sessions">${vscode3.l10n.t("Sessions")}</div>
+        <div class="panel-tab" data-tab="agents">${vscode3.l10n.t("Agents")}</div>
+        <button id="progress-note-panel-toggle" title="${vscode3.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode2.l10n.t("Progress Notes")}</span>
+            <span id="progress-note-panel-title">${vscode3.l10n.t("Progress Notes")}</span>
           </div>
           <div id="progress-note-panel-content">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("Progress notes will appear here")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode3.l10n.t("Progress notes will appear here")}</div>
           </div>
         </div>
         <div id="tab-tasks" class="tab-pane">
           <div id="tasksListContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("No tasks")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode3.l10n.t("No tasks")}</div>
           </div>
         </div>
         <div id="tab-sessions" class="tab-pane">
           <div id="tabSessionsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode2.l10n.t("No sessions")}</div>
+            <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode3.l10n.t("No sessions")}</div>
           </div>
         </div>
         <div id="tab-agents" class="tab-pane">
-          <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">\u5DE5\u5177\u680F</span>
-          </div>
-          <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
-          </div>
+${getModelscopeHtml()}
         </div>
       </div>
     </div>
@@ -1625,25 +2089,25 @@ body {
       <span class="bar-chip" id="thinkingChip">think: default</span>
       <span class="bar-sep">\xB7</span>
       <span class="bar-chip" id="verboseChip">steps: default</span>
-      <label class="supervision-check" title="${vscode2.l10n.t("Automatic supervision agent.\nAutomatically disable after task execution is completed")}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
-        <input type="checkbox" id="supervisionCheck" title="${vscode2.l10n.t("Supervision")}">
-        <span>${vscode2.l10n.t("Supervision")}</span>
+      <label class="supervision-check" title="${vscode3.l10n.t("Automatic supervision agent.\nAutomatically disable after task execution is completed")}" style="margin-left:6px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="supervisionCheck" title="${vscode3.l10n.t("Supervision")}">
+        <span>${vscode3.l10n.t("Supervision")}</span>
       </label>
-      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode2.l10n.t("Open the current agent workspace")}" style="display:none;">\u{1F4C1}</button>
+      <button class="open-workdir-btn" id="openWorkdirBtn" title="${vscode3.l10n.t("Open the current agent workspace")}" style="display:none;">\u{1F4C1}</button>
     </div>
     <div class="attachment-preview" id="attachmentPreview"></div>
     <div class="input-row" style="position:relative;">
-      <button class="stop-btn" id="stopBtn" title="${vscode2.l10n.t("Stop")}">
+      <button class="stop-btn" id="stopBtn" title="${vscode3.l10n.t("Stop")}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="attach-btn" id="attachBtn" title="${vscode2.l10n.t("Attach files")}">\u{1F4CE}</button>
+      <button class="attach-btn" id="attachBtn" title="${vscode3.l10n.t("Attach files")}">\u{1F4CE}</button>
       <input type="file" id="attachInput" multiple style="visibility:hidden;position:absolute;left:-9999px;top:-9999px;" accept="*/*">
       <div style="flex:1;position:relative;">
         <div class="at-dropdown" id="atDropdown"></div>
         <div class="at-dropdown" id="slashDropdown"></div>
-        <textarea class="input-box" id="inputBox" placeholder="${vscode2.l10n.t("Message OpenClaw...")}" rows="1" style="width:100%;"></textarea>
+        <textarea class="input-box" id="inputBox" placeholder="${vscode3.l10n.t("Message OpenClaw...")}" rows="1" style="width:100%;"></textarea>
       </div>
-      <button class="send-btn" id="sendBtn" title="${vscode2.l10n.t("Send")}">
+      <button class="send-btn" id="sendBtn" title="${vscode3.l10n.t("Send")}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
     </div>
@@ -1689,6 +2153,17 @@ body {
   let hudVisible = false;
   let agentsTreeData = null;
   let agentsTreeDir = '';
+  // ModelScope agents state
+  let modelscopeState = {
+    page: 1,
+    pageSize: 9,
+    totalCount: 0,
+    agents: [],
+    loading: false,
+    loaded: false
+  };
+  // Inject ModelScope JS functions
+  ${getModelscopeJs()}
   let messageHistory = [];
   let historyIndex = -1;
 
@@ -2287,6 +2762,7 @@ if (resizeHandle) {
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
+    console.log('[MS] Received message type:', msg.type);
     switch (msg.type) {
       case 'init':
         connected = msg.connected;
@@ -2304,7 +2780,7 @@ if (resizeHandle) {
         }
         updateAgentCard();
         updateChips();
-        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode2.l10n.t("not configured")}';
+        serverValue.textContent = (gatewayUrl && gatewayUrl.indexOf('://') >= 0) ? gatewayUrl.slice(gatewayUrl.indexOf('://') + 3) : '${vscode3.l10n.t("not configured")}';
         if (msg.sessionKey) currentSession = msg.gwSessionKey || msg.sessionKey;
         // Show open-workdir button on init if connected
         if (openWorkdirBtn) {
@@ -2364,12 +2840,48 @@ if (resizeHandle) {
       case 'agentsList':
         agents = msg.agents || [];
         renderAgentButtons();
-        renderAgentsTab();
+        renderLocalAgentsTree();
         break;
       case 'agentsTree':
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
-        renderAgentsTab();
+        renderLocalAgentsTree();
+        break;
+      case 'modelscopeAgentsResult':
+        console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
+        modelscopeState.loading = false;
+        modelscopeState.loaded = true;
+        modelscopeState.agents = msg.agents || [];
+        modelscopeState.totalCount = msg.totalCount || 0;
+        modelscopeState.page = msg.page || 1;
+        var msLoadingEl = document.getElementById('modelscope-loading');
+        var msErrorEl = document.getElementById('modelscope-error');
+        var msEmptyEl = document.getElementById('modelscope-empty');
+        if (msLoadingEl) msLoadingEl.style.display = 'none';
+        if (msErrorEl) msErrorEl.style.display = 'none';
+        if (modelscopeState.agents.length === 0) {
+          if (msEmptyEl) msEmptyEl.style.display = 'block';
+          var msPagEl = document.getElementById('modelscope-pagination');
+          if (msPagEl) msPagEl.style.display = 'none';
+        } else {
+          if (msEmptyEl) msEmptyEl.style.display = 'none';
+          renderModelscopeGrid(modelscopeState.agents);
+          renderModelscopePagination();
+        }
+        var msGridEl = document.getElementById('modelscope-grid');
+        var msPanelEl = document.getElementById('agents-modelscope-panel');
+        console.log('[MS-DOM] result handler: grid exists=' + !!msGridEl, 'grid innerHTML length=' + (msGridEl ? msGridEl.innerHTML.length : 0), 'panel class=' + (msPanelEl ? msPanelEl.className : 'null'), 'panel display=' + (msPanelEl ? getComputedStyle(msPanelEl).display : 'null'));
+        break;
+      case 'modelscopeAgentsError':
+        console.log('[MS] modelscopeAgentsError handler, error:', msg.error);
+        modelscopeState.loading = false;
+        var msLoadingEl2 = document.getElementById('modelscope-loading');
+        var msErrorEl2 = document.getElementById('modelscope-error');
+        if (msLoadingEl2) msLoadingEl2.style.display = 'none';
+        if (msErrorEl2) {
+          msErrorEl2.style.display = 'block';
+          msErrorEl2.innerHTML = '\u52A0\u8F7D\u5931\u8D25: ' + escapeHtml(msg.error || '\u672A\u77E5\u9519\u8BEF') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ')">\u91CD\u8BD5</button>';
+        }
         break;
       case 'defaultsLoaded':
         thinkingLevel = msg.thinkingLevel || '';
@@ -2463,7 +2975,7 @@ if (resizeHandle) {
           streamEl = null;
         }
         streaming = true;
-        showTyping(true, '${vscode2.l10n.t("Thinking...")}');
+        showTyping(true, '${vscode3.l10n.t("Thinking...")}');
         sendBtn.style.display = 'none';
         stopBtn.classList.add('active');
         attachBtnEl.style.display = 'none';
@@ -2526,7 +3038,7 @@ if (resizeHandle) {
       }
       case 'toolCall':
         emptyState.style.display = 'none';
-        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode2.l10n.t("Thinking...")}');
+        showTyping(true, msg.phase === 'start' ? msg.label : '${vscode3.l10n.t("Thinking...")}');
         break;
       case 'historyUpdated':
         messageHistory = msg.messageHistory || [];
@@ -2541,12 +3053,12 @@ if (resizeHandle) {
       case 'autoContinueFailed': {
         if (!tabForStreamEvent(msg)) break;
         streaming = false;
-        appendMessage({ role: 'assistant', text: '${vscode2.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
+        appendMessage({ role: 'assistant', text: '${vscode3.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         showTyping(false);
         sendBtn.style.display = '';
         stopBtn.classList.remove('active');
         attachBtnEl.style.display = '';
-        activeTabMessages.push({ role: 'assistant', text: '${vscode2.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
+        activeTabMessages.push({ role: 'assistant', text: '${vscode3.l10n.t("Auto-continue failed after {0} attempts")}'.replace('{0}', msg.count), timestamp: Date.now() });
         this.setBusy(false);
         break;
       }
@@ -2645,7 +3157,7 @@ if (resizeHandle) {
   function renderAtDropdown() {
     if (!atVisible) return;
     if (atFiles.length === 0) {
-      atDropdown.innerHTML = '<div class="at-empty">${vscode2.l10n.t("No matching files")}</div>';
+      atDropdown.innerHTML = '<div class="at-empty">${vscode3.l10n.t("No matching files")}</div>';
       return;
     }
     atDropdown.innerHTML = '';
@@ -2760,7 +3272,7 @@ if (resizeHandle) {
     if (!slashVisible) return;
     const filtered = getFilteredSlashCommands();
     if (filtered.length === 0) {
-      slashDropdown.innerHTML = '<div class="at-empty">${vscode2.l10n.t("No matching commands")}</div>';
+      slashDropdown.innerHTML = '<div class="at-empty">${vscode3.l10n.t("No matching commands")}</div>';
       return;
     }
     slashDropdown.innerHTML = '';
@@ -3152,12 +3664,12 @@ if (resizeHandle) {
           const img = document.createElement('img');
           img.src = 'data:' + att.mimeType + ';base64,' + att.data;
           img.className = 'msg-attachment-img';
-          img.alt = att.name || '${vscode2.l10n.t("attachment")}';
+          img.alt = att.name || '${vscode3.l10n.t("attachment")}';
           attachDiv.appendChild(img);
         } else if (att.data) {
           const link = document.createElement('a');
           link.href = 'data:' + att.mimeType + ';base64,' + att.data;
-          link.textContent = att.name || '${vscode2.l10n.t("attachment")}';
+          link.textContent = att.name || '${vscode3.l10n.t("attachment")}';
           link.download = att.name || 'download';
           attachDiv.appendChild(link);
         }
@@ -3200,7 +3712,7 @@ if (resizeHandle) {
     console.log('[Mermaid Export] start, svgEl=', !!svgEl);
     if (!svgEl) {
       console.error('[Mermaid Export] No SVG found');
-      vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("SVG not found, cannot export")}' });
+      vscode.postMessage({ type: 'notify', text: '${vscode3.l10n.t("SVG not found, cannot export")}' });
       return;
     }
     try {
@@ -3266,7 +3778,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode2.l10n.t("Exported")}';
+        btnEl.textContent = '${vscode3.l10n.t("Exported")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -3275,11 +3787,11 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode2.l10n.t("Export failed")}';
+        btnEl.textContent = '${vscode3.l10n.t("Export failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
-      vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("Export failed")}: ' + (err && err.message ? err.message : String(err)) });
+      vscode.postMessage({ type: 'notify', text: '${vscode3.l10n.t("Export failed")}: ' + (err && err.message ? err.message : String(err)) });
     }
   }
 
@@ -3375,7 +3887,7 @@ if (resizeHandle) {
       if (btnEl) {
         const orig = btnEl.dataset.originalText || btnEl.textContent;
         btnEl.dataset.originalText = orig;
-        btnEl.textContent = '${vscode2.l10n.t("Copy failed")}';
+        btnEl.textContent = '${vscode3.l10n.t("Copy failed")}';
         btnEl.classList.add('copied');
         setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1500);
       }
@@ -3386,7 +3898,7 @@ if (resizeHandle) {
     if (!btnEl) return;
     const originalText = btnEl.dataset.originalText || btnEl.textContent;
     btnEl.dataset.originalText = originalText;
-    btnEl.textContent = '${vscode2.l10n.t("Copied")}';
+    btnEl.textContent = '${vscode3.l10n.t("Copied")}';
     btnEl.classList.add('copied');
     setTimeout(() => {
       btnEl.textContent = originalText;
@@ -3430,7 +3942,7 @@ if (resizeHandle) {
             header.className = 'mermaid-header';
             const label = document.createElement('span');
             label.className = 'mermaid-label';
-            label.textContent = '${vscode2.l10n.t("Mermaid")}';
+            label.textContent = '${vscode3.l10n.t("Mermaid")}';
             
             const svgContainer = document.createElement('div');
             svgContainer.className = 'mermaid-container';
@@ -3441,11 +3953,11 @@ if (resizeHandle) {
             viewToggle.className = 'mermaid-view-toggle';
             const btnGraphic = document.createElement('button');
             btnGraphic.className = 'mermaid-btn mermaid-btn-graphic active';
-            btnGraphic.textContent = '${vscode2.l10n.t("Image")}';
+            btnGraphic.textContent = '${vscode3.l10n.t("Image")}';
             btnGraphic.type = 'button';
             const btnSource = document.createElement('button');
             btnSource.className = 'mermaid-btn mermaid-btn-source';
-            btnSource.textContent = '${vscode2.l10n.t("Source")}';
+            btnSource.textContent = '${vscode3.l10n.t("Source")}';
             btnSource.type = 'button';
             
             // \u5207\u6362\u663E\u793A\u903B\u8F91
@@ -3462,7 +3974,7 @@ if (resizeHandle) {
             // \u590D\u5236\u6309\u94AE\uFF08\u6839\u636E\u5F53\u524D\u6FC0\u6D3B\u89C6\u56FE\u590D\u5236\u5BF9\u5E94\u5185\u5BB9\uFF09
             const copyBtn = document.createElement('button');
             copyBtn.className = 'mermaid-btn mermaid-copy-btn';
-            copyBtn.textContent = '${vscode2.l10n.t("Copy")}';
+            copyBtn.textContent = '${vscode3.l10n.t("Copy")}';
             copyBtn.type = 'button';
             copyBtn.addEventListener('click', () => {
               if (btnGraphic.classList.contains('active')) {
@@ -3475,12 +3987,12 @@ if (resizeHandle) {
             // \u5BFC\u51FA\u6309\u94AE\uFF08\u56FE\u6A21\u5F0F \u2192 PNG \u5BFC\u51FA\u4E3A\u672C\u5730\u6587\u4EF6\uFF1B\u6E90\u7801\u6A21\u5F0F\u7981\u7528\uFF09
             const exportBtn = document.createElement('button');
             exportBtn.className = 'mermaid-btn mermaid-export-btn';
-            exportBtn.textContent = '${vscode2.l10n.t("Export")}';
+            exportBtn.textContent = '${vscode3.l10n.t("Export")}';
             exportBtn.type = 'button';
-            exportBtn.title = '${vscode2.l10n.t("Export current Mermaid diagram as PNG file")}';
+            exportBtn.title = '${vscode3.l10n.t("Export current Mermaid diagram as PNG file")}';
             exportBtn.addEventListener('click', () => {
               if (!btnGraphic.classList.contains('active')) {
-                vscode.postMessage({ type: 'notify', text: '${vscode2.l10n.t("Please switch to diagram mode before exporting")}' });
+                vscode.postMessage({ type: 'notify', text: '${vscode3.l10n.t("Please switch to diagram mode before exporting")}' });
                 return;
               }
               exportSvgToPng(svgContainer, exportBtn);
@@ -3559,8 +4071,8 @@ if (resizeHandle) {
   function updateAgentCard() {
     agentOrb.textContent = agent.emoji || '\u{1F916}';
     agentOrb.className = 'agent-orb' + (connected ? ' online' : '');
-    agentNameEl.textContent = agent.name || agent.id || '${vscode2.l10n.t("Agent")}';
-    agentStatusEl.textContent = connected ? '${vscode2.l10n.t("online")}' : '${vscode2.l10n.t("disconnected")}';
+    agentNameEl.textContent = agent.name || agent.id || '${vscode3.l10n.t("Agent")}';
+    agentStatusEl.textContent = connected ? '${vscode3.l10n.t("online")}' : '${vscode3.l10n.t("disconnected")}';
     agentStatusEl.className = 'agent-status' + (connected ? ' online' : '');
     const btnReconnectEl = document.getElementById('btnReconnect');
     if (btnReconnectEl) {
@@ -3575,13 +4087,13 @@ if (resizeHandle) {
   }
 
   function updateChips() {
-    thinkingChip.textContent = '${vscode2.l10n.t("think: ")}' + (thinkingLevel || '${vscode2.l10n.t("default")}');
-    verboseChip.textContent = '${vscode2.l10n.t("steps: ")}' + (verboseLevel || '${vscode2.l10n.t("default")}');
-    reliabilityValue.textContent = (thinkingLevel || '${vscode2.l10n.t("default")}') + ' \xB7 ' + (verboseLevel || '${vscode2.l10n.t("default")}');
+    thinkingChip.textContent = '${vscode3.l10n.t("think: ")}' + (thinkingLevel || '${vscode3.l10n.t("default")}');
+    verboseChip.textContent = '${vscode3.l10n.t("steps: ")}' + (verboseLevel || '${vscode3.l10n.t("default")}');
+    reliabilityValue.textContent = (thinkingLevel || '${vscode3.l10n.t("default")}') + ' \xB7 ' + (verboseLevel || '${vscode3.l10n.t("default")}');
   }
 
   function renderModels(models) {
-    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode2.l10n.t("default")}';
+    modelValue.textContent = currentModel ? currentModel.split('/').pop() : '${vscode3.l10n.t("default")}';
   }
 
   function renderTasks(tasks) {
@@ -3789,7 +4301,7 @@ if (resizeHandle) {
     }
   }
 
-  function renderAgentsTab() {
+  function renderLocalAgentsTree() {
     const container = document.getElementById('tabAgentsContent');
     if (!container) return;
     container.innerHTML = '';
@@ -4008,7 +4520,7 @@ if (resizeHandle) {
       const ch = channel;
       this.log = (msg) => log(msg, LOG_INFO, ch);
       this.messageHistory = context.globalState.get("openclaw.messageHistory", []);
-      const config = vscode3.workspace.getConfiguration("openclaw");
+      const config = vscode4.workspace.getConfiguration("openclaw");
       this.gatewayUrl = config.get("gatewayUrl", "ws://127.0.0.1:18789");
       const configAgentId = config.get("agentId", "");
       const configSessionKey = config.get("sessionKey", "");
@@ -4192,7 +4704,7 @@ if (resizeHandle) {
           this.postToWebview({
             type: "subagentState",
             active: true,
-            label: vscode3.l10n.t("Subagent active: {0}", shortLabel),
+            label: vscode4.l10n.t("Subagent active: {0}", shortLabel),
             state
           });
           this.updateYieldState();
@@ -4536,7 +5048,7 @@ if (resizeHandle) {
       if (!text.trim())
         return;
       if (!this.gateway.connected) {
-        vscode3.window.showWarningMessage(vscode3.l10n.t("OpenClaw: Not connected to gateway"));
+        vscode4.window.showWarningMessage(vscode4.l10n.t("OpenClaw: Not connected to gateway"));
         return;
       }
       if (this.autoContinueCount > 0) {
@@ -4684,7 +5196,7 @@ if (resizeHandle) {
       const attachments = [];
       const MAX_TOTAL = 20 * 1024 * 1024;
       let totalSize = 0;
-      const folders = vscode3.workspace.workspaceFolders;
+      const folders = vscode4.workspace.workspaceFolders;
       const rootUri = folders && folders.length > 0 ? folders[0].uri : void 0;
       for (const relPath of fileRefs) {
         if (totalSize >= MAX_TOTAL)
@@ -4692,13 +5204,13 @@ if (resizeHandle) {
         try {
           if (!rootUri)
             continue;
-          const fileUri = vscode3.Uri.joinPath(rootUri, relPath);
-          const stat = await vscode3.workspace.fs.stat(fileUri);
+          const fileUri = vscode4.Uri.joinPath(rootUri, relPath);
+          const stat = await vscode4.workspace.fs.stat(fileUri);
           if (stat.size > MAX_TOTAL)
             continue;
           if (totalSize + stat.size > MAX_TOTAL)
             continue;
-          const bytes = await vscode3.workspace.fs.readFile(fileUri);
+          const bytes = await vscode4.workspace.fs.readFile(fileUri);
           const mimeType = getMimeType(relPath);
           const content = Buffer.from(bytes).toString("base64");
           attachments.push({
@@ -4757,7 +5269,7 @@ if (resizeHandle) {
     }
     async handleSearchFiles(query, requestId) {
       try {
-        const folders = vscode3.workspace.workspaceFolders;
+        const folders = vscode4.workspace.workspaceFolders;
         if (!folders || folders.length === 0) {
           this.postToWebview({ type: "fileResults", requestId, files: [] });
           return;
@@ -4780,8 +5292,8 @@ if (resizeHandle) {
                 return this.processSearchResults([], [...folders], cleanQuery, requestId, isRootFolder);
               }
               const basePattern = fileKeyword ? `**/*${fileKeyword}*` : `**/*`;
-              const relativePattern = new vscode3.RelativePattern(targetFolder, basePattern);
-              const uris2 = await vscode3.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
+              const relativePattern = new vscode4.RelativePattern(targetFolder, basePattern);
+              const uris2 = await vscode4.workspace.findFiles(relativePattern, "**/node_modules/**", 200);
               return this.processSearchResults(uris2, [...folders], cleanQuery, requestId, isRootFolder);
             } else if (fileKeyword) {
               pattern = `${dirPrefix}/**/*${fileKeyword}*`;
@@ -4792,7 +5304,7 @@ if (resizeHandle) {
             pattern = `**/*${query.replace(/[/\\]/g, "*")}*`;
           }
         }
-        const uris = await vscode3.workspace.findFiles(pattern, "**/node_modules/**", 200);
+        const uris = await vscode4.workspace.findFiles(pattern, "**/node_modules/**", 200);
         return this.processSearchResults(uris, [...folders], cleanQuery, requestId, isRootFolder);
       } catch {
         this.postToWebview({ type: "fileResults", requestId, files: [] });
@@ -4810,7 +5322,7 @@ if (resizeHandle) {
             browseUri = folder.uri;
             displayPrefix = "";
           } else {
-            browseUri = vscode3.Uri.joinPath(folder.uri, cleanQuery);
+            browseUri = vscode4.Uri.joinPath(folder.uri, cleanQuery);
             displayPrefix = cleanQuery;
           }
         } else {
@@ -4820,7 +5332,7 @@ if (resizeHandle) {
             const folder = folders.find((f) => f.name.toLowerCase() === folderName.toLowerCase());
             if (folder) {
               const relPath = cleanQuery.substring(sep + 1);
-              browseUri = vscode3.Uri.joinPath(folder.uri, relPath);
+              browseUri = vscode4.Uri.joinPath(folder.uri, relPath);
               displayPrefix = cleanQuery;
             }
           } else if (isRootFolder) {
@@ -4833,11 +5345,11 @@ if (resizeHandle) {
         }
         if (browseUri) {
           try {
-            const entries = await vscode3.workspace.fs.readDirectory(browseUri);
+            const entries = await vscode4.workspace.fs.readDirectory(browseUri);
             for (const [name, type] of entries) {
               if (name.startsWith("."))
                 continue;
-              const isDir = (type & vscode3.FileType.Directory) !== 0;
+              const isDir = (type & vscode4.FileType.Directory) !== 0;
               const fullPath = displayPrefix ? `${displayPrefix}/${name}` : name;
               if (!seen.has(fullPath)) {
                 seen.add(fullPath);
@@ -4849,8 +5361,8 @@ if (resizeHandle) {
         }
       }
       for (const uri of uris) {
-        const workspaceFolder = vscode3.workspace.getWorkspaceFolder(uri);
-        const relativePath = vscode3.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+        const workspaceFolder = vscode4.workspace.getWorkspaceFolder(uri);
+        const relativePath = vscode4.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
         let fullPath;
         if (folders.length > 1 && workspaceFolder) {
           fullPath = `${workspaceFolder.name}/${relativePath}`;
@@ -4863,8 +5375,8 @@ if (resizeHandle) {
         const parts = fullPath.split("/");
         let isDir = false;
         try {
-          const stat = await vscode3.workspace.fs.stat(uri);
-          isDir = (stat.type & vscode3.FileType.Directory) !== 0;
+          const stat = await vscode4.workspace.fs.stat(uri);
+          isDir = (stat.type & vscode4.FileType.Directory) !== 0;
         } catch {
           isDir = false;
         }
@@ -4980,12 +5492,12 @@ if (resizeHandle) {
           workspace3 = config?.agents?.defaults?.workspace || config?.workspace || "";
         }
         if (!workspace3) {
-          vscode3.window.showWarningMessage(vscode3.l10n.t("Could not determine working directory"));
+          vscode4.window.showWarningMessage(vscode4.l10n.t("Could not determine working directory"));
           return;
         }
         const normalizedPath = workspace3.replace(/^[a-z]:/i, (match) => match.toUpperCase());
-        const workspaceUri = vscode3.Uri.file(normalizedPath);
-        const folders = vscode3.workspace.workspaceFolders;
+        const workspaceUri = vscode4.Uri.file(normalizedPath);
+        const folders = vscode4.workspace.workspaceFolders;
         let alreadyExists = false;
         if (folders) {
           for (const folder of folders) {
@@ -4996,30 +5508,30 @@ if (resizeHandle) {
           }
         }
         if (alreadyExists) {
-          await vscode3.commands.executeCommand("workbench.view.explorer");
-          await vscode3.commands.executeCommand("revealInExplorer", workspaceUri);
-          await vscode3.commands.executeCommand("list.expand");
-          vscode3.window.showInformationMessage(vscode3.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
+          await vscode4.commands.executeCommand("workbench.view.explorer");
+          await vscode4.commands.executeCommand("revealInExplorer", workspaceUri);
+          await vscode4.commands.executeCommand("list.expand");
+          vscode4.window.showInformationMessage(vscode4.l10n.t("Expanded workspace folder: {0}", workspaceUri.fsPath));
           return;
         }
-        const currentFolders = vscode3.workspace.workspaceFolders;
+        const currentFolders = vscode4.workspace.workspaceFolders;
         const replaceFolders = currentFolders ? currentFolders.map((f) => ({ uri: f.uri })) : [];
         replaceFolders.push({ uri: workspaceUri });
-        const success = vscode3.workspace.updateWorkspaceFolders(
+        const success = vscode4.workspace.updateWorkspaceFolders(
           0,
           currentFolders ? currentFolders.length : 0,
           ...replaceFolders
         );
         if (success) {
-          vscode3.window.showInformationMessage(vscode3.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
+          vscode4.window.showInformationMessage(vscode4.l10n.t("Added folder to workspace: {0}", workspaceUri.fsPath));
         } else {
-          vscode3.window.showErrorMessage(
+          vscode4.window.showErrorMessage(
             `Failed to add folder to workspace: ${workspaceUri.fsPath}. You may need to open a workspace (.code-workspace) file first.`
           );
         }
       } catch (err) {
         this.log(`openWorkdir error: ${err.message}`);
-        vscode3.window.showErrorMessage(vscode3.l10n.t("Failed to open working directory: {0}", err.message));
+        vscode4.window.showErrorMessage(vscode4.l10n.t("Failed to open working directory: {0}", err.message));
       }
     }
     async handleToggleSupervision(enabled) {
@@ -5043,7 +5555,7 @@ if (resizeHandle) {
         this.log("Timer already running, skipping start");
         return;
       }
-      const config = vscode3.workspace.getConfiguration("openclaw");
+      const config = vscode4.workspace.getConfiguration("openclaw");
       const intervalMinutes = config.get("supervisor.intervalMinutes", 5) || 5;
       const reminderMessage = config.get("supervisor.reminderMessage", "") || "";
       const agentId = config.get("supervisor.agentId", "") || "";
@@ -5053,7 +5565,7 @@ if (resizeHandle) {
       this.log(`Config read: interval=${intervalMinutes}min, agentId=${agentId}, reminder=${reminderMessage.substring(0, 30)}, inquiryMethod=${stopInquiryMethod}, stopSignal=${stopSignalReply}, stopSignalContent=${stopSignalContent.substring(0, 30)}`);
       if (!agentId) {
         this.log("ERROR: agentId is empty! Cannot start supervision.");
-        vscode3.window.showWarningMessage(vscode3.l10n.t("OpenClaw: Supervisor agent ID not configured"));
+        vscode4.window.showWarningMessage(vscode4.l10n.t("OpenClaw: Supervisor agent ID not configured"));
         this.supervisionEnabled = false;
         return;
       }
@@ -5161,7 +5673,7 @@ if (resizeHandle) {
             this.supervisionEnabled = false;
             this.stopSupervision();
             this.postToWebview({ type: "supervisionState", enabled: false });
-            vscode3.window.showInformationMessage(vscode3.l10n.t("Supervision stopped by supervisor agent"));
+            vscode4.window.showInformationMessage(vscode4.l10n.t("Supervision stopped by supervisor agent"));
             this.supervisorBusy = false;
             return;
           } else {
@@ -5205,7 +5717,7 @@ if (resizeHandle) {
               this.supervisionEnabled = false;
               this.stopSupervision();
               this.postToWebview({ type: "supervisionState", enabled: false });
-              vscode3.window.showInformationMessage(vscode3.l10n.t("Supervision stopped: stop signal content detected"));
+              vscode4.window.showInformationMessage(vscode4.l10n.t("Supervision stopped: stop signal content detected"));
               return;
             } else {
               this.log(`stopSignalContent not matched (or empty), continuing`);
@@ -5341,7 +5853,7 @@ if (resizeHandle) {
       this.postToWebview({
         type: "busyState",
         busy: n > 0,
-        label: n > 1 ? vscode3.l10n.t("Processing ({0} queued)", n) : vscode3.l10n.t("Processing...")
+        label: n > 1 ? vscode4.l10n.t("Processing ({0} queued)", n) : vscode4.l10n.t("Processing...")
       });
       this.updateYieldState();
     }
@@ -5377,7 +5889,7 @@ if (resizeHandle) {
       this.postToWebview({
         type: "yieldState",
         active: shouldYield,
-        label: shouldYield ? vscode3.l10n.t("Waiting for subagent\u2026") : ""
+        label: shouldYield ? vscode4.l10n.t("Waiting for subagent\u2026") : ""
       });
     }
     getHtml() {
