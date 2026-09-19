@@ -105,6 +105,26 @@ export function getModelscopeCss(): string {
   -webkit-box-orient: vertical;
   overflow: hidden;
   min-height: 3.2em;
+  position: relative;
+}
+/* ── Custom hover tooltip for truncated description ── */
+.ms-desc-tooltip {
+  display: none;
+  position: fixed;
+  max-width: 26ch;
+  min-width: 120px;
+  background: var(--bg2, #252526);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text, #cccccc);
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: normal;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 10000;
+  pointer-events: none;
 }
 .modelscope-card-meta {
   display: flex;
@@ -567,7 +587,9 @@ export function getModelscopeJs(): string {
         + (a.logo_url ? '<img class="modelscope-card-logo" src="' + escapeHtml(a.logo_url) + '" alt="">' : '<div class="modelscope-card-logo">&#129302;</div>')
         + '<div class="modelscope-card-title" title="' + escapeHtml(a.display_name || '') + '">' + escapeHtml(a.display_name || a.id || '') + '</div>'
         + '</div>'
-        + '<div class="modelscope-card-desc">' + escapeHtml((a.description || '').substring(0, 120)) + '</div>'
+        + '<div class="modelscope-card-desc"' + ((a.description || '').length > 40 ? ' data-full-desc="' + escapeHtml(a.description) + '"' : '') + '>'
+        + escapeHtml((a.description || '').substring(0, 120))
+        + '</div>'
         + '<div class="modelscope-card-meta">'
         + '<span class="ms-meta-item">&#11015; ' + (a.downloads || 0) + '</span>'
         + '<span class="ms-meta-item">&#9733; ' + (a.likes || 0) + '</span>'
@@ -694,6 +716,47 @@ export function getModelscopeJs(): string {
       var card = e.target.closest('.modelscope-agent-card');
       if (card) openModelscopeAgent(card.dataset.agentId);
     });
+
+    // ── Tooltip hover handler for truncated descriptions ──
+    // Tooltip is dynamically created and appended to document.body to escape
+    // the parent's -webkit-line-clamp overflow:hidden clipping in webviews.
+    var msTooltipEl = null;
+    function _createMsTooltip(el) {
+      if (!msTooltipEl) {
+        msTooltipEl = document.createElement('div');
+        msTooltipEl.className = 'ms-desc-tooltip';
+        document.body.appendChild(msTooltipEl);
+      }
+      msTooltipEl.textContent = el.getAttribute('data-full-desc') || '';
+    }
+    function _positionMsTooltip(tipEl, descEl) {
+      var rect = descEl.getBoundingClientRect();
+      var tipRect = tipEl.getBoundingClientRect();
+      var top = rect.bottom + 4;
+      var left = rect.left;
+      if (left + 220 > window.innerWidth) left = window.innerWidth - 230;
+      if (left < 10) left = 10;
+      if (top + tipRect.height > window.innerHeight - 10) {
+        top = rect.top - tipRect.height - 4;
+      }
+      tipEl.style.top = Math.max(4, top) + 'px';
+      tipEl.style.left = left + 'px';
+    }
+    msGrid.addEventListener('mouseover', function(e) {
+      var desc = e.target.closest('.modelscope-card-desc[data-full-desc]');
+      if (!desc) return;
+      _createMsTooltip(desc);
+      if (!msTooltipEl) return;
+      _positionMsTooltip(msTooltipEl, desc);
+      msTooltipEl.style.display = 'block';
+    }, true);
+    msGrid.addEventListener('mouseout', function(e) {
+      var desc = e.target.closest('.modelscope-card-desc[data-full-desc]');
+      if (!desc) return;
+      var related = e.relatedTarget;
+      if (related && desc.contains(related)) return;
+      if (msTooltipEl) msTooltipEl.style.display = 'none';
+    }, true);
   }
   // 初始化分类标签区
   renderModelscopeCategories();
