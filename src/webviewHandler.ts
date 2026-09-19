@@ -103,7 +103,7 @@ export async function handleWebviewMessage(
           await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
           break;
         case "fetchModelscopeAgents":
-          await _handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 9);
+          await _handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 12, msg.category || '');
           break;
         case "openModelscopeAgent":
           if (msg.agentId) {

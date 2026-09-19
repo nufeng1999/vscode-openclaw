@@ -1118,12 +1118,13 @@ ${getModelscopeHtml()}
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
-    pageSize: 9,
+    pageSize: 12,
     totalCount: 0,
     agents: [],
     loading: false,
     loaded: false,
-    searchKeyword: ''
+    searchKeyword: '',
+    category: ''
   };
   // Inject ModelScope JS functions
   ${getModelscopeJs()}
@@ -1812,11 +1813,15 @@ if (resizeHandle) {
         break;
       case 'modelscopeAgentsResult':
         console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
+        console.log('[MS] Received page:', msg.page, 'totalCount:', msg.totalCount);
         modelscopeState.loading = false;
         modelscopeState.loaded = true;
         modelscopeState.agents = msg.agents || [];
         modelscopeState.totalCount = msg.totalCount || 0;
         modelscopeState.page = msg.page || 1;
+        // 同步后端实际返回的 pageSize（响应中携带），避免前端始终按初始值渲染
+        if (msg.pageSize && msg.pageSize > 0) modelscopeState.pageSize = msg.pageSize;
+        console.log('[MS] Updated state - page:', modelscopeState.page, 'agents length:', modelscopeState.agents.length);
         var msLoadingEl = document.getElementById('modelscope-loading');
         var msErrorEl = document.getElementById('modelscope-error');
         var msEmptyEl = document.getElementById('modelscope-empty');
@@ -1824,8 +1829,11 @@ if (resizeHandle) {
         var msSearchEl = document.getElementById('modelscope-search');
         if (msLoadingEl) msLoadingEl.style.display = 'none';
         if (msErrorEl) msErrorEl.style.display = 'none';
-        // 显示搜索框（数据到达后）
+        // 显示搜索框与分类标签区（数据到达后）
         if (msSearchEl) msSearchEl.style.display = 'flex';
+        var msCatEl = document.getElementById('modelscope-categories');
+        if (msCatEl) msCatEl.style.display = 'flex';
+        updateModelscopeCategoryHighlight();
         // 若存在搜索关键词，应用本地过滤后再渲染
         var currentKeyword = modelscopeState.searchKeyword || '';
         var filteredAgents = filterAgentsByKeyword(currentKeyword, modelscopeState.agents);
@@ -1867,7 +1875,7 @@ if (resizeHandle) {
         if (msLoadingEl2) msLoadingEl2.style.display = 'none';
         if (msErrorEl2) {
           msErrorEl2.style.display = 'block';
-          msErrorEl2.innerHTML = '加载失败: ' + escapeHtml(msg.error || '未知错误') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ')">重试</button>';
+          msErrorEl2.innerHTML = '加载失败: ' + escapeHtml(msg.error || '未知错误') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ', modelscopeState.category)">重试</button>';
         }
         break;
       case 'defaultsLoaded':

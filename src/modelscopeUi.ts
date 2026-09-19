@@ -241,6 +241,38 @@ export function getModelscopeCss(): string {
   background: var(--hover);
   color: var(--text);
 }
+/* 分类标签区：搜索框下方，横向排列，可滚动 */
+.modelscope-categories {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.modelscope-categories::-webkit-scrollbar { height: 4px; }
+.modelscope-categories::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.modelscope-cat-tag {
+  padding: 4px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.modelscope-cat-tag:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.modelscope-cat-tag.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .modelscope-pagination {
   display: flex;
   align-items: center;
@@ -274,6 +306,22 @@ export function getModelscopeCss(): string {
   color: var(--text-muted);
   white-space: nowrap;
 }
+.modelscope-page-input {
+  width: 50px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modelscope-page-input:focus {
+  border-color: var(--accent);
+}
 `;
 }
 
@@ -293,6 +341,7 @@ export function getModelscopeHtml(): string {
               <input type="text" id="modelscope-search-input" class="modelscope-search-input" placeholder="搜索 Modelscope Agents (名称、描述、标签...)">
               <button type="button" id="modelscope-search-clear" class="modelscope-search-clear" title="清除搜索">清除搜索</button>
             </div>
+            <div id="modelscope-categories" class="modelscope-categories" style="display:none;"></div>
             <div id="modelscope-grid" class="modelscope-grid"></div>
             <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>正在加载 ModelScope 智能体...</div>
             <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
@@ -300,7 +349,7 @@ export function getModelscopeHtml(): string {
             <div id="modelscope-no-results" class="modelscope-empty" style="display:none;">无匹配结果</div>
             <div id="modelscope-pagination" class="modelscope-pagination" style="display:none;">
               <button id="modelscope-prev" class="modelscope-page-btn" disabled>上一页</button>
-              <span id="modelscope-page-info" class="modelscope-page-info">第 1 / 1 页</span>
+              <span class="modelscope-page-info">第 <input type="number" id="modelscope-page-input" class="modelscope-page-input" value="1" min="1" max="1" style="width:50px;text-align:center;"> / <span id="modelscope-page-total">1</span> 页 (共 <span id="modelscope-page-count">0</span>)</span>
               <button id="modelscope-next" class="modelscope-page-btn" disabled>下一页</button>
             </div>
           </div>
@@ -316,6 +365,58 @@ export function getModelscopeJs(): string {
     return String(str).replace(/[&<>"']/g, function(c) {
       return ({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'})[c];
     });
+  }
+
+  // 分类映射表：中文标签 → 英文分类名（Criterion 查询用）
+  // 文档来源：modelscope-categories-final.md 中英文映射表
+  var MODELSCOPE_CATEGORIES = [
+    { label: '全部', value: '' },
+    { label: '开发工具', value: 'development-tools' },
+    { label: '教育', value: 'education' },
+    { label: '设计', value: 'design' },
+    { label: '市场营销', value: 'marketing' },
+    { label: '销售', value: 'sales' },
+    { label: '产品', value: 'product' },
+    { label: '金融', value: 'finance' },
+    { label: '生活助理', value: 'life-assistant' },
+    { label: '娱乐', value: 'entertainment' },
+    { label: '其他', value: 'others' }
+  ];
+
+  // 渲染分类标签区（事件委托，绑定一次）
+  function renderModelscopeCategories() {
+    var el = document.getElementById('modelscope-categories');
+    if (!el || el.children.length > 0) return; // 已渲染则跳过
+    var html = '';
+    for (var i = 0; i < MODELSCOPE_CATEGORIES.length; i++) {
+      var c = MODELSCOPE_CATEGORIES[i];
+      html += '<button type="button" class="modelscope-cat-tag' + (c.value === (modelscopeState.category || '') ? ' active' : '') + '"'
+        + ' data-category="' + c.value + '" title="' + (c.value || '清除分类筛选，查看全部') + '">' + c.label + '</button>';
+    }
+    el.innerHTML = html;
+  }
+
+  // 高亮当前选中的分类标签
+  function updateModelscopeCategoryHighlight() {
+    var el = document.getElementById('modelscope-categories');
+    if (!el) return;
+    el.querySelectorAll('.modelscope-cat-tag').forEach(function(t) {
+      t.classList.toggle('active', (t.getAttribute('data-category') || '') === (modelscopeState.category || ''));
+    });
+  }
+
+  // 切换分类：重置 PageNumber=1，清除搜索关键词，按新分类重新拉取
+  function selectModelscopeCategory(category) {
+    if (modelscopeState.category === category) return; // 重复点击同一分类
+    modelscopeState.category = category;
+    updateModelscopeCategoryHighlight();
+    var searchInputEl = document.getElementById('modelscope-search-input');
+    if (searchInputEl && searchInputEl.value) {
+      searchInputEl.value = '';
+    }
+    modelscopeState.searchKeyword = '';
+    modelscopeState.page = 1;
+    fetchModelscopeAgents(1, category);
   }
 
   // Switch between Local / ModelScope sub-panels
@@ -336,7 +437,10 @@ export function getModelscopeJs(): string {
     // 搜索框仅在 ModelScope 页签激活且已有数据时显示
     var searchEl = document.getElementById('modelscope-search');
     if (searchEl) searchEl.style.display = (tab === 'modelscope' && modelscopeState.agents && modelscopeState.agents.length > 0) ? 'flex' : 'none';
-    console.log('[MS-DOM] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
+    console.log('[MS] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
+    // 分类标签区与搜索框同步显示/隐藏（数据加载后才有意义）
+    var catEl = document.getElementById('modelscope-categories');
+    if (catEl) catEl.style.display = (tab === 'modelscope' && modelscopeState.loaded) ? 'flex' : 'none';
     if (tab === 'modelscope') {
       if (!modelscopeState.loaded && !modelscopeState.loading) {
         console.log('[MS] calling fetchModelscopeAgents(1)');
@@ -346,10 +450,19 @@ export function getModelscopeJs(): string {
   }
 
   // Fetch ModelScope agents from extension host
-  function fetchModelscopeAgents(page) {
-    console.log('[MS] fetchModelscopeAgents called, page:', page);
+  // category: 英文分类名（如 'finance'），空字符串/undefined = 全部
+  function fetchModelscopeAgents(page, category) {
+    console.log('[MS] fetchModelscopeAgents called, page:', page, 'category:', category, 'modelscopeState.page before:', modelscopeState.page);
+    // 分页操作时自动清除搜索关键词，避免新页数据被旧搜索过滤
+    var searchInputEl = document.getElementById('modelscope-search-input');
+    if (searchInputEl && searchInputEl.value) {
+      searchInputEl.value = '';
+    }
+    modelscopeState.searchKeyword = '';
     modelscopeState.loading = true;
     modelscopeState.page = page;
+    // 分类：未传参则沿用当前 state.category（如从分页按钮进来）；传入空字符串表示切回全部
+    if (category !== undefined) modelscopeState.category = category;
     var loadingEl = document.getElementById('modelscope-loading');
     var errorEl = document.getElementById('modelscope-error');
     var emptyEl = document.getElementById('modelscope-empty');
@@ -360,10 +473,12 @@ export function getModelscopeJs(): string {
     if (emptyEl) emptyEl.style.display = 'none';
     if (gridEl) gridEl.innerHTML = '';
     if (paginationEl) paginationEl.style.display = 'none';
-    console.log('[MS] posting fetchModelscopeAgents message');
+    console.log('[MS] posting fetchModelscopeAgents message, page:', page, 'pageSize:', modelscopeState.pageSize, 'category:', modelscopeState.category);
     var noResultsEl = document.getElementById('modelscope-no-results');
     if (noResultsEl) noResultsEl.style.display = 'none';
-    vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize });
+    var catEl = document.getElementById('modelscope-categories');
+    if (catEl && modelscopeState.loaded) catEl.style.display = 'flex';
+    vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize, category: modelscopeState.category || '' });
   }
 
   // 按关键词本地过滤 Agent 列表（匹配 display_name/name/description/categories/custom_tags）
@@ -428,8 +543,15 @@ export function getModelscopeJs(): string {
 
   // Render agent cards grid (event delegation, no inline handlers)
   function renderModelscopeGrid(agents) {
+    console.log('[MS] renderModelscopeGrid called with', agents.length, 'agents');
+    if (agents.length > 0) {
+      console.log('[MS] First agent:', JSON.stringify(agents[0]));
+    }
     var grid = document.getElementById('modelscope-grid');
-    if (!grid) return;
+    if (!grid) {
+      console.log('[MS] ERROR: modelscope-grid element not found');
+      return;
+    }
     var html = '';
     for (var i = 0; i < agents.length; i++) {
       var a = agents[i];
@@ -463,11 +585,19 @@ export function getModelscopeJs(): string {
   // Render pagination controls
   function renderModelscopePagination() {
     var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
-    var pageInfoEl = document.getElementById('modelscope-page-info');
+    console.log('[MS] renderModelscopePagination, page:', modelscopeState.page, 'totalPages:', totalPages, 'totalCount:', modelscopeState.totalCount);
+    var pageInputEl = document.getElementById('modelscope-page-input');
+    var pageTotalEl = document.getElementById('modelscope-page-total');
+    var pageCountEl = document.getElementById('modelscope-page-count');
     var prevBtn = document.getElementById('modelscope-prev');
     var nextBtn = document.getElementById('modelscope-next');
     var paginationEl = document.getElementById('modelscope-pagination');
-    if (pageInfoEl) pageInfoEl.textContent = '\u7b2c ' + modelscopeState.page + ' / ' + totalPages + ' \u9875 (\u5171 ' + modelscopeState.totalCount + ')';
+    if (pageInputEl) {
+      pageInputEl.value = modelscopeState.page;
+      pageInputEl.max = String(totalPages);
+    }
+    if (pageTotalEl) pageTotalEl.textContent = String(totalPages);
+    if (pageCountEl) pageCountEl.textContent = String(modelscopeState.totalCount);
     if (prevBtn) prevBtn.disabled = modelscopeState.page <= 1;
     if (nextBtn) nextBtn.disabled = modelscopeState.page >= totalPages;
     if (paginationEl) paginationEl.style.display = 'flex';
@@ -477,12 +607,52 @@ export function getModelscopeJs(): string {
   var msNextBtn = document.getElementById('modelscope-next');
   if (msPrevBtn) {
     msPrevBtn.addEventListener('click', function() {
-      if (modelscopeState.page > 1) fetchModelscopeAgents(modelscopeState.page - 1);
+      var pageInputEl = document.getElementById('modelscope-page-input');
+      var currentPage = parseInt(pageInputEl.value, 10) || 1;
+      if (currentPage > 1) fetchModelscopeAgents(currentPage - 1);
     });
   }
   if (msNextBtn) {
     msNextBtn.addEventListener('click', function() {
-      fetchModelscopeAgents(modelscopeState.page + 1);
+      var pageInputEl = document.getElementById('modelscope-page-input');
+      var currentPage = parseInt(pageInputEl.value, 10) || 1;
+      fetchModelscopeAgents(currentPage + 1);
+    });
+  }
+
+  // 页码输入框：只允许数字 + 回车跳转指定页
+  var msPageInput = document.getElementById('modelscope-page-input');
+  if (msPageInput) {
+    // 限制只能输入数字（type=number 也过滤 e/+/- 等字符）
+    msPageInput.addEventListener('input', function() {
+      this.value = this.value.replace(/[^0-9]/g, '');
+    });
+    // Enter 键：校验页码范围后跳页
+    msPageInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
+        var page = parseInt(this.value, 10);
+        if (isNaN(page) || page < 1 || page > totalPages) {
+          // 非法页码：恢复为当前页并失焦
+          this.value = modelscopeState.page;
+          this.blur();
+          return;
+        }
+        if (page === modelscopeState.page) {
+          // 页码未变化：仅失焦
+          this.blur();
+          return;
+        }
+        // 清除搜索状态，避免新页数据被旧搜索关键词过滤
+        var searchInput = document.getElementById('modelscope-search-input');
+        if (searchInput && searchInput.value) {
+          searchInput.value = '';
+        }
+        modelscopeState.searchKeyword = '';
+        // 保留当前分类筛选，跳转页码时使用
+        fetchModelscopeAgents(page, modelscopeState.category);
+        this.blur();
+      }
     });
   }
 
@@ -501,6 +671,16 @@ export function getModelscopeJs(): string {
     });
   }
 
+  // 分类标签点击事件（事件委托，绑定一次；标签内容由 renderModelscopeCategories 生成）
+  var msCategories = document.getElementById('modelscope-categories');
+  if (msCategories) {
+    msCategories.addEventListener('click', function(e) {
+      var tag = e.target.closest('.modelscope-cat-tag');
+      if (!tag) return;
+      selectModelscopeCategory(tag.getAttribute('data-category') || '');
+    });
+  }
+
   // Initialize event delegation for ModelScope grid (bind ONCE)
   var msGrid = document.getElementById('modelscope-grid');
   if (msGrid) {
@@ -515,6 +695,8 @@ export function getModelscopeJs(): string {
       if (card) openModelscopeAgent(card.dataset.agentId);
     });
   }
+  // 初始化分类标签区
+  renderModelscopeCategories();
   // Bind agents-sub-tab click events
   (function() {
     var btns = document.querySelectorAll('.agents-sub-tab');

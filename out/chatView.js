@@ -287,40 +287,65 @@
 
   // src/modelscopeHandler.ts
   var vscode = __toESM(__require("vscode"));
-  async function handleFetchModelscopeAgents(ctx, page, pageSize) {
+  async function handleFetchModelscopeAgents(ctx, page, pageSize, category) {
     try {
-      console.log("[MS-H] handleFetchModelscopeAgents called, page:", page, "pageSize:", pageSize);
-      const url = "https://modelscope.cn/api/v1/agents?PageNumber=" + page + "&PageSize=" + pageSize;
-      const response = await fetch(url);
-      console.log("[MS-H] API response status:", response.status);
+      console.log("[MS-H] handleFetchModelscopeAgents called, page:", page, "pageSize:", pageSize, "category:", category);
+      const url = `https://modelscope.cn/api/v1/dolphin/agents`;
+      const criterion = category ? [{
+        Category: "Catalogues",
+        Predicate: "contains",
+        StringValues: [category]
+      }] : [];
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "https://modelscope.cn",
+          "Referer": `https://modelscope.cn/agents?page=${page}`,
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        body: JSON.stringify({
+          PageSize: pageSize,
+          PageNumber: page,
+          Query: "",
+          Sort: "Default",
+          Criterion: criterion,
+          WithTopCollection: false
+        })
+      });
+      console.log("[MS-H] API response status:", response.status, "page:", page);
       const data = await response.json();
-      if (data.Success && data.Data && Array.isArray(data.Data.AgentList)) {
-        const agents = data.Data.AgentList.map((raw) => {
-          const id = String(raw.Name || raw.id || "");
-          return {
-            id,
-            name: String(raw.Name || ""),
-            display_name: String(raw.DisplayName || raw.Name || ""),
-            description: String(raw.Description || ""),
-            categories: Array.isArray(raw.Catalogues) ? raw.Catalogues : [],
-            custom_tags: Array.isArray(raw.CustomTags) ? raw.CustomTags : [],
-            framework: String(raw.Framework || ""),
-            downloads: Number(raw.Downloads || 0),
-            likes: Number(raw.Stars || 0),
-            logo_url: String(raw.LogoUrl || "")
-          };
-        });
-        console.log("[MS-H] Posting result, agents count:", agents.length);
-        ctx.postToWebview({
-          type: "modelscopeAgentsResult",
-          agents,
-          totalCount: Number(data.Data.TotalCount || 0),
-          page,
-          pageSize
-        });
-      } else {
+      if (!data.Success || !data.Data || !Array.isArray(data.Data.AgentList)) {
         ctx.postToWebview({ type: "modelscopeAgentsError", error: String(data.Message || "\u8BF7\u6C42\u5931\u8D25") });
+        return;
       }
+      const apiTotalCount = data.Data.TotalCount;
+      const batch = data.Data.AgentList.map((raw) => {
+        const name = String(raw.Name || "");
+        const path5 = String(raw.Path || "");
+        const fullId = path5 && name ? path5 + "/" + name : name;
+        return {
+          id: fullId,
+          name,
+          display_name: String(raw.DisplayName || raw.Name || ""),
+          description: String(raw.Description || ""),
+          categories: Array.isArray(raw.Catalogues) ? raw.Catalogues : [],
+          custom_tags: Array.isArray(raw.CustomTags) ? raw.CustomTags : [],
+          framework: String(raw.Framework || ""),
+          downloads: Number(raw.Downloads || 0),
+          likes: Number(raw.Stars || 0),
+          logo_url: String(raw.LogoUrl || "")
+        };
+      });
+      const agents = batch;
+      console.log("[MS-H] Posting result, agents count:", agents.length, "apiTotalCount:", apiTotalCount);
+      ctx.postToWebview({
+        type: "modelscopeAgentsResult",
+        agents,
+        totalCount: apiTotalCount,
+        page,
+        pageSize
+      });
     } catch (error) {
       ctx.postToWebview({
         type: "modelscopeAgentsError",
@@ -384,7 +409,7 @@
         await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
         break;
       case "fetchModelscopeAgents":
-        await handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 9);
+        await handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 12, msg.category || "");
         break;
       case "openModelscopeAgent":
         if (msg.agentId) {
@@ -835,6 +860,76 @@
   color: var(--text-muted);
   font-size: 12px;
 }
+/* \u641C\u7D22\u6846\u6837\u5F0F */
+.modelscope-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+.modelscope-search-input {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modelscope-search-input:focus {
+  border-color: var(--accent);
+}
+.modelscope-search-clear {
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.modelscope-search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* \u5206\u7C7B\u6807\u7B7E\u533A\uFF1A\u641C\u7D22\u6846\u4E0B\u65B9\uFF0C\u6A2A\u5411\u6392\u5217\uFF0C\u53EF\u6EDA\u52A8 */
+.modelscope-categories {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.modelscope-categories::-webkit-scrollbar { height: 4px; }
+.modelscope-categories::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.modelscope-cat-tag {
+  padding: 4px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.modelscope-cat-tag:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.modelscope-cat-tag.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .modelscope-pagination {
   display: flex;
   align-items: center;
@@ -868,27 +963,49 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+.modelscope-page-input {
+  width: 50px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modelscope-page-input:focus {
+  border-color: var(--accent);
+}
 `;
   }
   function getModelscopeHtml() {
     return `
-        <div id="progress-note-panel-header">
-          <span id="progress-note-panel-title">Agents</span>
+        <div id="agents-panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;">
+          <span id="agents-panel-title" style="font-weight:600;color:var(--text);font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Agents</span>
           <div class="agents-sub-tabs">
-            <button class="agents-sub-tab active" data-subtab="local">\u672C\u5730</button>
-            <button class="agents-sub-tab" data-subtab="modelscope">ModelScope</button>
+            <button type="button" class="agents-sub-tab active" data-subtab="local">\u672C\u5730</button>
+            <button type="button" class="agents-sub-tab" data-subtab="modelscope">ModelScope</button>
           </div>
         </div>
         <div id="tabAgentsContent" style="padding:8px 12px;overflow-y:auto;flex:1;">
           <div id="agents-local-panel" class="agents-sub-panel active"></div>
           <div id="agents-modelscope-panel" class="agents-sub-panel">
+            <div id="modelscope-search" class="modelscope-search" style="display:none;">
+              <input type="text" id="modelscope-search-input" class="modelscope-search-input" placeholder="\u641C\u7D22 Modelscope Agents (\u540D\u79F0\u3001\u63CF\u8FF0\u3001\u6807\u7B7E...)">
+              <button type="button" id="modelscope-search-clear" class="modelscope-search-clear" title="\u6E05\u9664\u641C\u7D22">\u6E05\u9664\u641C\u7D22</button>
+            </div>
+            <div id="modelscope-categories" class="modelscope-categories" style="display:none;"></div>
             <div id="modelscope-grid" class="modelscope-grid"></div>
             <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>\u6B63\u5728\u52A0\u8F7D ModelScope \u667A\u80FD\u4F53...</div>
             <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
             <div id="modelscope-empty" class="modelscope-empty" style="display:none;">\u6682\u65E0\u667A\u80FD\u4F53</div>
+            <div id="modelscope-no-results" class="modelscope-empty" style="display:none;">\u65E0\u5339\u914D\u7ED3\u679C</div>
             <div id="modelscope-pagination" class="modelscope-pagination" style="display:none;">
               <button id="modelscope-prev" class="modelscope-page-btn" disabled>\u4E0A\u4E00\u9875</button>
-              <span id="modelscope-page-info" class="modelscope-page-info">\u7B2C 1 / 1 \u9875</span>
+              <span class="modelscope-page-info">\u7B2C <input type="number" id="modelscope-page-input" class="modelscope-page-input" value="1" min="1" max="1" style="width:50px;text-align:center;"> / <span id="modelscope-page-total">1</span> \u9875 (\u5171 <span id="modelscope-page-count">0</span>)</span>
               <button id="modelscope-next" class="modelscope-page-btn" disabled>\u4E0B\u4E00\u9875</button>
             </div>
           </div>
@@ -903,6 +1020,58 @@
     return String(str).replace(/[&<>"']/g, function(c) {
       return ({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'})[c];
     });
+  }
+
+  // \u5206\u7C7B\u6620\u5C04\u8868\uFF1A\u4E2D\u6587\u6807\u7B7E \u2192 \u82F1\u6587\u5206\u7C7B\u540D\uFF08Criterion \u67E5\u8BE2\u7528\uFF09
+  // \u6587\u6863\u6765\u6E90\uFF1Amodelscope-categories-final.md \u4E2D\u82F1\u6587\u6620\u5C04\u8868
+  var MODELSCOPE_CATEGORIES = [
+    { label: '\u5168\u90E8', value: '' },
+    { label: '\u5F00\u53D1\u5DE5\u5177', value: 'development-tools' },
+    { label: '\u6559\u80B2', value: 'education' },
+    { label: '\u8BBE\u8BA1', value: 'design' },
+    { label: '\u5E02\u573A\u8425\u9500', value: 'marketing' },
+    { label: '\u9500\u552E', value: 'sales' },
+    { label: '\u4EA7\u54C1', value: 'product' },
+    { label: '\u91D1\u878D', value: 'finance' },
+    { label: '\u751F\u6D3B\u52A9\u7406', value: 'life-assistant' },
+    { label: '\u5A31\u4E50', value: 'entertainment' },
+    { label: '\u5176\u4ED6', value: 'others' }
+  ];
+
+  // \u6E32\u67D3\u5206\u7C7B\u6807\u7B7E\u533A\uFF08\u4E8B\u4EF6\u59D4\u6258\uFF0C\u7ED1\u5B9A\u4E00\u6B21\uFF09
+  function renderModelscopeCategories() {
+    var el = document.getElementById('modelscope-categories');
+    if (!el || el.children.length > 0) return; // \u5DF2\u6E32\u67D3\u5219\u8DF3\u8FC7
+    var html = '';
+    for (var i = 0; i < MODELSCOPE_CATEGORIES.length; i++) {
+      var c = MODELSCOPE_CATEGORIES[i];
+      html += '<button type="button" class="modelscope-cat-tag' + (c.value === (modelscopeState.category || '') ? ' active' : '') + '"'
+        + ' data-category="' + c.value + '" title="' + (c.value || '\u6E05\u9664\u5206\u7C7B\u7B5B\u9009\uFF0C\u67E5\u770B\u5168\u90E8') + '">' + c.label + '</button>';
+    }
+    el.innerHTML = html;
+  }
+
+  // \u9AD8\u4EAE\u5F53\u524D\u9009\u4E2D\u7684\u5206\u7C7B\u6807\u7B7E
+  function updateModelscopeCategoryHighlight() {
+    var el = document.getElementById('modelscope-categories');
+    if (!el) return;
+    el.querySelectorAll('.modelscope-cat-tag').forEach(function(t) {
+      t.classList.toggle('active', (t.getAttribute('data-category') || '') === (modelscopeState.category || ''));
+    });
+  }
+
+  // \u5207\u6362\u5206\u7C7B\uFF1A\u91CD\u7F6E PageNumber=1\uFF0C\u6E05\u9664\u641C\u7D22\u5173\u952E\u8BCD\uFF0C\u6309\u65B0\u5206\u7C7B\u91CD\u65B0\u62C9\u53D6
+  function selectModelscopeCategory(category) {
+    if (modelscopeState.category === category) return; // \u91CD\u590D\u70B9\u51FB\u540C\u4E00\u5206\u7C7B
+    modelscopeState.category = category;
+    updateModelscopeCategoryHighlight();
+    var searchInputEl = document.getElementById('modelscope-search-input');
+    if (searchInputEl && searchInputEl.value) {
+      searchInputEl.value = '';
+    }
+    modelscopeState.searchKeyword = '';
+    modelscopeState.page = 1;
+    fetchModelscopeAgents(1, category);
   }
 
   // Switch between Local / ModelScope sub-panels
@@ -920,7 +1089,13 @@
     var panelId = (tab === 'local') ? 'agents-local-panel' : 'agents-modelscope-panel';
     var panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
-    console.log('[MS-DOM] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
+    // \u641C\u7D22\u6846\u4EC5\u5728 ModelScope \u9875\u7B7E\u6FC0\u6D3B\u4E14\u5DF2\u6709\u6570\u636E\u65F6\u663E\u793A
+    var searchEl = document.getElementById('modelscope-search');
+    if (searchEl) searchEl.style.display = (tab === 'modelscope' && modelscopeState.agents && modelscopeState.agents.length > 0) ? 'flex' : 'none';
+    console.log('[MS] switchAgentsSubTab: panelId=' + panelId, 'panel class=' + (panel ? panel.className : 'null'), 'panel display=' + (panel ? getComputedStyle(panel).display : 'null'));
+    // \u5206\u7C7B\u6807\u7B7E\u533A\u4E0E\u641C\u7D22\u6846\u540C\u6B65\u663E\u793A/\u9690\u85CF\uFF08\u6570\u636E\u52A0\u8F7D\u540E\u624D\u6709\u610F\u4E49\uFF09
+    var catEl = document.getElementById('modelscope-categories');
+    if (catEl) catEl.style.display = (tab === 'modelscope' && modelscopeState.loaded) ? 'flex' : 'none';
     if (tab === 'modelscope') {
       if (!modelscopeState.loaded && !modelscopeState.loading) {
         console.log('[MS] calling fetchModelscopeAgents(1)');
@@ -930,10 +1105,19 @@
   }
 
   // Fetch ModelScope agents from extension host
-  function fetchModelscopeAgents(page) {
-    console.log('[MS] fetchModelscopeAgents called, page:', page);
+  // category: \u82F1\u6587\u5206\u7C7B\u540D\uFF08\u5982 'finance'\uFF09\uFF0C\u7A7A\u5B57\u7B26\u4E32/undefined = \u5168\u90E8
+  function fetchModelscopeAgents(page, category) {
+    console.log('[MS] fetchModelscopeAgents called, page:', page, 'category:', category, 'modelscopeState.page before:', modelscopeState.page);
+    // \u5206\u9875\u64CD\u4F5C\u65F6\u81EA\u52A8\u6E05\u9664\u641C\u7D22\u5173\u952E\u8BCD\uFF0C\u907F\u514D\u65B0\u9875\u6570\u636E\u88AB\u65E7\u641C\u7D22\u8FC7\u6EE4
+    var searchInputEl = document.getElementById('modelscope-search-input');
+    if (searchInputEl && searchInputEl.value) {
+      searchInputEl.value = '';
+    }
+    modelscopeState.searchKeyword = '';
     modelscopeState.loading = true;
     modelscopeState.page = page;
+    // \u5206\u7C7B\uFF1A\u672A\u4F20\u53C2\u5219\u6CBF\u7528\u5F53\u524D state.category\uFF08\u5982\u4ECE\u5206\u9875\u6309\u94AE\u8FDB\u6765\uFF09\uFF1B\u4F20\u5165\u7A7A\u5B57\u7B26\u4E32\u8868\u793A\u5207\u56DE\u5168\u90E8
+    if (category !== undefined) modelscopeState.category = category;
     var loadingEl = document.getElementById('modelscope-loading');
     var errorEl = document.getElementById('modelscope-error');
     var emptyEl = document.getElementById('modelscope-empty');
@@ -944,8 +1128,67 @@
     if (emptyEl) emptyEl.style.display = 'none';
     if (gridEl) gridEl.innerHTML = '';
     if (paginationEl) paginationEl.style.display = 'none';
-    console.log('[MS] posting fetchModelscopeAgents message');
-    vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize });
+    console.log('[MS] posting fetchModelscopeAgents message, page:', page, 'pageSize:', modelscopeState.pageSize, 'category:', modelscopeState.category);
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    if (noResultsEl) noResultsEl.style.display = 'none';
+    var catEl = document.getElementById('modelscope-categories');
+    if (catEl && modelscopeState.loaded) catEl.style.display = 'flex';
+    vscode.postMessage({ type: 'fetchModelscopeAgents', page: page, pageSize: modelscopeState.pageSize, category: modelscopeState.category || '' });
+  }
+
+  // \u6309\u5173\u952E\u8BCD\u672C\u5730\u8FC7\u6EE4 Agent \u5217\u8868\uFF08\u5339\u914D display_name/name/description/categories/custom_tags\uFF09
+  function filterAgentsByKeyword(keyword, agents) {
+    if (!keyword) return agents;
+    var kw = keyword.toLowerCase().trim();
+    return agents.filter(function(a) {
+      var haystack = (a.display_name || '') + ' ' + (a.name || '') + ' ' +
+        (a.description || '') + ' ' + (a.categories || []).join(' ') + ' ' +
+        (a.custom_tags || []).join(' ');
+      return haystack.toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+
+  // \u6267\u884C\u672C\u5730\u641C\u7D22\u8FC7\u6EE4\uFF1A\u4F5C\u7528\u4E8E\u5F53\u524D\u9875\u5DF2\u52A0\u8F7D\u5217\u8868\uFF1B\u641C\u7D22\u6FC0\u6D3B\u65F6\u9690\u85CF\u5206\u9875
+  function applyModelscopeSearch() {
+    var input = document.getElementById('modelscope-search-input');
+    var keyword = input ? input.value : '';
+    modelscopeState.searchKeyword = keyword;
+    var agents = modelscopeState.agents || [];
+    var filtered = filterAgentsByKeyword(keyword, agents);
+    console.log('[MS-Search] keyword:', keyword, 'loaded:', agents.length, 'matched:', filtered.length);
+    var noResultsEl = document.getElementById('modelscope-no-results');
+    var emptyEl = document.getElementById('modelscope-empty');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (keyword.trim()) {
+      // \u641C\u7D22\u6FC0\u6D3B\uFF1A\u9690\u85CF\u5206\u9875\uFF0C\u663E\u793A\u8FC7\u6EE4\u7ED3\u679C\u6216"\u65E0\u5339\u914D\u7ED3\u679C"\u5360\u4F4D
+      if (paginationEl) paginationEl.style.display = 'none';
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (filtered.length === 0) {
+        var grid = document.getElementById('modelscope-grid');
+        if (grid) grid.innerHTML = '';
+        if (noResultsEl) noResultsEl.style.display = 'block';
+      } else {
+        if (noResultsEl) noResultsEl.style.display = 'none';
+        renderModelscopeGrid(filtered);
+      }
+    } else {
+      // \u6E05\u9664\u641C\u7D22\uFF1A\u6062\u590D\u5B8C\u6574\u5217\u8868\u4E0E\u5206\u9875\u63A7\u4EF6
+      if (noResultsEl) noResultsEl.style.display = 'none';
+      if (agents.length === 0) {
+        if (emptyEl && modelscopeState.loaded) emptyEl.style.display = 'block';
+      } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        renderModelscopeGrid(agents);
+        renderModelscopePagination();
+      }
+    }
+  }
+
+  // \u641C\u7D22\u8F93\u5165\u9632\u6296\uFF1A300ms \u540E\u6267\u884C\u672C\u5730\u8FC7\u6EE4\uFF0C\u907F\u514D\u9891\u7E41\u89E6\u53D1
+  var msSearchTimer = null;
+  function onModelscopeSearchInput() {
+    if (msSearchTimer) clearTimeout(msSearchTimer);
+    msSearchTimer = setTimeout(applyModelscopeSearch, 300);
   }
 
   // Open agent detail on modelscope.cn
@@ -955,8 +1198,15 @@
 
   // Render agent cards grid (event delegation, no inline handlers)
   function renderModelscopeGrid(agents) {
+    console.log('[MS] renderModelscopeGrid called with', agents.length, 'agents');
+    if (agents.length > 0) {
+      console.log('[MS] First agent:', JSON.stringify(agents[0]));
+    }
     var grid = document.getElementById('modelscope-grid');
-    if (!grid) return;
+    if (!grid) {
+      console.log('[MS] ERROR: modelscope-grid element not found');
+      return;
+    }
     var html = '';
     for (var i = 0; i < agents.length; i++) {
       var a = agents[i];
@@ -985,8 +1235,111 @@
     }
     grid.innerHTML = html;
     console.log('[MS-DOM] renderModelscopeGrid: grid child count=' + grid.children.length, 'grid rect=' + JSON.stringify(grid.getBoundingClientRect()));
-    // Event delegation for card clicks
-    grid.addEventListener('click', function(e) {
+  }
+
+  // Render pagination controls
+  function renderModelscopePagination() {
+    var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
+    console.log('[MS] renderModelscopePagination, page:', modelscopeState.page, 'totalPages:', totalPages, 'totalCount:', modelscopeState.totalCount);
+    var pageInputEl = document.getElementById('modelscope-page-input');
+    var pageTotalEl = document.getElementById('modelscope-page-total');
+    var pageCountEl = document.getElementById('modelscope-page-count');
+    var prevBtn = document.getElementById('modelscope-prev');
+    var nextBtn = document.getElementById('modelscope-next');
+    var paginationEl = document.getElementById('modelscope-pagination');
+    if (pageInputEl) {
+      pageInputEl.value = modelscopeState.page;
+      pageInputEl.max = String(totalPages);
+    }
+    if (pageTotalEl) pageTotalEl.textContent = String(totalPages);
+    if (pageCountEl) pageCountEl.textContent = String(modelscopeState.totalCount);
+    if (prevBtn) prevBtn.disabled = modelscopeState.page <= 1;
+    if (nextBtn) nextBtn.disabled = modelscopeState.page >= totalPages;
+    if (paginationEl) paginationEl.style.display = 'flex';
+  }
+  // ModelScope pagination buttons
+  var msPrevBtn = document.getElementById('modelscope-prev');
+  var msNextBtn = document.getElementById('modelscope-next');
+  if (msPrevBtn) {
+    msPrevBtn.addEventListener('click', function() {
+      var pageInputEl = document.getElementById('modelscope-page-input');
+      var currentPage = parseInt(pageInputEl.value, 10) || 1;
+      if (currentPage > 1) fetchModelscopeAgents(currentPage - 1);
+    });
+  }
+  if (msNextBtn) {
+    msNextBtn.addEventListener('click', function() {
+      var pageInputEl = document.getElementById('modelscope-page-input');
+      var currentPage = parseInt(pageInputEl.value, 10) || 1;
+      fetchModelscopeAgents(currentPage + 1);
+    });
+  }
+
+  // \u9875\u7801\u8F93\u5165\u6846\uFF1A\u53EA\u5141\u8BB8\u6570\u5B57 + \u56DE\u8F66\u8DF3\u8F6C\u6307\u5B9A\u9875
+  var msPageInput = document.getElementById('modelscope-page-input');
+  if (msPageInput) {
+    // \u9650\u5236\u53EA\u80FD\u8F93\u5165\u6570\u5B57\uFF08type=number \u4E5F\u8FC7\u6EE4 e/+/- \u7B49\u5B57\u7B26\uFF09
+    msPageInput.addEventListener('input', function() {
+      this.value = this.value.replace(/[^0-9]/g, '');
+    });
+    // Enter \u952E\uFF1A\u6821\u9A8C\u9875\u7801\u8303\u56F4\u540E\u8DF3\u9875
+    msPageInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
+        var page = parseInt(this.value, 10);
+        if (isNaN(page) || page < 1 || page > totalPages) {
+          // \u975E\u6CD5\u9875\u7801\uFF1A\u6062\u590D\u4E3A\u5F53\u524D\u9875\u5E76\u5931\u7126
+          this.value = modelscopeState.page;
+          this.blur();
+          return;
+        }
+        if (page === modelscopeState.page) {
+          // \u9875\u7801\u672A\u53D8\u5316\uFF1A\u4EC5\u5931\u7126
+          this.blur();
+          return;
+        }
+        // \u6E05\u9664\u641C\u7D22\u72B6\u6001\uFF0C\u907F\u514D\u65B0\u9875\u6570\u636E\u88AB\u65E7\u641C\u7D22\u5173\u952E\u8BCD\u8FC7\u6EE4
+        var searchInput = document.getElementById('modelscope-search-input');
+        if (searchInput && searchInput.value) {
+          searchInput.value = '';
+        }
+        modelscopeState.searchKeyword = '';
+        // \u4FDD\u7559\u5F53\u524D\u5206\u7C7B\u7B5B\u9009\uFF0C\u8DF3\u8F6C\u9875\u7801\u65F6\u4F7F\u7528
+        fetchModelscopeAgents(page, modelscopeState.category);
+        this.blur();
+      }
+    });
+  }
+
+  // \u641C\u7D22\u8F93\u5165\u6846\u7ED1\u5B9A\uFF1Ainput \u4E8B\u4EF6 + 300ms \u9632\u6296\u89E6\u53D1\u672C\u5730\u8FC7\u6EE4
+  var msSearchInput = document.getElementById('modelscope-search-input');
+  if (msSearchInput) {
+    msSearchInput.addEventListener('input', onModelscopeSearchInput);
+  }
+  // \u6E05\u9664\u641C\u7D22\u6309\u94AE\uFF1A\u6E05\u7A7A\u8F93\u5165\u5E76\u6062\u590D\u5B8C\u6574\u5217\u8868
+  var msSearchClear = document.getElementById('modelscope-search-clear');
+  if (msSearchClear) {
+    msSearchClear.addEventListener('click', function() {
+      var input = document.getElementById('modelscope-search-input');
+      if (input) input.value = '';
+      applyModelscopeSearch();
+    });
+  }
+
+  // \u5206\u7C7B\u6807\u7B7E\u70B9\u51FB\u4E8B\u4EF6\uFF08\u4E8B\u4EF6\u59D4\u6258\uFF0C\u7ED1\u5B9A\u4E00\u6B21\uFF1B\u6807\u7B7E\u5185\u5BB9\u7531 renderModelscopeCategories \u751F\u6210\uFF09
+  var msCategories = document.getElementById('modelscope-categories');
+  if (msCategories) {
+    msCategories.addEventListener('click', function(e) {
+      var tag = e.target.closest('.modelscope-cat-tag');
+      if (!tag) return;
+      selectModelscopeCategory(tag.getAttribute('data-category') || '');
+    });
+  }
+
+  // Initialize event delegation for ModelScope grid (bind ONCE)
+  var msGrid = document.getElementById('modelscope-grid');
+  if (msGrid) {
+    msGrid.addEventListener('click', function(e) {
       var openBtn = e.target.closest('.modelscope-open-btn');
       if (openBtn) {
         e.stopPropagation();
@@ -997,38 +1350,8 @@
       if (card) openModelscopeAgent(card.dataset.agentId);
     });
   }
-
-  // Render pagination controls
-  function renderModelscopePagination() {
-    var totalPages = Math.max(1, Math.ceil(modelscopeState.totalCount / modelscopeState.pageSize));
-    var pageInfoEl = document.getElementById('modelscope-page-info');
-    var prevBtn = document.getElementById('modelscope-prev');
-    var nextBtn = document.getElementById('modelscope-next');
-    var paginationEl = document.getElementById('modelscope-pagination');
-    if (pageInfoEl) pageInfoEl.textContent = '\u7B2C ' + modelscopeState.page + ' / ' + totalPages + ' \u9875 (\u5171 ' + modelscopeState.totalCount + ')';
-    if (prevBtn) prevBtn.disabled = modelscopeState.page <= 1;
-    if (nextBtn) nextBtn.disabled = modelscopeState.page >= totalPages;
-    if (paginationEl) paginationEl.style.display = 'flex';
-  }
-  // ModelScope sub-tab switching
-  document.querySelectorAll('.agents-sub-tab').forEach(btn => {
-    btn.addEventListener('click', () => switchAgentsSubTab(btn.dataset.subtab));
-  });
-
-  // ModelScope pagination buttons
-  const msPrevBtn = document.getElementById('modelscope-prev');
-  const msNextBtn = document.getElementById('modelscope-next');
-  if (msPrevBtn) {
-    msPrevBtn.addEventListener('click', () => {
-      if (modelscopeState.page > 1) fetchModelscopeAgents(modelscopeState.page - 1);
-    });
-  }
-  if (msNextBtn) {
-    msNextBtn.addEventListener('click', () => {
-      fetchModelscopeAgents(modelscopeState.page + 1);
-    });
-  }
-
+  // \u521D\u59CB\u5316\u5206\u7C7B\u6807\u7B7E\u533A
+  renderModelscopeCategories();
   // Bind agents-sub-tab click events
   (function() {
     var btns = document.querySelectorAll('.agents-sub-tab');
@@ -2156,11 +2479,13 @@ ${getModelscopeHtml()}
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
-    pageSize: 9,
+    pageSize: 12,
     totalCount: 0,
     agents: [],
     loading: false,
-    loaded: false
+    loaded: false,
+    searchKeyword: '',
+    category: ''
   };
   // Inject ModelScope JS functions
   ${getModelscopeJs()}
@@ -2849,24 +3174,55 @@ if (resizeHandle) {
         break;
       case 'modelscopeAgentsResult':
         console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
+        console.log('[MS] Received page:', msg.page, 'totalCount:', msg.totalCount);
         modelscopeState.loading = false;
         modelscopeState.loaded = true;
         modelscopeState.agents = msg.agents || [];
         modelscopeState.totalCount = msg.totalCount || 0;
         modelscopeState.page = msg.page || 1;
+        // \u540C\u6B65\u540E\u7AEF\u5B9E\u9645\u8FD4\u56DE\u7684 pageSize\uFF08\u54CD\u5E94\u4E2D\u643A\u5E26\uFF09\uFF0C\u907F\u514D\u524D\u7AEF\u59CB\u7EC8\u6309\u521D\u59CB\u503C\u6E32\u67D3
+        if (msg.pageSize && msg.pageSize > 0) modelscopeState.pageSize = msg.pageSize;
+        console.log('[MS] Updated state - page:', modelscopeState.page, 'agents length:', modelscopeState.agents.length);
         var msLoadingEl = document.getElementById('modelscope-loading');
         var msErrorEl = document.getElementById('modelscope-error');
         var msEmptyEl = document.getElementById('modelscope-empty');
+        var msNoResultsEl = document.getElementById('modelscope-no-results');
+        var msSearchEl = document.getElementById('modelscope-search');
         if (msLoadingEl) msLoadingEl.style.display = 'none';
         if (msErrorEl) msErrorEl.style.display = 'none';
-        if (modelscopeState.agents.length === 0) {
-          if (msEmptyEl) msEmptyEl.style.display = 'block';
-          var msPagEl = document.getElementById('modelscope-pagination');
-          if (msPagEl) msPagEl.style.display = 'none';
-        } else {
+        // \u663E\u793A\u641C\u7D22\u6846\u4E0E\u5206\u7C7B\u6807\u7B7E\u533A\uFF08\u6570\u636E\u5230\u8FBE\u540E\uFF09
+        if (msSearchEl) msSearchEl.style.display = 'flex';
+        var msCatEl = document.getElementById('modelscope-categories');
+        if (msCatEl) msCatEl.style.display = 'flex';
+        updateModelscopeCategoryHighlight();
+        // \u82E5\u5B58\u5728\u641C\u7D22\u5173\u952E\u8BCD\uFF0C\u5E94\u7528\u672C\u5730\u8FC7\u6EE4\u540E\u518D\u6E32\u67D3
+        var currentKeyword = modelscopeState.searchKeyword || '';
+        var filteredAgents = filterAgentsByKeyword(currentKeyword, modelscopeState.agents);
+        if (currentKeyword.trim()) {
+          // \u641C\u7D22\u6FC0\u6D3B\u72B6\u6001\uFF1A\u9690\u85CF\u5206\u9875\uFF0C\u6309\u8FC7\u6EE4\u7ED3\u679C\u6E32\u67D3
           if (msEmptyEl) msEmptyEl.style.display = 'none';
-          renderModelscopeGrid(modelscopeState.agents);
-          renderModelscopePagination();
+          var msPagEl2 = document.getElementById('modelscope-pagination');
+          if (msPagEl2) msPagEl2.style.display = 'none';
+          if (filteredAgents.length === 0) {
+            var msGridEl2 = document.getElementById('modelscope-grid');
+            if (msGridEl2) msGridEl2.innerHTML = '';
+            if (msNoResultsEl) msNoResultsEl.style.display = 'block';
+          } else {
+            if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+            renderModelscopeGrid(filteredAgents);
+          }
+        } else {
+          // \u65E0\u641C\u7D22\u5173\u952E\u8BCD\uFF1A\u6B63\u5E38\u6E32\u67D3\u5B8C\u6574\u5217\u8868
+          if (msNoResultsEl) msNoResultsEl.style.display = 'none';
+          if (modelscopeState.agents.length === 0) {
+            if (msEmptyEl) msEmptyEl.style.display = 'block';
+            var msPagEl3 = document.getElementById('modelscope-pagination');
+            if (msPagEl3) msPagEl3.style.display = 'none';
+          } else {
+            if (msEmptyEl) msEmptyEl.style.display = 'none';
+            renderModelscopeGrid(modelscopeState.agents);
+            renderModelscopePagination();
+          }
         }
         var msGridEl = document.getElementById('modelscope-grid');
         var msPanelEl = document.getElementById('agents-modelscope-panel');
@@ -2880,7 +3236,7 @@ if (resizeHandle) {
         if (msLoadingEl2) msLoadingEl2.style.display = 'none';
         if (msErrorEl2) {
           msErrorEl2.style.display = 'block';
-          msErrorEl2.innerHTML = '\u52A0\u8F7D\u5931\u8D25: ' + escapeHtml(msg.error || '\u672A\u77E5\u9519\u8BEF') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ')">\u91CD\u8BD5</button>';
+          msErrorEl2.innerHTML = '\u52A0\u8F7D\u5931\u8D25: ' + escapeHtml(msg.error || '\u672A\u77E5\u9519\u8BEF') + '<br><button class="retry-btn" onclick="fetchModelscopeAgents(' + modelscopeState.page + ', modelscopeState.category)">\u91CD\u8BD5</button>';
         }
         break;
       case 'defaultsLoaded':
@@ -4302,7 +4658,9 @@ if (resizeHandle) {
   }
 
   function renderLocalAgentsTree() {
-    const container = document.getElementById('tabAgentsContent');
+    // \u6E32\u67D3\u5230 agents-local-panel \u5185\u90E8\uFF08\u907F\u514D\u6E05\u7A7A modelscope \u9762\u677F\uFF09\uFF0C\u82E5\u4E0D\u5B58\u5728\u5219\u56DE\u9000\u5230 tabAgentsContent
+    var container = document.getElementById('agents-local-panel');
+    if (!container) container = document.getElementById('tabAgentsContent');
     if (!container) return;
     container.innerHTML = '';
     // vs10n: webview l10n helper with Chinese fallback
@@ -5040,7 +5398,11 @@ if (resizeHandle) {
         localResourceRoots: []
       };
       webviewView.webview.html = this.getHtml();
-      webviewView.webview.onDidReceiveMessage(async (msg) => {
+      if (this._messageHandlerDisposable) {
+        this._messageHandlerDisposable.dispose();
+        this._messageHandlerDisposable = void 0;
+      }
+      this._messageHandlerDisposable = webviewView.webview.onDidReceiveMessage(async (msg) => {
         handleWebviewMessage(msg, this);
       });
     }
