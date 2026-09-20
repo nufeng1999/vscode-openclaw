@@ -130,16 +130,16 @@
 					"default": "",
 					"description": "%config.token.description%"
 				},
-"openclaw.sessionKey": {
-				"type": "string",
-				"default": "OpenClaw VSCode",
-				"description": "%config.sessionKey.description%"
-			},
-			"openclaw.agentsDir": {
-				"type": "string",
-				"default": "~/.openclaw/agents",
-				"description": "Directory for storing various Agent data files. Supports ~ (home dir); defaults to ~/.openclaw/agents on all platforms."
-			},
+				"openclaw.sessionKey": {
+					"type": "string",
+					"default": "OpenClaw VSCode",
+					"description": "%config.sessionKey.description%"
+				},
+				"openclaw.agentsDir": {
+					"type": "string",
+					"default": "~/.openclaw/agents",
+					"description": "Directory for storing various Agent data files. Supports ~ (home dir); defaults to ~/.openclaw/agents on all platforms."
+				},
 				"openclaw.agentId": {
 					"type": "string",
 					"default": "OpenClaw VSCode",
@@ -197,6 +197,7 @@
 		"watch": "node esbuild.mjs --watch"
 	},
 	"devDependencies": {
+		"@types/adm-zip": "^0.5.8",
 		"@types/node": "^20.11.0",
 		"@types/vscode": "^1.80.0",
 		"@types/ws": "^8.5.10",
@@ -204,6 +205,7 @@
 		"typescript": "^5.3.0"
 	},
 	"dependencies": {
+		"adm-zip": "^0.5.15",
 		"ws": "^8.16.0"
 	},
 	"__metadata": {

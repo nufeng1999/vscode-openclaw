@@ -6,6 +6,7 @@ import { handleRequestAgentsTree } from "./agentTree";
 import { handleFetchModelscopeAgents as _handleFetchModelscopeAgents } from "./modelscopeHandler";
 import type { ModelScopeAgentItem, ModelScopeAgentListResponse } from "./modelscopeTypes";
 
+
 /**
  * Handle messages from the webview.
  * Extracted from OpenClawChatView.onDidReceiveMessage (chatView.ts L717–L972).

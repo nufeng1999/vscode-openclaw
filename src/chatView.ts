@@ -54,6 +54,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private verboseLevel = "";
   private gatewayUrl = "";
   private agentsDir = "";
+  public onDownloadModelscopeAgent?: (agentId: string, destType: string) => Promise<void>;
   private messageHistory: string[] = [];
   private autoContinueCount = 0;
   private supervisionEnabled = false;
@@ -728,6 +729,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
 
     this._messageHandlerDisposable = webviewView.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type === "downloadModelscopeAgent" && this.onDownloadModelscopeAgent) {
+        await this.onDownloadModelscopeAgent(msg.agentId, msg.destType);
+        return;
+      }
       handleWebviewMessage(msg, this as any);
     });
   }
@@ -1645,7 +1650,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     }
   }
 
-  private postToWebview(msg: any) {
+  public postToWebview(msg: any) {
     this.view?.webview.postMessage(msg);
   }
 

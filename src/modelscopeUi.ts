@@ -159,6 +159,47 @@ export function getModelscopeCss(): string {
   color: var(--accent);
 }
 /* 卡片内部小按钮条 */
+/* ── Context Menu ── */
+.ms-context-menu {
+  display: none;
+  position: fixed;
+  z-index: 99999;
+  background: var(--bg2, #252526);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+  min-width: 180px;
+  padding: 4px 0;
+  overflow: hidden;
+}
+.ms-context-menu.visible {
+  display: block;
+}
+.ms-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--text, #cccccc);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.ms-context-menu-item:hover {
+  background: var(--hover, rgba(128,128,128,0.14));
+  color: #fff;
+}
+.ms-context-menu-item .menu-icon {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ms-context-menu-sep {
+  height: 1px;
+  background: var(--border, #444);
+  margin: 4px 8px;
+}
 .modelscope-card-actions {
   display: flex;
   justify-content: flex-end;
@@ -363,6 +404,13 @@ export function getModelscopeHtml(): string {
             </div>
             <div id="modelscope-categories" class="modelscope-categories" style="display:none;"></div>
             <div id="modelscope-grid" class="modelscope-grid"></div>
+            <!-- 右键菜单容器 -->
+            <div id="ms-context-menu" class="ms-context-menu">
+              <div class="ms-context-menu-item" data-action="download-local"><span class="menu-icon">&#128229;</span><span>下载到本地</span></div>
+              <div class="ms-context-menu-item" data-action="download-select"><span class="menu-icon">&#128193;</span><span>下载到…</span></div>
+              <div class="ms-context-menu-sep"></div>
+              <div class="ms-context-menu-item" data-action="open-detail"><span class="menu-icon">&#128279;</span><span>查看详情</span></div>
+            </div>
             <div id="modelscope-loading" class="modelscope-loading" style="display:none;"><div class="modelscope-loading-spinner"></div>正在加载 ModelScope 智能体...</div>
             <div id="modelscope-error" class="modelscope-error" style="display:none;"></div>
             <div id="modelscope-empty" class="modelscope-empty" style="display:none;">暂无智能体</div>
@@ -439,6 +487,15 @@ export function getModelscopeJs(): string {
     fetchModelscopeAgents(1, category);
   }
 
+  // Build ModelScope download URL from agentId
+  // agentId format: "ms-agent/foo" or "@user/Bar"
+  function buildModelscopeDownloadUrl(agentId) {
+    if (!agentId) return '';
+    // Strip leading slash if present
+    var id = agentId.replace(/^\\//, '');
+    return 'https://modelscope.cn/agents/' + id + '/archive/zip/master';
+  }
+
   // Switch between Local / ModelScope sub-panels
   function switchAgentsSubTab(tab) {
     console.log('[MS] switchAgentsSubTab called, tab:', tab);
@@ -461,6 +518,11 @@ export function getModelscopeJs(): string {
     // 分类标签区与搜索框同步显示/隐藏（数据加载后才有意义）
     var catEl = document.getElementById('modelscope-categories');
     if (catEl) catEl.style.display = (tab === 'modelscope' && modelscopeState.loaded) ? 'flex' : 'none';
+    if (tab === 'local') {
+      // 切换到本地 Tab 时，重新加载目录树（从文件系统刷新）
+      console.log('[MS] switchAgentsSubTab: refreshing local agents tree');
+      vscode.postMessage({ type: 'requestAgentsTree' });
+    }
     if (tab === 'modelscope') {
       if (!modelscopeState.loaded && !modelscopeState.loading) {
         console.log('[MS] calling fetchModelscopeAgents(1)');
@@ -703,9 +765,66 @@ export function getModelscopeJs(): string {
     });
   }
 
+  // ── Context Menu ──
+  var msContextMenu = document.getElementById('ms-context-menu');
+  var msMenuAgentId = null;
+
+  function _closeMsContextMenu() {
+    if (msContextMenu) msContextMenu.classList.remove('visible');
+    msMenuAgentId = null;
+  }
+  // Close on any outside click / scroll / escape
+  document.addEventListener('click', function(e) {
+    if (!msContextMenu || msContextMenu === e.target) return;
+    if (!msContextMenu.contains(e.target)) _closeMsContextMenu();
+  });
+  document.addEventListener('contextmenu', function() { _closeMsContextMenu(); });
+  document.addEventListener('scroll', _closeMsContextMenu, true);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') _closeMsContextMenu();
+  });
+
+  // Context menu item click handler
+  if (msContextMenu) {
+    msContextMenu.addEventListener('click', function(e) {
+      var item = e.target.closest('.ms-context-menu-item');
+      if (!item || !msMenuAgentId) return;
+      var action = item.getAttribute('data-action');
+      if (action === 'download-local') {
+        vscode.postMessage({ type: 'downloadModelscopeAgent', agentId: msMenuAgentId, destType: 'local' });
+      } else if (action === 'download-select') {
+        vscode.postMessage({ type: 'downloadModelscopeAgent', agentId: msMenuAgentId, destType: 'select' });
+      } else if (action === 'open-detail') {
+        openModelscopeAgent(msMenuAgentId);
+      }
+      _closeMsContextMenu();
+    });
+  }
+
   // Initialize event delegation for ModelScope grid (bind ONCE)
   var msGrid = document.getElementById('modelscope-grid');
   if (msGrid) {
+    // Context menu on right-click
+    msGrid.addEventListener('contextmenu', function(e) {
+      var card = e.target.closest('.modelscope-agent-card');
+      if (!card) return;
+      e.preventDefault();
+      e.stopPropagation();
+      msMenuAgentId = card.dataset.agentId;
+      if (msContextMenu) {
+        var x = e.clientX, y = e.clientY;
+        // Keep menu inside viewport
+        var mw = 200, mh = 120;
+        if (x + mw > window.innerWidth) x = window.innerWidth - mw - 4;
+        if (y + mh > window.innerHeight) y = window.innerHeight - mh - 4;
+        if (x < 4) x = 4;
+        if (y < 4) y = 4;
+        msContextMenu.style.left = x + 'px';
+        msContextMenu.style.top = y + 'px';
+        msContextMenu.classList.add('visible');
+      }
+    });
+
     msGrid.addEventListener('click', function(e) {
       var openBtn = e.target.closest('.modelscope-open-btn');
       if (openBtn) {

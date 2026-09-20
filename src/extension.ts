@@ -2,6 +2,12 @@ import * as vscode from "vscode";
 import { OpenClawGateway, NodeHost } from "./gateway";
 import { OpenClawChatView } from "./chatView";
 import { setLogLevel, getLogLevel } from "./logLevel";
+import * as https from "https";
+import * as http from "http";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import AdmZip from "adm-zip";
 
 let gateway: OpenClawGateway;
 let nodeHost: NodeHost;
@@ -19,6 +25,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
   gateway = new OpenClawGateway(url, token, outputChannel);
   chatView = new OpenClawChatView(context, gateway, outputChannel);
+  chatView.onDownloadModelscopeAgent = async (agentId: string, destType: string) => {
+    await _handleDownloadModelscopeAgent({
+      postToWebview: (msg: any) => chatView.postToWebview(msg),
+      agentsDir: chatView.agentsDirectory,
+      log: (m: string) => outputChannel.appendLine(m)
+    }, agentId, destType as 'local' | 'select');
+  };
 
   await gateway.initDeviceIdentity({
     get(key: string) {
@@ -228,6 +241,141 @@ export async function activate(context: vscode.ExtensionContext) {
   gateway.connect();
   nodeHost.connect();
 }
+
+async function _handleDownloadModelscopeAgent(
+  ctx: {
+    postToWebview: (msg: any) => void;
+    agentsDir: string;
+    log: (msg: string) => void;
+  },
+  agentId: string,
+  destType: 'local' | 'select'
+): Promise<void> {
+  try {
+    ctx.log(`[MS-Download] Starting download for agent: ${agentId}, destType: ${destType}`);
+
+    // Build download URL
+    const downloadUrl = `https://modelscope.cn/agents/${agentId}/archive/zip/master`;
+    ctx.log(`[MS-Download] Download URL: ${downloadUrl}`);
+
+    // Determine target directory
+    let targetDir: string;
+    if (destType === 'local') {
+      // Use openclaw.agentsDir configuration
+      targetDir = ctx.agentsDir;
+      ctx.log(`[MS-Download] Using configured agentsDir: ${targetDir}`);
+    } else {
+      // "下载到...": Open directory selection dialog
+      const selectedUri = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Download here'
+      });
+      if (!selectedUri || selectedUri.length === 0) {
+        ctx.log(`[MS-Download] User cancelled directory selection`);
+        ctx.postToWebview({ type: 'notify', text: 'Download cancelled' });
+        return;
+      }
+      targetDir = selectedUri[0].fsPath;
+      ctx.log(`[MS-Download] User selected directory: ${targetDir}`);
+    }
+
+    // Ensure target directory exists
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+      ctx.log(`[MS-Download] Created target directory: ${targetDir}`);
+    }
+
+    // Create agent-specific subdirectory
+    const agentDirName = agentId.replace(/[\/\\:*?"<>|]/g, '_'); // Sanitize for filesystem
+    const agentTargetDir = path.join(targetDir, agentDirName);
+    ctx.log(`[MS-Download] Agent target directory: ${agentTargetDir}`);
+
+    // Check if directory already exists
+    const dirExists = fs.existsSync(agentTargetDir);
+    if (dirExists && destType === 'local') {
+      // Ask for overwrite confirmation
+      const overwrite = await vscode.window.showWarningMessage(
+        `Directory "${agentDirName}" already exists. Overwrite?`,
+        { modal: true },
+        'Yes', 'No'
+      );
+
+      if (overwrite !== 'Yes') {
+        ctx.log(`[MS-Download] User cancelled overwrite`);
+        ctx.postToWebview({ type: 'notify', text: 'Download cancelled' });
+        return;
+      }
+
+      // Remove existing directory
+      fs.rmSync(agentTargetDir, { recursive: true, force: true });
+      ctx.log(`[MS-Download] Removed existing directory`);
+    }
+
+    // Download ZIP file
+    ctx.log(`[MS-Download] Downloading ZIP...`);
+    const zipBuffer = await downloadZip(downloadUrl);
+    ctx.log(`[MS-Download] Download complete, size: ${zipBuffer.length} bytes`);
+
+    // Extract ZIP
+    ctx.log(`[MS-Download] Extracting ZIP...`);
+    const zip = new AdmZip(zipBuffer);
+    zip.extractAllTo(agentTargetDir, true /* overwrite */);
+    ctx.log(`[MS-Download] Extraction complete to: ${agentTargetDir}`);
+
+    // Show success message
+    const relativePath = path.relative(os.homedir(), agentTargetDir);
+    const displayPath = relativePath.startsWith('..') ? agentTargetDir : `~/${relativePath}`;
+    ctx.log(`[MS-Download] Successfully downloaded to: ${displayPath}`);
+    ctx.postToWebview({
+      type: 'notify',
+      text: `Successfully downloaded to ${displayPath}`
+    });
+    // VS Code 通知：下载成功
+    vscode.window.showInformationMessage(`ModelScope 智能体已下载到: ${displayPath}`);
+
+  } catch (error: any) {
+    ctx.log(`[MS-Download] Error: ${error.message}`);
+    ctx.postToWebview({
+      type: 'notify',
+      text: `Download failed: ${error.message}`
+    });
+    // VS Code 通知：下载失败
+    vscode.window.showErrorMessage(`ModelScope 智能体下载失败: ${error.message}`);
+  }
+}
+
+function downloadZip(url: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}!`));
+        res.resume();
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        resolve(Buffer.concat(chunks));
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+  });
+}
+
+// Export for use in webviewHandler.ts
+export { _handleDownloadModelscopeAgent };
 
 export function deactivate() {
   gateway?.disconnect();
