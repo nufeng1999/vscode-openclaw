@@ -70,6 +70,10 @@
 			{
 				"command": "openclaw.setLogLevel",
 				"title": "OpenClaw: Set Log Level"
+			},
+			{
+				"command": "openclaw.createAgent",
+				"title": "%createAgent.title%"
 			}
 		],
 		"submenus": [
@@ -114,6 +118,11 @@
 					"command": "openclaw.analyzeProject",
 					"when": "explorerResourceIsFolder",
 					"group": "navigation@2"
+				},
+				{
+					"command": "openclaw.createAgent",
+					"when": "explorerResourceIsFolder",
+					"group": "navigation@3"
 				}
 			]
 		},

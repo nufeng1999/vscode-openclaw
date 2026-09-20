@@ -12,5 +12,6 @@
 	"config.supervisor.agentId.description": "执行定期检查的监管代理 ID（例如 manager、main）。",
 	"config.supervisor.stopInquiryMethod.description": "监管询问的提示方法前缀（例如 请判断、Judge、Evaluate）。",
 	"config.supervisor.stopSignalReply.description": "触发停止的监管代理回复文本（不区分大小写匹配）。",
-	"config.promptForNewAgent.description": "根据 OpenClaw: Agent ID 里的 agent 在 OpenClaw 中的默认配置创建一个新的 agent ，此 agent 的工作目录为 \"{workspace}\""
+	"config.promptForNewAgent.description": "根据 OpenClaw: Agent ID 里的 agent 在 OpenClaw 中的默认配置创建一个新的 agent ，此 agent 的工作目录为 \"{workspace}\"",
+	"createAgent.title": "创建智能体"
 }

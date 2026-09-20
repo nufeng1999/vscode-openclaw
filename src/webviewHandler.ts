@@ -303,6 +303,12 @@ export async function handleWebviewMessage(
           }
           break;
         }
+        case "createAgent":
+          if (msg.path) {
+            // 在指定目录树节点路径下创建智能体（写入提示词到聊天输入框）
+            vscode.commands.executeCommand("openclaw.createAgent", vscode.Uri.file(msg.path));
+          }
+          break;
         case "toggleSupervision":
           await ctx.handleToggleSupervision(msg.enabled);
           break;

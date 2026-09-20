@@ -3980,8 +3980,10 @@ var fs = __toESM(require("fs"));
 var path2 = __toESM(require("path"));
 function buildAgentsTree(dir, maxDepth = 3, depth = 0, log2 = (msg) => log(msg, LOG_INFO)) {
   const children = [];
+  let hasAgentsMd = false;
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
+    hasAgentsMd = entries.some((e) => e.name === "AGENTS.md");
     for (const entry of entries) {
       if (entry.name.startsWith("."))
         continue;
@@ -3989,6 +3991,13 @@ function buildAgentsTree(dir, maxDepth = 3, depth = 0, log2 = (msg) => log(msg, 
       const node = { name: entry.name, path: fullPath };
       if (entry.isDirectory()) {
         node.type = "directory";
+        let childHasAgentsMd = false;
+        try {
+          const childEntries = fs.readdirSync(fullPath, { withFileTypes: true });
+          childHasAgentsMd = childEntries.some((e) => e.name === "AGENTS.md");
+        } catch (e) {
+        }
+        node.hasAgentsMd = childHasAgentsMd;
         if (depth < maxDepth) {
           node.children = buildAgentsTree(fullPath, maxDepth, depth + 1, log2).children;
         } else {
@@ -4013,7 +4022,7 @@ function buildAgentsTree(dir, maxDepth = 3, depth = 0, log2 = (msg) => log(msg, 
       return 1;
     return a.name.localeCompare(b.name);
   });
-  return { name: path2.basename(dir) || dir, path: dir, type: "directory", children };
+  return { name: path2.basename(dir) || dir, path: dir, type: "directory", children, hasAgentsMd };
 }
 function handleRequestAgentsTree(agentsDir, postToWebview, log2) {
   try {
@@ -4340,6 +4349,11 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       }
       break;
     }
+    case "createAgent":
+      if (msg.path) {
+        vscode2.commands.executeCommand("openclaw.createAgent", vscode2.Uri.file(msg.path));
+      }
+      break;
     case "toggleSupervision":
       await ctx.handleToggleSupervision(msg.enabled);
       break;
@@ -6211,6 +6225,36 @@ ${getModelscopeCss()}
 }
 .agents-tree-item.folder {
   font-weight: 500;
+}
+/* Agents Tree Context Menu */
+.agents-tree-context-menu {
+  display: none;
+  position: fixed;
+  z-index: 99999;
+  background: var(--bg2, #252526);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+  min-width: 180px;
+  padding: 4px 0;
+  overflow: hidden;
+  font-size: 12px;
+}
+.agents-tree-context-menu.visible {
+  display: block;
+}
+.agents-tree-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text, #cccccc);
+  transition: background 0.12s;
+}
+.agents-tree-context-menu-item:hover {
+  background: var(--hover, rgba(128,128,128,0.14));
 }
 </style>
 </head>
@@ -8656,6 +8700,59 @@ if (resizeHandle) {
             childrenWrapper.style.display = isHidden ? '' : 'none';
             arrow.textContent = isHidden ? '\u25BE' : '\u25B8';
           });
+
+          // Context menu for directory nodes
+          item.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Remove any existing context menu
+            var existingMenu = document.querySelector('.agents-tree-context-menu');
+            if (existingMenu) existingMenu.remove();
+
+            var menu = document.createElement('div');
+            menu.className = 'agents-tree-context-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+
+            // \u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\u663E\u793A"\u521B\u5EFA\u667A\u80FD\u4F53"\u83DC\u5355\u9879
+            if (node.hasAgentsMd) {
+              var createAgentItem = document.createElement('div');
+              createAgentItem.className = 'agents-tree-context-menu-item';
+              createAgentItem.textContent = '\u521B\u5EFA\u667A\u80FD\u4F53';
+              createAgentItem.addEventListener('click', function() {
+                if (typeof vscode !== 'undefined') {
+                  vscode.postMessage({ type: 'createAgent', path: node.path });
+                }
+                menu.remove();
+              });
+              menu.appendChild(createAgentItem);
+            } else {
+              // \u65E0 AGENTS.md\uFF1A\u663E\u793A\u7981\u7528\u63D0\u793A\u9879\uFF0C\u907F\u514D\u7A7A\u767D\u83DC\u5355
+              var hintItem = document.createElement('div');
+              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
+              hintItem.textContent = '\u6B64\u76EE\u5F55\u4E0D\u5305\u542B\u667A\u80FD\u4F53\u914D\u7F6E';
+              menu.appendChild(hintItem);
+            }
+
+            menu.classList.add('visible');
+            document.body.appendChild(menu);
+
+            // Close menu on click outside or ESC
+            function closeMenu() {
+              menu.remove();
+              document.removeEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }
+            function onKeyDown(e) {
+              if (e.key === 'Escape') closeMenu();
+            }
+            // Use setTimeout to avoid immediate closure from the current click
+            setTimeout(function() {
+              document.addEventListener('click', closeMenu);
+              document.addEventListener('keydown', onKeyDown);
+            }, 0);
+          });
         } else {
           // Empty directory: no arrow, just a spacer to align with files
           var spacer = document.createElement('span');
@@ -8664,6 +8761,59 @@ if (resizeHandle) {
           item.insertBefore(spacer, iconSpan);
           item.title = t('Empty directory');
           item.classList.add('empty-dir');
+
+          // Context menu for empty directory nodes
+          item.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Remove any existing context menu
+            var existingMenu = document.querySelector('.agents-tree-context-menu');
+            if (existingMenu) existingMenu.remove();
+
+            var menu = document.createElement('div');
+            menu.className = 'agents-tree-context-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+
+            // \u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\u663E\u793A"\u521B\u5EFA\u667A\u80FD\u4F53"\u83DC\u5355\u9879
+            if (node.hasAgentsMd) {
+              var createAgentItem = document.createElement('div');
+              createAgentItem.className = 'agents-tree-context-menu-item';
+              createAgentItem.textContent = '\u521B\u5EFA\u667A\u80FD\u4F53';
+              createAgentItem.addEventListener('click', function() {
+                if (typeof vscode !== 'undefined') {
+                  vscode.postMessage({ type: 'createAgent', path: node.path });
+                }
+                menu.remove();
+              });
+              menu.appendChild(createAgentItem);
+            } else {
+              // \u65E0 AGENTS.md\uFF1A\u663E\u793A\u7981\u7528\u63D0\u793A\u9879\uFF0C\u907F\u514D\u7A7A\u767D\u83DC\u5355
+              var hintItem = document.createElement('div');
+              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
+              hintItem.textContent = '\u6B64\u76EE\u5F55\u4E0D\u5305\u542B\u667A\u80FD\u4F53\u914D\u7F6E';
+              menu.appendChild(hintItem);
+            }
+
+            menu.classList.add('visible');
+            document.body.appendChild(menu);
+
+            // Close menu on click outside or ESC
+            function closeMenu() {
+              menu.remove();
+              document.removeEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }
+            function onKeyDown(e) {
+              if (e.key === 'Escape') closeMenu();
+            }
+            // Use setTimeout to avoid immediate closure from the current click
+            setTimeout(function() {
+              document.addEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }, 0);
+          });
         }
       } else {
         // File: no arrow, just a spacer to align with directories
@@ -10378,6 +10528,24 @@ async function activate(context) {
         await config.update("logLevel", selected, vscode5.ConfigurationTarget.Global);
         vscode5.window.showInformationMessage(vscode5.l10n.t("Log level changed to: {0}", selected));
       }
+    }),
+    vscode5.commands.registerCommand("openclaw.createAgent", async (uri) => {
+      const dirPath = uri.fsPath;
+      const agentsMdPath = path5.join(dirPath, "AGENTS.md");
+      if (!fs4.existsSync(agentsMdPath)) {
+        vscode5.window.showWarningMessage(
+          vscode5.l10n.t("Directory '{0}' does not contain AGENTS.md. Please add AGENTS.md first.", path5.basename(dirPath))
+        );
+        return;
+      }
+      const promptTemplate = config.get("promptForNewAgent", "");
+      if (!promptTemplate) {
+        vscode5.window.showWarningMessage(vscode5.l10n.t("openclaw.promptForNewAgent setting is empty. Please configure it first."));
+        return;
+      }
+      const finalPrompt = promptTemplate.replace(/\{workspace\}/g, dirPath);
+      chatView.setInputText(finalPrompt);
+      chatView.show();
     })
   );
   gateway.on("disconnected", () => {

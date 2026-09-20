@@ -176,6 +176,28 @@ export async function activate(context: vscode.ExtensionContext) {
         await config.update("logLevel", selected, vscode.ConfigurationTarget.Global);
         vscode.window.showInformationMessage(vscode.l10n.t("Log level changed to: {0}", selected));
       }
+    }),
+    vscode.commands.registerCommand("openclaw.createAgent", async (uri: vscode.Uri) => {
+      const dirPath = uri.fsPath;
+      const agentsMdPath = path.join(dirPath, "AGENTS.md");
+      // 检查目标目录是否包含 AGENTS.md
+      if (!fs.existsSync(agentsMdPath)) {
+        vscode.window.showWarningMessage(
+          vscode.l10n.t("Directory '{0}' does not contain AGENTS.md. Please add AGENTS.md first.", path.basename(dirPath))
+        );
+        return;
+      }
+      // 读取 prompt 模板
+      const promptTemplate = config.get<string>("promptForNewAgent", "");
+      if (!promptTemplate) {
+        vscode.window.showWarningMessage(vscode.l10n.t("openclaw.promptForNewAgent setting is empty. Please configure it first."));
+        return;
+      }
+      // 替换 {workspace} 占位符
+      const finalPrompt = promptTemplate.replace(/\{workspace\}/g, dirPath);
+      // 写入聊天输入框并显示面板
+      chatView.setInputText(finalPrompt);
+      chatView.show();
     })
   );
 

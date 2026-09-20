@@ -924,6 +924,36 @@ ${getModelscopeCss()}
 .agents-tree-item.folder {
   font-weight: 500;
 }
+/* Agents Tree Context Menu */
+.agents-tree-context-menu {
+  display: none;
+  position: fixed;
+  z-index: 99999;
+  background: var(--bg2, #252526);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+  min-width: 180px;
+  padding: 4px 0;
+  overflow: hidden;
+  font-size: 12px;
+}
+.agents-tree-context-menu.visible {
+  display: block;
+}
+.agents-tree-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text, #cccccc);
+  transition: background 0.12s;
+}
+.agents-tree-context-menu-item:hover {
+  background: var(--hover, rgba(128,128,128,0.14));
+}
 </style>
 </head>
 <body>
@@ -3368,6 +3398,59 @@ if (resizeHandle) {
             childrenWrapper.style.display = isHidden ? '' : 'none';
             arrow.textContent = isHidden ? '▾' : '▸';
           });
+
+          // Context menu for directory nodes
+          item.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Remove any existing context menu
+            var existingMenu = document.querySelector('.agents-tree-context-menu');
+            if (existingMenu) existingMenu.remove();
+
+            var menu = document.createElement('div');
+            menu.className = 'agents-tree-context-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+
+            // 仅当目录包含 AGENTS.md 时显示"创建智能体"菜单项
+            if (node.hasAgentsMd) {
+              var createAgentItem = document.createElement('div');
+              createAgentItem.className = 'agents-tree-context-menu-item';
+              createAgentItem.textContent = '创建智能体';
+              createAgentItem.addEventListener('click', function() {
+                if (typeof vscode !== 'undefined') {
+                  vscode.postMessage({ type: 'createAgent', path: node.path });
+                }
+                menu.remove();
+              });
+              menu.appendChild(createAgentItem);
+            } else {
+              // 无 AGENTS.md：显示禁用提示项，避免空白菜单
+              var hintItem = document.createElement('div');
+              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
+              hintItem.textContent = '此目录不包含智能体配置';
+              menu.appendChild(hintItem);
+            }
+
+            menu.classList.add('visible');
+            document.body.appendChild(menu);
+
+            // Close menu on click outside or ESC
+            function closeMenu() {
+              menu.remove();
+              document.removeEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }
+            function onKeyDown(e) {
+              if (e.key === 'Escape') closeMenu();
+            }
+            // Use setTimeout to avoid immediate closure from the current click
+            setTimeout(function() {
+              document.addEventListener('click', closeMenu);
+              document.addEventListener('keydown', onKeyDown);
+            }, 0);
+          });
         } else {
           // Empty directory: no arrow, just a spacer to align with files
           var spacer = document.createElement('span');
@@ -3376,6 +3459,59 @@ if (resizeHandle) {
           item.insertBefore(spacer, iconSpan);
           item.title = t('Empty directory');
           item.classList.add('empty-dir');
+
+          // Context menu for empty directory nodes
+          item.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Remove any existing context menu
+            var existingMenu = document.querySelector('.agents-tree-context-menu');
+            if (existingMenu) existingMenu.remove();
+
+            var menu = document.createElement('div');
+            menu.className = 'agents-tree-context-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+
+            // 仅当目录包含 AGENTS.md 时显示"创建智能体"菜单项
+            if (node.hasAgentsMd) {
+              var createAgentItem = document.createElement('div');
+              createAgentItem.className = 'agents-tree-context-menu-item';
+              createAgentItem.textContent = '创建智能体';
+              createAgentItem.addEventListener('click', function() {
+                if (typeof vscode !== 'undefined') {
+                  vscode.postMessage({ type: 'createAgent', path: node.path });
+                }
+                menu.remove();
+              });
+              menu.appendChild(createAgentItem);
+            } else {
+              // 无 AGENTS.md：显示禁用提示项，避免空白菜单
+              var hintItem = document.createElement('div');
+              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
+              hintItem.textContent = '此目录不包含智能体配置';
+              menu.appendChild(hintItem);
+            }
+
+            menu.classList.add('visible');
+            document.body.appendChild(menu);
+
+            // Close menu on click outside or ESC
+            function closeMenu() {
+              menu.remove();
+              document.removeEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }
+            function onKeyDown(e) {
+              if (e.key === 'Escape') closeMenu();
+            }
+            // Use setTimeout to avoid immediate closure from the current click
+            setTimeout(function() {
+              document.addEventListener('click', closeMenu);
+              document.removeEventListener('keydown', onKeyDown);
+            }, 0);
+          });
         }
       } else {
         // File: no arrow, just a spacer to align with directories

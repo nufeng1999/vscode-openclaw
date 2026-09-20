@@ -27,8 +27,11 @@ export function buildAgentsTree(
   children?: any[];
 } {
   const children: any[] = [];
+  // 先检查当前目录是否包含 AGENTS.md（用于返回的根节点）
+  let hasAgentsMd = false;
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
+    hasAgentsMd = entries.some((e: any) => e.name === "AGENTS.md");
     for (const entry of entries) {
       // 跳过 dotfile（隐藏文件/目录）
       if (entry.name.startsWith(".")) continue;
@@ -36,6 +39,13 @@ export function buildAgentsTree(
       const node: any = { name: entry.name, path: fullPath };
       if (entry.isDirectory()) {
         node.type = "directory";
+        // 为子目录节点计算并附加 hasAgentsMd（检查子目录自身是否包含 AGENTS.md）
+        let childHasAgentsMd = false;
+        try {
+          const childEntries = fs.readdirSync(fullPath, { withFileTypes: true });
+          childHasAgentsMd = childEntries.some((e: any) => e.name === "AGENTS.md");
+        } catch (e) { /* 子目录不可读时默认为 false */ }
+        node.hasAgentsMd = childHasAgentsMd;
         if (depth < maxDepth) {
           // Fix: extract children array from recursive result, not the whole tree node
           node.children = buildAgentsTree(fullPath, maxDepth, depth + 1, log).children;
@@ -62,7 +72,7 @@ export function buildAgentsTree(
     if (a.type !== "directory" && b.type === "directory") return 1;
     return a.name.localeCompare(b.name);
   });
-  return { name: path.basename(dir) || dir, path: dir, type: "directory", children };
+  return { name: path.basename(dir) || dir, path: dir, type: "directory", children, hasAgentsMd };
 }
 
 /**
