@@ -188,6 +188,12 @@
 						"Trace"
 					],
 					"description": "Log output level for the OpenClaw extension"
+				},
+				"openclaw.promptForNewAgent": {
+					"title": "Openclaw: Prompt for creating a new agent",
+					"type": "string",
+					"default": "根据 OpenClaw: Agent ID 里的 agent 在 OpenClaw 中的默认配置创建一个新的 agent ，此 agent 的工作目录为 \"{workspace}\"",
+					"description": "%config.promptForNewAgent.description%"
 				}
 			}
 		}
