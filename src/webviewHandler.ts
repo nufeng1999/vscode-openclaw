@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { handleRequestAgentsTree } from "./agentTree";
+import { handleRequestAgentsTree, handleSaveExpandedPaths, loadExpandedPaths } from "./agentTree";
 import { handleFetchModelscopeAgents as _handleFetchModelscopeAgents } from "./modelscopeHandler";
 import type { ModelScopeAgentItem, ModelScopeAgentListResponse } from "./modelscopeTypes";
 
@@ -47,6 +47,7 @@ function setSystemClipboardFileList(p: string, isCut: boolean): void {
       // Windows：PowerShell CF_HDROP + Preferred DropEffect（isCut=true 为 Move=2，否则 Copy=1）
       const dropEffect = isCut ? 2 : 1;
       const psScript =
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
         "Add-Type -AssemblyName System.Windows.Forms; " +
         "$files = New-Object System.Collections.Specialized.StringCollection; " +
         "$files.Add('" + absPath + "'); " +
@@ -148,6 +149,7 @@ function readSystemClipboardFiles(): { paths: string[]; operation: string } | nu
       // Windows：PowerShell 读 CF_HDROP + Preferred DropEffect
       // 脚本输出格式：第一行 OK/EMPTY，第二行起每行一个绝对路径，最后一行 OP:cut|copy
       const psScript =
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
         "Add-Type -AssemblyName System.Windows.Forms; " +
         "$files = [System.Windows.Forms.Clipboard]::GetFileDropList(); " +
         "if ($files -eq $null -or $files.Count -eq 0) { Write-Output 'EMPTY'; exit; } " +
@@ -260,6 +262,8 @@ let pendingClipboard: { path: string; operation: 'cut' | 'copy' } | null = null;
 /**
  * Handle messages from the webview.
  * Extracted from OpenClawChatView.onDidReceiveMessage (chatView.ts L717–L972).
+ * @param msg 消息对象
+ * @param ctx 上下文对象（含各 handler 回调与扩展状态）
  */
 export async function handleWebviewMessage(
   msg: any,
@@ -267,6 +271,7 @@ export async function handleWebviewMessage(
     activeAgent: any;
     agents: any;
     agentsDir: any;
+    context: any;
     currentModel: any;
     currentSessionKey: any;
     cycleThinking: any;
@@ -351,7 +356,15 @@ export async function handleWebviewMessage(
           await ctx.handleRequestAgents();
           break;
         case "requestAgentsTree":
-          await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+          break;
+        case "saveExpandedPaths":
+          // webview 传来的展开状态：持久化到 globalState，并在下次请求时随树数据下发
+          if (ctx.context && msg.expandedPaths) {
+            handleSaveExpandedPaths(msg.expandedPaths, ctx.context, ctx.log.bind(ctx));
+          } else {
+            ctx.log("[saveExpandedPaths] skipped: missing context or expandedPaths");
+          }
           break;
         case "fetchModelscopeAgents":
           await _handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 12, msg.category || '');
@@ -624,7 +637,7 @@ export async function handleWebviewMessage(
                     }
                   }
                   ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
-                  handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+                  handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
                 } catch (err: any) {
                   ctx.log("[filePaste] error: " + (err?.message || err));
                   vscode.window.showErrorMessage(vscode.l10n.t("Paste failed: {0}", String(err?.message || err)));
@@ -678,7 +691,7 @@ export async function handleWebviewMessage(
             pendingClipboard = null;
             ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
             ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
-            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
           } catch (err: any) {
             ctx.log("[filePaste] error: " + (err?.message || err));
             vscode.window.showErrorMessage(vscode.l10n.t("Paste failed: {0}", String(err?.message || err)));
@@ -717,12 +730,34 @@ export async function handleWebviewMessage(
               await fs.promises.unlink(filePath);
             }
             ctx.log(`[fileDelete] 成功删除${itemType}: ${filePath}`);
-            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
           } catch (err: any) {
             ctx.log(`[fileDelete] 删除${itemType}失败: ${err?.message || err}`);
             vscode.window.showErrorMessage(
               vscode.l10n.t("删除{0}失败: {1}", itemType, String(err?.message || err))
             );
+          }
+          break;
+        }
+        case "fileRename": {
+          const oldPath = msg.path as string;
+          const oldName = msg.name as string;
+          const newName = msg.newName as string;
+          if (!oldPath || !fs.existsSync(oldPath)) {
+            ctx.log(`[fileRename] path not found: ${oldPath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("文件/文件夹不存在: {0}", oldName));
+            break;
+          }
+          if (!newName || newName === oldName) break;
+          const parentDir = path.dirname(oldPath);
+          const newPath = path.join(parentDir, newName);
+          try {
+            await fs.promises.rename(oldPath, newPath);
+            ctx.log(`[fileRename] 重命名成功: ${oldPath} -> ${newPath}`);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+          } catch (err: any) {
+            ctx.log(`[fileRename] 重命名失败: ${err?.message || err}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("重命名失败: {0}", String(err?.message || err)));
           }
           break;
         }

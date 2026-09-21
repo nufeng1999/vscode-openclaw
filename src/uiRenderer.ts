@@ -964,6 +964,30 @@ ${getModelscopeCss()}
   margin: 4px 0;
   background: var(--border, #444);
 }
+/* Agents Tree Inline Rename（原地重命名输入框） */
+.agents-tree-item.editing {
+  background-color: rgba(0, 120, 215, 0.2);
+  outline: 1px solid var(--accent, #3794ff);
+  outline-offset: -1px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+.agents-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: var(--text, #cccccc);
+  background: var(--input-bg, #3c3c3c);
+  border: 1px solid var(--accent, #3794ff);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin: 0;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.25);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
 </style>
 </head>
 <body>
@@ -1156,6 +1180,28 @@ ${getModelscopeHtml()}
   let agentsTreeData = null;
   let agentsTreeDir = '';
   let agentTreeHasPendingClipboard = false;
+  // 智能体目录树展开状态（key: 目录路径，value: true=展开）
+  // 双端持久化：webview 侧先写入 localStorage，再同步给 host 存入 globalState
+  let agentsTreeExpandedPaths = {};
+  const AGENTS_TREE_EXPANDED_KEY = 'openclaw.agentsTreeExpandedPaths';
+  function loadAgentsTreeExpandedPaths() {
+    try {
+      var raw = localStorage.getItem(AGENTS_TREE_EXPANDED_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') agentsTreeExpandedPaths = parsed;
+      }
+    } catch (e) { agentsTreeExpandedPaths = {}; }
+  }
+  function saveAgentsTreeExpandedPaths() {
+    try {
+      localStorage.setItem(AGENTS_TREE_EXPANDED_KEY, JSON.stringify(agentsTreeExpandedPaths));
+    } catch (e) { /* localStorage 不可用时忽略 */ }
+    if (typeof vscode !== 'undefined') {
+      vscode.postMessage({ type: 'saveExpandedPaths', expandedPaths: agentsTreeExpandedPaths });
+    }
+  }
+  loadAgentsTreeExpandedPaths();
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
@@ -1851,6 +1897,13 @@ if (resizeHandle) {
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
         agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
+        // 接收 host 传来的展开状态（globalState 持久化），覆盖本地（含 localStorage）
+        if (msg.expandedPaths && typeof msg.expandedPaths === 'object') {
+          agentsTreeExpandedPaths = msg.expandedPaths;
+          try {
+            localStorage.setItem(AGENTS_TREE_EXPANDED_KEY, JSON.stringify(agentsTreeExpandedPaths));
+          } catch (e) { /* ignore */ }
+        }
         renderLocalAgentsTree();
         break;
       case 'clipboardState':
@@ -3373,6 +3426,107 @@ if (resizeHandle) {
       if (name.endsWith('.js') || name.endsWith('.ts')) return '📜';
       return '📄';
     }
+    /**
+     * 启动原地重命名编辑模式
+     * @param nodeInfo 节点信息 { name, path, type }
+     * @param itemNameSpan 显示名称的 span 元素
+     */
+    function startRename(nodeInfo, itemNameSpan) {
+      // 如果已经在编辑其他节点，先取消
+      stopRename();
+
+      var item = itemNameSpan.parentElement;
+      if (!item || !itemNameSpan) return;
+
+      // 保存当前节点状态
+      var currentName = nodeInfo.name;
+      var currentPath = nodeInfo.path;
+      var currentType = nodeInfo.type;
+
+      // 标记编辑状态
+      item.classList.add('editing');
+
+      // 创建输入框，替换名称 span
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'agents-tree-rename-input';
+      input.value = currentName;
+
+      // 获取输入框应占用的宽度（与当前名称大致匹配）
+      // 将输入框插入到名称位置
+      itemNameSpan.style.display = 'none';
+      item.insertBefore(input, itemNameSpan.nextElementSibling || null);
+
+      // 自动选中文本
+      var selectStart = 0;
+      var selectEnd = currentName.length;
+      // 去掉扩展名便于只编辑文件名部分（如 test.ts -> 只选 test）
+      var dotIdx = currentName.lastIndexOf('.');
+      if (dotIdx > 0 && currentType === 'file') {
+        selectEnd = dotIdx;
+      }
+      input.setSelectionRange(selectStart, selectEnd);
+      input.focus();
+
+      // 确认重命名
+      function confirmRename(newName) {
+        if (!newName || newName === currentName) {
+          // 取消：恢复原始状态
+          cancelRename();
+          return;
+        }
+        // 发送重命名请求到 host
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: 'fileRename', path: currentPath, name: currentName, newName: newName });
+        }
+        // 本地更新显示名称（乐观更新）
+        currentName = newName;
+        itemNameSpan.textContent = newName;
+        input.remove();
+        itemNameSpan.style.display = '';
+        item.classList.remove('editing');
+      }
+
+      // 取消重命名
+      function cancelRename() {
+        input.remove();
+        itemNameSpan.style.display = '';
+        item.classList.remove('editing');
+      }
+
+      // 全局取消函数（用于 stopRename）
+      window._currentRenameState = { confirm: confirmRename, cancel: cancelRename };
+
+      // Enter 确认
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          confirmRename(input.value.trim());
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRename();
+        }
+      });
+
+      // 失焦时自动确认（如果输入框还在）
+      input.addEventListener('blur', function() {
+        // 延迟一点检查，避免与 keydown 冲突
+        setTimeout(function() {
+          if (document.body.contains(input) && window._currentRenameState) {
+            confirmRename(input.value.trim());
+          }
+        }, 100);
+      });
+    }
+
+    /** 停止当前的重命名编辑状态 */
+    function stopRename() {
+      if (window._currentRenameState) {
+        window._currentRenameState.cancel();
+        delete window._currentRenameState;
+      }
+    }
+
     function createItem(node, depth) {
       var item = document.createElement('div');
       item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
@@ -3428,7 +3582,7 @@ if (resizeHandle) {
               } else if (type === 'fileDelete') {
                 vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
               } else if (type === 'fileRename') {
-                vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
               } else if (type === 'copyPath') {
                 vscode.postMessage({ type: 'copyPath', path: node.path });
               }
@@ -3493,7 +3647,13 @@ if (resizeHandle) {
 
           var childrenWrapper = document.createElement('div');
           childrenWrapper.className = 'agents-tree-children';
-          childrenWrapper.style.display = 'none';
+          // 从持久化的展开状态恢复：默认折叠，展开路径集含该目录路径时展开
+          var isExpanded = false;
+          try {
+            isExpanded = agentsTreeExpandedPaths && agentsTreeExpandedPaths[node.path] === true;
+          } catch (e) { isExpanded = false; }
+          childrenWrapper.style.display = isExpanded ? '' : 'none';
+          if (isExpanded) arrow.textContent = '▾';
           node.children.forEach(function(child) {
             var childWrapper = createItem(child, depth + 1);
             childrenWrapper.appendChild(childWrapper);
@@ -3505,6 +3665,15 @@ if (resizeHandle) {
             var isHidden = childrenWrapper.style.display === 'none';
             childrenWrapper.style.display = isHidden ? '' : 'none';
             arrow.textContent = isHidden ? '▾' : '▸';
+            // 同步展开状态到 Set 结构并持久化（localStorage + postMessage 到 host globalState）
+            try {
+              if (isHidden) {
+                agentsTreeExpandedPaths[node.path] = true;
+              } else {
+                delete agentsTreeExpandedPaths[node.path];
+              }
+              saveAgentsTreeExpandedPaths();
+            } catch (err) { /* 持久化失败不影响展开/折叠交互 */ }
           });
 
           // Context menu for directory nodes (统一文件操作菜单)
@@ -3576,7 +3745,7 @@ if (resizeHandle) {
                 } else if (type === 'fileDelete') {
                   vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
                 } else if (type === 'fileRename') {
-                  vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                  startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
                 } else if (type === 'copyPath') {
                   vscode.postMessage({ type: 'copyPath', path: node.path });
                 }

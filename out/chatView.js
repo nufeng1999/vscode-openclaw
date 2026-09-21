@@ -280,7 +280,13 @@
     });
     return { name: path2.basename(dir) || dir, path: dir, type: "directory", children, hasAgentsMd };
   }
-  function handleRequestAgentsTree(agentsDir, postToWebview, log2) {
+  function loadExpandedPaths(context) {
+    return context.globalState.get("openclaw.agentsTreeExpandedPaths", {}) || {};
+  }
+  function saveExpandedPaths(context, state) {
+    context.globalState.update("openclaw.agentsTreeExpandedPaths", state);
+  }
+  function handleRequestAgentsTree(agentsDir, postToWebview, log2, context) {
     try {
       const dir = agentsDir;
       if (!dir || !fs.existsSync(dir)) {
@@ -288,10 +294,19 @@
         return;
       }
       const tree = buildAgentsTree(dir, 3, 0, log2);
-      postToWebview({ type: "agentsTree", tree, dir });
+      const expandedPaths = context ? loadExpandedPaths(context) : {};
+      postToWebview({ type: "agentsTree", tree, dir, expandedPaths });
     } catch (err) {
       log2(`handleRequestAgentsTree error: ${err?.message || err}`);
-      postToWebview({ type: "agentsTree", tree: null, dir: agentsDir });
+      postToWebview({ type: "agentsTree", tree: null, dir: agentsDir, expandedPaths: {} });
+    }
+  }
+  function handleSaveExpandedPaths(expandedPaths, context, log2) {
+    try {
+      saveExpandedPaths(context, expandedPaths);
+      log2(`[saveExpandedPaths] saved ${Object.keys(expandedPaths).length} expanded path(s)`);
+    } catch (err) {
+      log2(`[saveExpandedPaths] error: ${err?.message || err}`);
     }
   }
 
@@ -404,7 +419,7 @@
       const { execSync } = __require("child_process");
       if (process.platform === "win32") {
         const dropEffect = isCut ? 2 : 1;
-        const psScript = "Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; $files.Add('" + absPath + "'); $data = New-Object System.Windows.Forms.DataObject; $data.SetFileDropList($files); $ms = New-Object System.IO.MemoryStream(4); $bw = New-Object System.IO.BinaryWriter($ms); $bw.Write([int]" + dropEffect + "); $bw.Flush(); $ms.Position = 0; $data.SetData('Preferred DropEffect', $ms); [System.Windows.Forms.Clipboard]::SetDataObject($data, $true); Write-Output 'CLIP_FILE_SET_OK';";
+        const psScript = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; $files.Add('" + absPath + "'); $data = New-Object System.Windows.Forms.DataObject; $data.SetFileDropList($files); $ms = New-Object System.IO.MemoryStream(4); $bw = New-Object System.IO.BinaryWriter($ms); $bw.Write([int]" + dropEffect + "); $bw.Flush(); $ms.Position = 0; $data.SetData('Preferred DropEffect', $ms); [System.Windows.Forms.Clipboard]::SetDataObject($data, $true); Write-Output 'CLIP_FILE_SET_OK';";
         const encoded = Buffer.from(psScript, "utf16le").toString("base64");
         try {
           const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
@@ -485,7 +500,7 @@
     try {
       const { execSync } = __require("child_process");
       if (process.platform === "win32") {
-        const psScript = "Add-Type -AssemblyName System.Windows.Forms; $files = [System.Windows.Forms.Clipboard]::GetFileDropList(); if ($files -eq $null -or $files.Count -eq 0) { Write-Output 'EMPTY'; exit; } $data = [System.Windows.Forms.Clipboard]::GetDataObject(); $op = 'copy'; if ($data -ne $null -and $data.GetDataPresent('Preferred DropEffect')) {   $ms = $data.GetData('Preferred DropEffect');   if ($ms -ne $null) { try { $ms.Position = 0; $br = New-Object System.IO.BinaryReader($ms);     $intVal = $br.ReadInt32(); $br.Close();     if ($intVal -eq 2) { $op = 'cut' } elseif ($intVal -eq 1) { $op = 'copy' }   } finally { if ($ms) { $ms.Dispose() } } } } Write-Output 'OK'; foreach ($f in $files) { Write-Output $f }; Write-Output ('OP:' + $op);";
+        const psScript = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $files = [System.Windows.Forms.Clipboard]::GetFileDropList(); if ($files -eq $null -or $files.Count -eq 0) { Write-Output 'EMPTY'; exit; } $data = [System.Windows.Forms.Clipboard]::GetDataObject(); $op = 'copy'; if ($data -ne $null -and $data.GetDataPresent('Preferred DropEffect')) {   $ms = $data.GetData('Preferred DropEffect');   if ($ms -ne $null) { try { $ms.Position = 0; $br = New-Object System.IO.BinaryReader($ms);     $intVal = $br.ReadInt32(); $br.Close();     if ($intVal -eq 2) { $op = 'cut' } elseif ($intVal -eq 1) { $op = 'copy' }   } finally { if ($ms) { $ms.Dispose() } } } } Write-Output 'OK'; foreach ($f in $files) { Write-Output $f }; Write-Output ('OP:' + $op);";
         const encoded = Buffer.from(psScript, "utf16le").toString("base64");
         try {
           const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
@@ -614,7 +629,14 @@
         await ctx.handleRequestAgents();
         break;
       case "requestAgentsTree":
-        await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+        await handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+        break;
+      case "saveExpandedPaths":
+        if (ctx.context && msg.expandedPaths) {
+          handleSaveExpandedPaths(msg.expandedPaths, ctx.context, ctx.log.bind(ctx));
+        } else {
+          ctx.log("[saveExpandedPaths] skipped: missing context or expandedPaths");
+        }
         break;
       case "fetchModelscopeAgents":
         await handleFetchModelscopeAgents(ctx, msg.page || 1, msg.pageSize || 12, msg.category || "");
@@ -874,7 +896,7 @@
                   }
                 }
                 ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
-                handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+                handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
               } catch (err) {
                 ctx.log("[filePaste] error: " + (err?.message || err));
                 vscode2.window.showErrorMessage(vscode2.l10n.t("Paste failed: {0}", String(err?.message || err)));
@@ -929,7 +951,7 @@
           pendingClipboard = null;
           ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
           ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
-          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
         } catch (err) {
           ctx.log("[filePaste] error: " + (err?.message || err));
           vscode2.window.showErrorMessage(vscode2.l10n.t("Paste failed: {0}", String(err?.message || err)));
@@ -963,12 +985,35 @@
             await fs2.promises.unlink(filePath);
           }
           ctx.log(`[fileDelete] \u6210\u529F\u5220\u9664${itemType}: ${filePath}`);
-          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
         } catch (err) {
           ctx.log(`[fileDelete] \u5220\u9664${itemType}\u5931\u8D25: ${err?.message || err}`);
           vscode2.window.showErrorMessage(
             vscode2.l10n.t("\u5220\u9664{0}\u5931\u8D25: {1}", itemType, String(err?.message || err))
           );
+        }
+        break;
+      }
+      case "fileRename": {
+        const oldPath = msg.path;
+        const oldName = msg.name;
+        const newName = msg.newName;
+        if (!oldPath || !fs2.existsSync(oldPath)) {
+          ctx.log(`[fileRename] path not found: ${oldPath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u6587\u4EF6/\u6587\u4EF6\u5939\u4E0D\u5B58\u5728: {0}", oldName));
+          break;
+        }
+        if (!newName || newName === oldName)
+          break;
+        const parentDir = path3.dirname(oldPath);
+        const newPath = path3.join(parentDir, newName);
+        try {
+          await fs2.promises.rename(oldPath, newPath);
+          ctx.log(`[fileRename] \u91CD\u547D\u540D\u6210\u529F: ${oldPath} -> ${newPath}`);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+        } catch (err) {
+          ctx.log(`[fileRename] \u91CD\u547D\u540D\u5931\u8D25: ${err?.message || err}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u91CD\u547D\u540D\u5931\u8D25: {0}", String(err?.message || err)));
         }
         break;
       }
@@ -2884,6 +2929,30 @@ ${getModelscopeCss()}
   margin: 4px 0;
   background: var(--border, #444);
 }
+/* Agents Tree Inline Rename\uFF08\u539F\u5730\u91CD\u547D\u540D\u8F93\u5165\u6846\uFF09 */
+.agents-tree-item.editing {
+  background-color: rgba(0, 120, 215, 0.2);
+  outline: 1px solid var(--accent, #3794ff);
+  outline-offset: -1px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+.agents-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: var(--text, #cccccc);
+  background: var(--input-bg, #3c3c3c);
+  border: 1px solid var(--accent, #3794ff);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin: 0;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.25);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
 </style>
 </head>
 <body>
@@ -3076,6 +3145,28 @@ ${getModelscopeHtml()}
   let agentsTreeData = null;
   let agentsTreeDir = '';
   let agentTreeHasPendingClipboard = false;
+  // \u667A\u80FD\u4F53\u76EE\u5F55\u6811\u5C55\u5F00\u72B6\u6001\uFF08key: \u76EE\u5F55\u8DEF\u5F84\uFF0Cvalue: true=\u5C55\u5F00\uFF09
+  // \u53CC\u7AEF\u6301\u4E45\u5316\uFF1Awebview \u4FA7\u5148\u5199\u5165 localStorage\uFF0C\u518D\u540C\u6B65\u7ED9 host \u5B58\u5165 globalState
+  let agentsTreeExpandedPaths = {};
+  const AGENTS_TREE_EXPANDED_KEY = 'openclaw.agentsTreeExpandedPaths';
+  function loadAgentsTreeExpandedPaths() {
+    try {
+      var raw = localStorage.getItem(AGENTS_TREE_EXPANDED_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') agentsTreeExpandedPaths = parsed;
+      }
+    } catch (e) { agentsTreeExpandedPaths = {}; }
+  }
+  function saveAgentsTreeExpandedPaths() {
+    try {
+      localStorage.setItem(AGENTS_TREE_EXPANDED_KEY, JSON.stringify(agentsTreeExpandedPaths));
+    } catch (e) { /* localStorage \u4E0D\u53EF\u7528\u65F6\u5FFD\u7565 */ }
+    if (typeof vscode !== 'undefined') {
+      vscode.postMessage({ type: 'saveExpandedPaths', expandedPaths: agentsTreeExpandedPaths });
+    }
+  }
+  loadAgentsTreeExpandedPaths();
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
@@ -3771,6 +3862,13 @@ if (resizeHandle) {
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
         agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
+        // \u63A5\u6536 host \u4F20\u6765\u7684\u5C55\u5F00\u72B6\u6001\uFF08globalState \u6301\u4E45\u5316\uFF09\uFF0C\u8986\u76D6\u672C\u5730\uFF08\u542B localStorage\uFF09
+        if (msg.expandedPaths && typeof msg.expandedPaths === 'object') {
+          agentsTreeExpandedPaths = msg.expandedPaths;
+          try {
+            localStorage.setItem(AGENTS_TREE_EXPANDED_KEY, JSON.stringify(agentsTreeExpandedPaths));
+          } catch (e) { /* ignore */ }
+        }
         renderLocalAgentsTree();
         break;
       case 'clipboardState':
@@ -5293,6 +5391,107 @@ if (resizeHandle) {
       if (name.endsWith('.js') || name.endsWith('.ts')) return '\u{1F4DC}';
       return '\u{1F4C4}';
     }
+    /**
+     * \u542F\u52A8\u539F\u5730\u91CD\u547D\u540D\u7F16\u8F91\u6A21\u5F0F
+     * @param nodeInfo \u8282\u70B9\u4FE1\u606F { name, path, type }
+     * @param itemNameSpan \u663E\u793A\u540D\u79F0\u7684 span \u5143\u7D20
+     */
+    function startRename(nodeInfo, itemNameSpan) {
+      // \u5982\u679C\u5DF2\u7ECF\u5728\u7F16\u8F91\u5176\u4ED6\u8282\u70B9\uFF0C\u5148\u53D6\u6D88
+      stopRename();
+
+      var item = itemNameSpan.parentElement;
+      if (!item || !itemNameSpan) return;
+
+      // \u4FDD\u5B58\u5F53\u524D\u8282\u70B9\u72B6\u6001
+      var currentName = nodeInfo.name;
+      var currentPath = nodeInfo.path;
+      var currentType = nodeInfo.type;
+
+      // \u6807\u8BB0\u7F16\u8F91\u72B6\u6001
+      item.classList.add('editing');
+
+      // \u521B\u5EFA\u8F93\u5165\u6846\uFF0C\u66FF\u6362\u540D\u79F0 span
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'agents-tree-rename-input';
+      input.value = currentName;
+
+      // \u83B7\u53D6\u8F93\u5165\u6846\u5E94\u5360\u7528\u7684\u5BBD\u5EA6\uFF08\u4E0E\u5F53\u524D\u540D\u79F0\u5927\u81F4\u5339\u914D\uFF09
+      // \u5C06\u8F93\u5165\u6846\u63D2\u5165\u5230\u540D\u79F0\u4F4D\u7F6E
+      itemNameSpan.style.display = 'none';
+      item.insertBefore(input, itemNameSpan.nextElementSibling || null);
+
+      // \u81EA\u52A8\u9009\u4E2D\u6587\u672C
+      var selectStart = 0;
+      var selectEnd = currentName.length;
+      // \u53BB\u6389\u6269\u5C55\u540D\u4FBF\u4E8E\u53EA\u7F16\u8F91\u6587\u4EF6\u540D\u90E8\u5206\uFF08\u5982 test.ts -> \u53EA\u9009 test\uFF09
+      var dotIdx = currentName.lastIndexOf('.');
+      if (dotIdx > 0 && currentType === 'file') {
+        selectEnd = dotIdx;
+      }
+      input.setSelectionRange(selectStart, selectEnd);
+      input.focus();
+
+      // \u786E\u8BA4\u91CD\u547D\u540D
+      function confirmRename(newName) {
+        if (!newName || newName === currentName) {
+          // \u53D6\u6D88\uFF1A\u6062\u590D\u539F\u59CB\u72B6\u6001
+          cancelRename();
+          return;
+        }
+        // \u53D1\u9001\u91CD\u547D\u540D\u8BF7\u6C42\u5230 host
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: 'fileRename', path: currentPath, name: currentName, newName: newName });
+        }
+        // \u672C\u5730\u66F4\u65B0\u663E\u793A\u540D\u79F0\uFF08\u4E50\u89C2\u66F4\u65B0\uFF09
+        currentName = newName;
+        itemNameSpan.textContent = newName;
+        input.remove();
+        itemNameSpan.style.display = '';
+        item.classList.remove('editing');
+      }
+
+      // \u53D6\u6D88\u91CD\u547D\u540D
+      function cancelRename() {
+        input.remove();
+        itemNameSpan.style.display = '';
+        item.classList.remove('editing');
+      }
+
+      // \u5168\u5C40\u53D6\u6D88\u51FD\u6570\uFF08\u7528\u4E8E stopRename\uFF09
+      window._currentRenameState = { confirm: confirmRename, cancel: cancelRename };
+
+      // Enter \u786E\u8BA4
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          confirmRename(input.value.trim());
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRename();
+        }
+      });
+
+      // \u5931\u7126\u65F6\u81EA\u52A8\u786E\u8BA4\uFF08\u5982\u679C\u8F93\u5165\u6846\u8FD8\u5728\uFF09
+      input.addEventListener('blur', function() {
+        // \u5EF6\u8FDF\u4E00\u70B9\u68C0\u67E5\uFF0C\u907F\u514D\u4E0E keydown \u51B2\u7A81
+        setTimeout(function() {
+          if (document.body.contains(input) && window._currentRenameState) {
+            confirmRename(input.value.trim());
+          }
+        }, 100);
+      });
+    }
+
+    /** \u505C\u6B62\u5F53\u524D\u7684\u91CD\u547D\u540D\u7F16\u8F91\u72B6\u6001 */
+    function stopRename() {
+      if (window._currentRenameState) {
+        window._currentRenameState.cancel();
+        delete window._currentRenameState;
+      }
+    }
+
     function createItem(node, depth) {
       var item = document.createElement('div');
       item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
@@ -5348,7 +5547,7 @@ if (resizeHandle) {
               } else if (type === 'fileDelete') {
                 vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
               } else if (type === 'fileRename') {
-                vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
               } else if (type === 'copyPath') {
                 vscode.postMessage({ type: 'copyPath', path: node.path });
               }
@@ -5413,7 +5612,13 @@ if (resizeHandle) {
 
           var childrenWrapper = document.createElement('div');
           childrenWrapper.className = 'agents-tree-children';
-          childrenWrapper.style.display = 'none';
+          // \u4ECE\u6301\u4E45\u5316\u7684\u5C55\u5F00\u72B6\u6001\u6062\u590D\uFF1A\u9ED8\u8BA4\u6298\u53E0\uFF0C\u5C55\u5F00\u8DEF\u5F84\u96C6\u542B\u8BE5\u76EE\u5F55\u8DEF\u5F84\u65F6\u5C55\u5F00
+          var isExpanded = false;
+          try {
+            isExpanded = agentsTreeExpandedPaths && agentsTreeExpandedPaths[node.path] === true;
+          } catch (e) { isExpanded = false; }
+          childrenWrapper.style.display = isExpanded ? '' : 'none';
+          if (isExpanded) arrow.textContent = '\u25BE';
           node.children.forEach(function(child) {
             var childWrapper = createItem(child, depth + 1);
             childrenWrapper.appendChild(childWrapper);
@@ -5425,6 +5630,15 @@ if (resizeHandle) {
             var isHidden = childrenWrapper.style.display === 'none';
             childrenWrapper.style.display = isHidden ? '' : 'none';
             arrow.textContent = isHidden ? '\u25BE' : '\u25B8';
+            // \u540C\u6B65\u5C55\u5F00\u72B6\u6001\u5230 Set \u7ED3\u6784\u5E76\u6301\u4E45\u5316\uFF08localStorage + postMessage \u5230 host globalState\uFF09
+            try {
+              if (isHidden) {
+                agentsTreeExpandedPaths[node.path] = true;
+              } else {
+                delete agentsTreeExpandedPaths[node.path];
+              }
+              saveAgentsTreeExpandedPaths();
+            } catch (err) { /* \u6301\u4E45\u5316\u5931\u8D25\u4E0D\u5F71\u54CD\u5C55\u5F00/\u6298\u53E0\u4EA4\u4E92 */ }
           });
 
           // Context menu for directory nodes (\u7EDF\u4E00\u6587\u4EF6\u64CD\u4F5C\u83DC\u5355)
@@ -5496,7 +5710,7 @@ if (resizeHandle) {
                 } else if (type === 'fileDelete') {
                   vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
                 } else if (type === 'fileRename') {
-                  vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                  startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
                 } else if (type === 'copyPath') {
                   vscode.postMessage({ type: 'copyPath', path: node.path });
                 }

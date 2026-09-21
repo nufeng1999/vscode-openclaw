@@ -1,13 +1,20 @@
 import * as fs from "fs";
 import * as path from "path";
 import { log as viewLog, LOG_INFO } from "./logLevel";
-import type { OutputChannel } from "vscode";
+import type { OutputChannel, ExtensionContext } from "vscode";
 
 /**
  * 智能体目录树相关功能
  * - host 侧：buildAgentsTree、handleRequestAgentsTree
  * - webview 侧：renderAgentsTab
  */
+
+/**
+ * 展开状态数据结构：以目录路径为 key，值为 true（表示该目录已展开）
+ */
+export interface ExpandedPathsState {
+  [path: string]: boolean;
+}
 
 /**
  * 构建目录树（host 侧，使用 Node fs API）
@@ -77,12 +84,31 @@ export function buildAgentsTree(
 }
 
 /**
+ * 从 ExtensionContext.globalState 加载展开状态
+ */
+export function loadExpandedPaths(context: ExtensionContext): ExpandedPathsState {
+  return context.globalState.get<ExpandedPathsState>("openclaw.agentsTreeExpandedPaths", {}) || {};
+}
+
+/**
+ * 将展开状态持久化到 ExtensionContext.globalState
+ */
+export function saveExpandedPaths(context: ExtensionContext, state: ExpandedPathsState): void {
+  context.globalState.update("openclaw.agentsTreeExpandedPaths", state);
+}
+
+/**
  * 处理 requestAgentsTree 消息：读取 agentsDir 并构建目录树，发送给 webview
+ * @param agentsDir 智能体目录路径
+ * @param postToWebview 发送消息到 webview 的回调
+ * @param log 日志回调
+ * @param context VSCode 扩展上下文（用于持久化展开状态）
  */
 export function handleRequestAgentsTree(
   agentsDir: string,
   postToWebview: (msg: any) => void,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  context?: ExtensionContext
 ): void {
   try {
     const dir = agentsDir;
@@ -91,10 +117,28 @@ export function handleRequestAgentsTree(
       return;
     }
     const tree = buildAgentsTree(dir, 3, 0, log);
-    postToWebview({ type: "agentsTree", tree, dir });
+    // 加载当前展开状态，附加到响应中供 webview 恢复
+    const expandedPaths = context ? loadExpandedPaths(context) : {};
+    postToWebview({ type: "agentsTree", tree, dir, expandedPaths });
   } catch (err: any) {
     log(`handleRequestAgentsTree error: ${err?.message || err}`);
-    postToWebview({ type: "agentsTree", tree: null, dir: agentsDir });
+    postToWebview({ type: "agentsTree", tree: null, dir: agentsDir, expandedPaths: {} });
+  }
+}
+
+/**
+ * 处理 saveExpandedPaths 消息：将 webview 传来的展开状态持久化
+ */
+export function handleSaveExpandedPaths(
+  expandedPaths: ExpandedPathsState,
+  context: ExtensionContext,
+  log: (msg: string) => void
+): void {
+  try {
+    saveExpandedPaths(context, expandedPaths);
+    log(`[saveExpandedPaths] saved ${Object.keys(expandedPaths).length} expanded path(s)`);
+  } catch (err: any) {
+    log(`[saveExpandedPaths] error: ${err?.message || err}`);
   }
 }
 
