@@ -685,6 +685,47 @@ export async function handleWebviewMessage(
           }
           break;
         }
+        case "fileDelete": {
+          const filePath = msg.path as string;
+          const fileName = msg.name as string;
+          
+          if (!filePath || !fs.existsSync(filePath)) {
+            ctx.log(`[fileDelete] path not found: ${filePath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("文件/文件夹不存在: {0}", fileName));
+            break;
+          }
+          
+          const stat = fs.statSync(filePath);
+          const isDirectory = stat.isDirectory();
+          const itemType = isDirectory ? "文件夹" : "文件";
+          
+          const choice = await vscode.window.showWarningMessage(
+            vscode.l10n.t("确认删除{itemType} '{name}'?", { itemType, name: fileName }),
+            { modal: true },
+            vscode.l10n.t("删除"),
+            vscode.l10n.t("取消")
+          );
+          
+          if (choice !== vscode.l10n.t("删除")) {
+            break;
+          }
+          
+          try {
+            if (isDirectory) {
+              await fs.promises.rm(filePath, { recursive: true, force: true });
+            } else {
+              await fs.promises.unlink(filePath);
+            }
+            ctx.log(`[fileDelete] 成功删除${itemType}: ${filePath}`);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          } catch (err: any) {
+            ctx.log(`[fileDelete] 删除${itemType}失败: ${err?.message || err}`);
+            vscode.window.showErrorMessage(
+              vscode.l10n.t("删除{0}失败: {1}", itemType, String(err?.message || err))
+            );
+          }
+          break;
+        }
         case "toggleSupervision":
           await ctx.handleToggleSupervision(msg.enabled);
           break;

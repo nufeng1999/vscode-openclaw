@@ -936,6 +936,42 @@
         }
         break;
       }
+      case "fileDelete": {
+        const filePath = msg.path;
+        const fileName = msg.name;
+        if (!filePath || !fs2.existsSync(filePath)) {
+          ctx.log(`[fileDelete] path not found: ${filePath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u6587\u4EF6/\u6587\u4EF6\u5939\u4E0D\u5B58\u5728: {0}", fileName));
+          break;
+        }
+        const stat = fs2.statSync(filePath);
+        const isDirectory = stat.isDirectory();
+        const itemType = isDirectory ? "\u6587\u4EF6\u5939" : "\u6587\u4EF6";
+        const choice = await vscode2.window.showWarningMessage(
+          vscode2.l10n.t("\u786E\u8BA4\u5220\u9664{itemType} '{name}'?", { itemType, name: fileName }),
+          { modal: true },
+          vscode2.l10n.t("\u5220\u9664"),
+          vscode2.l10n.t("\u53D6\u6D88")
+        );
+        if (choice !== vscode2.l10n.t("\u5220\u9664")) {
+          break;
+        }
+        try {
+          if (isDirectory) {
+            await fs2.promises.rm(filePath, { recursive: true, force: true });
+          } else {
+            await fs2.promises.unlink(filePath);
+          }
+          ctx.log(`[fileDelete] \u6210\u529F\u5220\u9664${itemType}: ${filePath}`);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+        } catch (err) {
+          ctx.log(`[fileDelete] \u5220\u9664${itemType}\u5931\u8D25: ${err?.message || err}`);
+          vscode2.window.showErrorMessage(
+            vscode2.l10n.t("\u5220\u9664{0}\u5931\u8D25: {1}", itemType, String(err?.message || err))
+          );
+        }
+        break;
+      }
       case "toggleSupervision":
         await ctx.handleToggleSupervision(msg.enabled);
         break;
