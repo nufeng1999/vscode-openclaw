@@ -25,6 +25,7 @@ export function buildAgentsTree(
   path: string;
   type: string;
   children?: any[];
+  hasAgentsMd?: boolean;
 } {
   const children: any[] = [];
   // 先检查当前目录是否包含 AGENTS.md（用于返回的根节点）

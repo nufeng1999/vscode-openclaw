@@ -6,6 +6,256 @@ import { handleRequestAgentsTree } from "./agentTree";
 import { handleFetchModelscopeAgents as _handleFetchModelscopeAgents } from "./modelscopeHandler";
 import type { ModelScopeAgentItem, ModelScopeAgentListResponse } from "./modelscopeTypes";
 
+function filePathToFileUri(p: string): string {
+  return require("url").pathToFileURL(p).href;
+}
+
+function parseFileUriList(raw: string): string[] {
+  const { fileURLToPath } = require("url");
+  const out: string[] = [];
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    if (!/^file:/i.test(t)) {
+      console.warn("[parseFileUriList] skipped non-file uri: " + t);
+      continue;
+    }
+    try {
+      const m = t.match(/^file:\/\/([^\/]+)(\/.*)?$/i);
+      if (m && m[1] && m[1].toLowerCase() !== "localhost") {
+        console.warn("[parseFileUriList] skipped remote file uri: " + t);
+        continue;
+      }
+      const p = fileURLToPath(t);
+      if (p) out.push(p);
+    } catch (e) {
+      console.warn('[parseFileUriList] failed to parse uri "' + t + '": ' + String(e));
+    }
+  }
+  return out;
+}
+
+function setSystemClipboardFileList(p: string, isCut: boolean): void {
+  try {
+    const absPath = path.resolve(p);
+    if (!fs.existsSync(absPath)) {
+      console.warn("[setSystemClipboardFileList] path not found: " + absPath);
+      return;
+    }
+    const { execSync } = require("child_process");
+    if (process.platform === "win32") {
+      // Windows：PowerShell CF_HDROP + Preferred DropEffect（isCut=true 为 Move=2，否则 Copy=1）
+      const dropEffect = isCut ? 2 : 1;
+      const psScript =
+        "Add-Type -AssemblyName System.Windows.Forms; " +
+        "$files = New-Object System.Collections.Specialized.StringCollection; " +
+        "$files.Add('" + absPath + "'); " +
+        "$data = New-Object System.Windows.Forms.DataObject; " +
+        "$data.SetFileDropList($files); " +
+        "$ms = New-Object System.IO.MemoryStream(4); " +
+        "$bw = New-Object System.IO.BinaryWriter($ms); " +
+        "$bw.Write([int]" + dropEffect + "); " +
+        "$bw.Flush(); $ms.Position = 0; " +
+        "$data.SetData('Preferred DropEffect', $ms); " +
+        "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true); " +
+        "Write-Output 'CLIP_FILE_SET_OK';";
+      const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+      try {
+        const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
+          timeout: 15000,
+          encoding: "utf8",
+        });
+        if (!String(out || "").includes("CLIP_FILE_SET_OK")) {
+          console.error("[setSystemClipboardFileList] marker missing, stdout:", String(out || ""));
+        } else {
+          console.log("[setSystemClipboardFileList] clipboard write OK: " + absPath + (isCut ? " (cut)" : " (copy)"));
+        }
+      } catch (execErr) {
+        console.error("[setSystemClipboardFileList] execSync failed:", execErr);
+      }
+    } else if (process.platform === "darwin") {
+      // macOS：通过以「class furl」（文件 URL）形式写入剪贴板，
+      // Finder 等应用可识别为文件。路径经 osascript "--" 参数传入，避免转义问题。
+      // 注：macOS 剪贴板不区分 cut/copy，isCut 仅用于 Windows 分支。
+      const script =
+        "on run {f}\n" +
+        "  tell application \"Finder\" to set the clipboard to POSIX file f as «class furl»\n" +
+        "end run";
+      try {
+        execSync("osascript -e " + JSON.stringify(script) + " -- " + JSON.stringify(absPath), {
+          timeout: 15000,
+          encoding: "utf8",
+        });
+        console.log("[setSystemClipboardFileList] clipboard write OK (darwin): " + absPath);
+      } catch (execErr) {
+        console.error("[setSystemClipboardFileList] osascript failed (darwin):", execErr);
+      }
+    } else {
+      // Linux：优先 xclip，其次 wl-copy（Wayland），无工具时降级为直接写 UTF-8 URI 文本。
+      const uri = filePathToFileUri(absPath);
+      const tmpUriFile = path.join(os.tmpdir(), "openclaw-clip-uri-" + Date.now() + ".txt");
+      fs.writeFileSync(tmpUriFile, uri + "\n", "utf8");
+      const mkCommand = (bin: string, args: string[]) => {
+        const cmd = bin + " " + args.map((a) => JSON.stringify(a)).join(" ") + " < " + JSON.stringify(tmpUriFile);
+        return cmd;
+      };
+      let succeeded = false;
+      try {
+        execSync(mkCommand("xclip", ["-selection", "clipboard", "-t", "text/uri-list"]), {
+          timeout: 15000,
+          encoding: "utf8",
+        });
+        succeeded = true;
+      } catch (e1) {
+        try {
+          execSync(mkCommand("wl-copy", ["-t", "text/uri-list"]), {
+            timeout: 15000,
+            encoding: "utf8",
+          });
+          succeeded = true;
+        } catch (e2) {
+          console.warn("[setSystemClipboardFileList] xclip/wl-copy unavailable, fallback to text uri-list");
+        }
+      }
+      try { fs.unlinkSync(tmpUriFile); } catch (e) { /* ignore */ }
+      if (succeeded) {
+        console.log("[setSystemClipboardFileList] clipboard write OK (linux): " + absPath);
+      } else {
+        // 降级：直接把 URI 文本写进剪贴板（粘贴时仍可被我们的读取端解析）
+        try {
+          execSync(mkCommand("xclip", ["-selection", "clipboard"]), { timeout: 15000, encoding: "utf8" });
+          console.log("[setSystemClipboardFileList] clipboard write OK (linux, text fallback): " + absPath);
+        } catch (e3) {
+          try {
+            execSync(mkCommand("wl-copy", []), { timeout: 15000, encoding: "utf8" });
+            console.log("[setSystemClipboardFileList] clipboard write OK (linux, text fallback): " + absPath);
+          } catch (e4) {
+            console.error("[setSystemClipboardFileList] clipboard write failed (linux):", e4);
+          }
+        }
+      }
+      return;
+    }
+  } catch (err) {
+    console.error("[setSystemClipboardFileList] error:", err);
+  }
+}
+
+function readSystemClipboardFiles(): { paths: string[]; operation: string } | null {
+  try {
+    const { execSync } = require("child_process");
+    if (process.platform === "win32") {
+      // Windows：PowerShell 读 CF_HDROP + Preferred DropEffect
+      // 脚本输出格式：第一行 OK/EMPTY，第二行起每行一个绝对路径，最后一行 OP:cut|copy
+      const psScript =
+        "Add-Type -AssemblyName System.Windows.Forms; " +
+        "$files = [System.Windows.Forms.Clipboard]::GetFileDropList(); " +
+        "if ($files -eq $null -or $files.Count -eq 0) { Write-Output 'EMPTY'; exit; } " +
+        "$data = [System.Windows.Forms.Clipboard]::GetDataObject(); " +
+        "$op = 'copy'; " +
+        "if ($data -ne $null -and $data.GetDataPresent('Preferred DropEffect')) { " +
+        "  $ms = $data.GetData('Preferred DropEffect'); " +
+        "  if ($ms -ne $null) { try { $ms.Position = 0; $br = New-Object System.IO.BinaryReader($ms); " +
+        "    $intVal = $br.ReadInt32(); $br.Close(); " +
+        "    if ($intVal -eq 2) { $op = 'cut' } elseif ($intVal -eq 1) { $op = 'copy' } " +
+        "  } finally { if ($ms) { $ms.Dispose() } } } " +
+        "} " +
+        "Write-Output 'OK'; " +
+        "foreach ($f in $files) { Write-Output $f }; " +
+        "Write-Output ('OP:' + $op);";
+      const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+      try {
+        const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
+          timeout: 15000,
+          encoding: "utf8",
+        });
+        const lines = String(out || "").trim().split(/\r\n|\n/);
+        if (lines.length === 0 || lines[0] !== "OK") {
+          return null;
+        }
+        // 最后一行是 OP:cut|copy
+        const opLine = lines[lines.length - 1];
+        if (!opLine.startsWith("OP:")) {
+          return null;
+        }
+        const opStr = opLine.substring(3);
+        const operation = opStr === "cut" ? "cut" : "copy";
+        // 路径在第 1 到倒数第二行之间
+        const paths = lines.slice(1, -1).map(line => line.trim()).filter(line => line.length > 0);
+        if (paths.length === 0) {
+          return null;
+        }
+        console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard, op=" + operation);
+        return { paths, operation };
+      } catch (execErr) {
+        console.error("[readSystemClipboardFiles] execSync failed:", execErr);
+        return null;
+      }
+    } else if (process.platform === "darwin") {
+      // macOS：AppleScript 读 furl（文件 URL）列表。
+      const script =
+        "try\n" +
+        "  set theFiles to the clipboard as «class furl»\n" +
+        "  if theFiles is \"\" then return \"EMPTY\"\n" +
+        "  set out to \"OK\"\n" +
+        "  repeat with f in theFiles\n" +
+        "    set out to out & linefeed & (f as string)\n" +
+        "  end repeat\n" +
+        "  return out\n" +
+        "on error\n" +
+        "  return \"EMPTY\"\n" +
+        "end try";
+      try {
+        const out = execSync("osascript -e " + JSON.stringify(script), {
+          timeout: 15000,
+          encoding: "utf8",
+        });
+        const lines = String(out || "").trim().split(/\r?\n/);
+        if (lines.length === 0 || lines[0] !== "OK") {
+          return null;
+        }
+        const paths = parseFileUriList(lines.slice(1).join("\n"));
+        if (paths.length === 0) return null;
+        console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard (darwin)");
+        // macOS 剪贴板不区分 cut/copy
+        return { paths, operation: "copy" };
+      } catch (execErr) {
+        console.error("[readSystemClipboardFiles] osascript failed (darwin):", execErr);
+        return null;
+      }
+    } else {
+      // Linux：优先 xclip，其次 wl-paste。
+      const readCmd = (bin: string, args: string[]) => bin + " " + args.map((a) => JSON.stringify(a)).join(" ");
+      let out: string | null = null;
+      try {
+        out = String(execSync(readCmd("xclip", ["-selection", "clipboard", "-o", "-t", "text/uri-list"]), {
+          timeout: 15000,
+          encoding: "utf8",
+        }) || "");
+      } catch (e1) {
+        try {
+          out = String(execSync(readCmd("wl-paste", ["-t", "text/uri-list"]), {
+            timeout: 15000,
+            encoding: "utf8",
+          }) || "");
+        } catch (e2) {
+          console.warn("[readSystemClipboardFiles] xclip/wl-paste unavailable (linux):", e2);
+          return null;
+        }
+      }
+      const paths = parseFileUriList(out || "");
+      if (paths.length === 0) return null;
+      console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard (linux)");
+      // Linux 剪贴板不区分 cut/copy
+      return { paths, operation: "copy" };
+    }
+  } catch (err) {
+    console.error("[readSystemClipboardFiles] error:", err);
+    return null;
+  }
+}
+
+let pendingClipboard: { path: string; operation: 'cut' | 'copy' } | null = null;
 
 /**
  * Handle messages from the webview.
@@ -309,6 +559,132 @@ export async function handleWebviewMessage(
             vscode.commands.executeCommand("openclaw.createAgent", vscode.Uri.file(msg.path));
           }
           break;
+        case "fileCut": {
+          const p = msg.path as string;
+          if (p) {
+            pendingClipboard = { path: p, operation: "cut" };
+            setSystemClipboardFileList(p, true);
+            ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: true });
+            ctx.log("[fileCut] clipboard set: cut " + p);
+          }
+          break;
+        }
+        case "fileCopy": {
+          const p = msg.path as string;
+          if (p) {
+            pendingClipboard = { path: p, operation: "copy" };
+            setSystemClipboardFileList(p, false);
+            ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: true });
+            ctx.log("[fileCopy] clipboard set: copy " + p);
+          }
+          break;
+        }
+        case "filePaste": {
+          let src = pendingClipboard;
+          if (!src) {
+            const sysClipboard = readSystemClipboardFiles();
+            if (sysClipboard && sysClipboard.paths.length > 0) {
+              for (const filePath of sysClipboard.paths) {
+                src = { path: filePath, operation: (sysClipboard.operation as 'cut' | 'copy') };
+                if (!src) continue;
+                const targetDir2 = msg.targetDir || msg.path;
+                if (!targetDir2 || !fs.existsSync(src.path)) {
+                  ctx.log("[filePaste] invalid source: " + src.path);
+                  continue;
+                }
+                try {
+                  const srcName = path.basename(src.path);
+                  let destPath = path.join(targetDir2, srcName);
+                  let counter = 1;
+                  while (fs.existsSync(destPath)) {
+                    const ext = path.extname(srcName);
+                    const base = ext ? srcName.slice(0, srcName.length - ext.length) : srcName;
+                    destPath = path.join(targetDir2, base + " - Copy" + (counter > 1 ? counter : "") + (ext ? ext : ""));
+                    counter++;
+                  }
+                  if (src.operation === "cut") {
+                    const srcRoot = path.parse(src.path).root;
+                    const destRoot = path.parse(destPath).root;
+                    if (path.dirname(src.path) !== path.dirname(destPath) || srcRoot !== destRoot) {
+                      if (fs.existsSync(src.path) && fs.statSync(src.path).isDirectory()) {
+                        await fs.promises.cp(src.path, destPath, { recursive: true });
+                        await fs.promises.rm(src.path, { recursive: true, force: true });
+                      } else {
+                        await fs.promises.copyFile(src.path, destPath);
+                        await fs.promises.unlink(src.path);
+                      }
+                    } else {
+                      await fs.promises.rename(src.path, destPath);
+                    }
+                  } else {
+                    if (fs.existsSync(src.path) && fs.statSync(src.path).isDirectory()) {
+                      await fs.promises.cp(src.path, destPath, { recursive: true });
+                    } else {
+                      await fs.promises.copyFile(src.path, destPath);
+                    }
+                  }
+                  ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
+                  handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+                } catch (err: any) {
+                  ctx.log("[filePaste] error: " + (err?.message || err));
+                  vscode.window.showErrorMessage(vscode.l10n.t("Paste failed: {0}", String(err?.message || err)));
+                }
+              }
+              pendingClipboard = null;
+              ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
+              break;
+            } else {
+              ctx.log("[filePaste] no pending clipboard");
+              break;
+            }
+          }
+          if (!src) break;
+          const targetDir = msg.targetDir || msg.path;
+          if (!targetDir || !fs.existsSync(src.path)) {
+            ctx.log("[filePaste] invalid source: " + src.path);
+            break;
+          }
+          try {
+            const srcName = path.basename(src.path);
+            let destPath = path.join(targetDir, srcName);
+            let counter = 1;
+            while (fs.existsSync(destPath)) {
+              const ext = path.extname(srcName);
+              const base = ext ? srcName.slice(0, srcName.length - ext.length) : srcName;
+              destPath = path.join(targetDir, base + " - Copy" + (counter > 1 ? counter : "") + (ext ? ext : ""));
+              counter++;
+            }
+            if (src.operation === "cut") {
+              const srcRoot = path.parse(src.path).root;
+              const destRoot = path.parse(destPath).root;
+              if (path.dirname(src.path) !== path.dirname(destPath) || srcRoot !== destRoot) {
+                if (fs.existsSync(src.path) && fs.statSync(src.path).isDirectory()) {
+                  await fs.promises.cp(src.path, destPath, { recursive: true });
+                  await fs.promises.rm(src.path, { recursive: true, force: true });
+                } else {
+                  await fs.promises.copyFile(src.path, destPath);
+                  await fs.promises.unlink(src.path);
+                }
+              } else {
+                await fs.promises.rename(src.path, destPath);
+              }
+            } else {
+              if (fs.existsSync(src.path) && fs.statSync(src.path).isDirectory()) {
+                await fs.promises.cp(src.path, destPath, { recursive: true });
+              } else {
+                await fs.promises.copyFile(src.path, destPath);
+              }
+            }
+            pendingClipboard = null;
+            ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
+            ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+          } catch (err: any) {
+            ctx.log("[filePaste] error: " + (err?.message || err));
+            vscode.window.showErrorMessage(vscode.l10n.t("Paste failed: {0}", String(err?.message || err)));
+          }
+          break;
+        }
         case "toggleSupervision":
           await ctx.handleToggleSupervision(msg.enabled);
           break;

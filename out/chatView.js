@@ -227,6 +227,7 @@
 
   // src/webviewHandler.ts
   var fs2 = __toESM(__require("fs"));
+  var os2 = __toESM(__require("os"));
   var path3 = __toESM(__require("path"));
   var vscode2 = __toESM(__require("vscode"));
 
@@ -364,6 +365,204 @@
   }
 
   // src/webviewHandler.ts
+  function filePathToFileUri(p) {
+    return __require("url").pathToFileURL(p).href;
+  }
+  function parseFileUriList(raw) {
+    const { fileURLToPath } = __require("url");
+    const out = [];
+    for (const line of String(raw || "").split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t)
+        continue;
+      if (!/^file:/i.test(t)) {
+        console.warn("[parseFileUriList] skipped non-file uri: " + t);
+        continue;
+      }
+      try {
+        const m = t.match(/^file:\/\/([^\/]+)(\/.*)?$/i);
+        if (m && m[1] && m[1].toLowerCase() !== "localhost") {
+          console.warn("[parseFileUriList] skipped remote file uri: " + t);
+          continue;
+        }
+        const p = fileURLToPath(t);
+        if (p)
+          out.push(p);
+      } catch (e) {
+        console.warn('[parseFileUriList] failed to parse uri "' + t + '": ' + String(e));
+      }
+    }
+    return out;
+  }
+  function setSystemClipboardFileList(p, isCut) {
+    try {
+      const absPath = path3.resolve(p);
+      if (!fs2.existsSync(absPath)) {
+        console.warn("[setSystemClipboardFileList] path not found: " + absPath);
+        return;
+      }
+      const { execSync } = __require("child_process");
+      if (process.platform === "win32") {
+        const dropEffect = isCut ? 2 : 1;
+        const psScript = "Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; $files.Add('" + absPath + "'); $data = New-Object System.Windows.Forms.DataObject; $data.SetFileDropList($files); $ms = New-Object System.IO.MemoryStream(4); $bw = New-Object System.IO.BinaryWriter($ms); $bw.Write([int]" + dropEffect + "); $bw.Flush(); $ms.Position = 0; $data.SetData('Preferred DropEffect', $ms); [System.Windows.Forms.Clipboard]::SetDataObject($data, $true); Write-Output 'CLIP_FILE_SET_OK';";
+        const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+        try {
+          const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
+            timeout: 15e3,
+            encoding: "utf8"
+          });
+          if (!String(out || "").includes("CLIP_FILE_SET_OK")) {
+            console.error("[setSystemClipboardFileList] marker missing, stdout:", String(out || ""));
+          } else {
+            console.log("[setSystemClipboardFileList] clipboard write OK: " + absPath + (isCut ? " (cut)" : " (copy)"));
+          }
+        } catch (execErr) {
+          console.error("[setSystemClipboardFileList] execSync failed:", execErr);
+        }
+      } else if (process.platform === "darwin") {
+        const script = 'on run {f}\n  tell application "Finder" to set the clipboard to POSIX file f as \xABclass furl\xBB\nend run';
+        try {
+          execSync("osascript -e " + JSON.stringify(script) + " -- " + JSON.stringify(absPath), {
+            timeout: 15e3,
+            encoding: "utf8"
+          });
+          console.log("[setSystemClipboardFileList] clipboard write OK (darwin): " + absPath);
+        } catch (execErr) {
+          console.error("[setSystemClipboardFileList] osascript failed (darwin):", execErr);
+        }
+      } else {
+        const uri = filePathToFileUri(absPath);
+        const tmpUriFile = path3.join(os2.tmpdir(), "openclaw-clip-uri-" + Date.now() + ".txt");
+        fs2.writeFileSync(tmpUriFile, uri + "\n", "utf8");
+        const mkCommand = (bin, args) => {
+          const cmd = bin + " " + args.map((a) => JSON.stringify(a)).join(" ") + " < " + JSON.stringify(tmpUriFile);
+          return cmd;
+        };
+        let succeeded = false;
+        try {
+          execSync(mkCommand("xclip", ["-selection", "clipboard", "-t", "text/uri-list"]), {
+            timeout: 15e3,
+            encoding: "utf8"
+          });
+          succeeded = true;
+        } catch (e1) {
+          try {
+            execSync(mkCommand("wl-copy", ["-t", "text/uri-list"]), {
+              timeout: 15e3,
+              encoding: "utf8"
+            });
+            succeeded = true;
+          } catch (e2) {
+            console.warn("[setSystemClipboardFileList] xclip/wl-copy unavailable, fallback to text uri-list");
+          }
+        }
+        try {
+          fs2.unlinkSync(tmpUriFile);
+        } catch (e) {
+        }
+        if (succeeded) {
+          console.log("[setSystemClipboardFileList] clipboard write OK (linux): " + absPath);
+        } else {
+          try {
+            execSync(mkCommand("xclip", ["-selection", "clipboard"]), { timeout: 15e3, encoding: "utf8" });
+            console.log("[setSystemClipboardFileList] clipboard write OK (linux, text fallback): " + absPath);
+          } catch (e3) {
+            try {
+              execSync(mkCommand("wl-copy", []), { timeout: 15e3, encoding: "utf8" });
+              console.log("[setSystemClipboardFileList] clipboard write OK (linux, text fallback): " + absPath);
+            } catch (e4) {
+              console.error("[setSystemClipboardFileList] clipboard write failed (linux):", e4);
+            }
+          }
+        }
+        return;
+      }
+    } catch (err) {
+      console.error("[setSystemClipboardFileList] error:", err);
+    }
+  }
+  function readSystemClipboardFiles() {
+    try {
+      const { execSync } = __require("child_process");
+      if (process.platform === "win32") {
+        const psScript = "Add-Type -AssemblyName System.Windows.Forms; $files = [System.Windows.Forms.Clipboard]::GetFileDropList(); if ($files -eq $null -or $files.Count -eq 0) { Write-Output 'EMPTY'; exit; } $data = [System.Windows.Forms.Clipboard]::GetDataObject(); $op = 'copy'; if ($data -ne $null -and $data.GetDataPresent('Preferred DropEffect')) {   $ms = $data.GetData('Preferred DropEffect');   if ($ms -ne $null) { try { $ms.Position = 0; $br = New-Object System.IO.BinaryReader($ms);     $intVal = $br.ReadInt32(); $br.Close();     if ($intVal -eq 2) { $op = 'cut' } elseif ($intVal -eq 1) { $op = 'copy' }   } finally { if ($ms) { $ms.Dispose() } } } } Write-Output 'OK'; foreach ($f in $files) { Write-Output $f }; Write-Output ('OP:' + $op);";
+        const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+        try {
+          const out = execSync("powershell -NoProfile -STA -EncodedCommand " + encoded, {
+            timeout: 15e3,
+            encoding: "utf8"
+          });
+          const lines = String(out || "").trim().split(/\r\n|\n/);
+          if (lines.length === 0 || lines[0] !== "OK") {
+            return null;
+          }
+          const opLine = lines[lines.length - 1];
+          if (!opLine.startsWith("OP:")) {
+            return null;
+          }
+          const opStr = opLine.substring(3);
+          const operation = opStr === "cut" ? "cut" : "copy";
+          const paths = lines.slice(1, -1).map((line) => line.trim()).filter((line) => line.length > 0);
+          if (paths.length === 0) {
+            return null;
+          }
+          console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard, op=" + operation);
+          return { paths, operation };
+        } catch (execErr) {
+          console.error("[readSystemClipboardFiles] execSync failed:", execErr);
+          return null;
+        }
+      } else if (process.platform === "darwin") {
+        const script = 'try\n  set theFiles to the clipboard as \xABclass furl\xBB\n  if theFiles is "" then return "EMPTY"\n  set out to "OK"\n  repeat with f in theFiles\n    set out to out & linefeed & (f as string)\n  end repeat\n  return out\non error\n  return "EMPTY"\nend try';
+        try {
+          const out = execSync("osascript -e " + JSON.stringify(script), {
+            timeout: 15e3,
+            encoding: "utf8"
+          });
+          const lines = String(out || "").trim().split(/\r?\n/);
+          if (lines.length === 0 || lines[0] !== "OK") {
+            return null;
+          }
+          const paths = parseFileUriList(lines.slice(1).join("\n"));
+          if (paths.length === 0)
+            return null;
+          console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard (darwin)");
+          return { paths, operation: "copy" };
+        } catch (execErr) {
+          console.error("[readSystemClipboardFiles] osascript failed (darwin):", execErr);
+          return null;
+        }
+      } else {
+        const readCmd = (bin, args) => bin + " " + args.map((a) => JSON.stringify(a)).join(" ");
+        let out = null;
+        try {
+          out = String(execSync(readCmd("xclip", ["-selection", "clipboard", "-o", "-t", "text/uri-list"]), {
+            timeout: 15e3,
+            encoding: "utf8"
+          }) || "");
+        } catch (e1) {
+          try {
+            out = String(execSync(readCmd("wl-paste", ["-t", "text/uri-list"]), {
+              timeout: 15e3,
+              encoding: "utf8"
+            }) || "");
+          } catch (e2) {
+            console.warn("[readSystemClipboardFiles] xclip/wl-paste unavailable (linux):", e2);
+            return null;
+          }
+        }
+        const paths = parseFileUriList(out || "");
+        if (paths.length === 0)
+          return null;
+        console.log("[readSystemClipboardFiles] read " + paths.length + " file(s) from clipboard (linux)");
+        return { paths, operation: "copy" };
+      }
+    } catch (err) {
+      console.error("[readSystemClipboardFiles] error:", err);
+      return null;
+    }
+  }
+  var pendingClipboard = null;
   async function handleWebviewMessage(msg, ctx, webviewView) {
     switch (msg.type) {
       case "webviewReady":
@@ -510,8 +709,8 @@
         if (dataUrl && typeof dataUrl === "string") {
           try {
             const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-            const os2 = __require("os");
-            const tmpB64 = path3.join(os2.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+            const os3 = __require("os");
+            const tmpB64 = path3.join(os3.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
             fs2.writeFileSync(tmpB64, base64Data, "utf8");
             const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
             const encoded = Buffer.from(psScript, "utf16le").toString("base64");
@@ -609,6 +808,134 @@
           vscode2.commands.executeCommand("openclaw.createAgent", vscode2.Uri.file(msg.path));
         }
         break;
+      case "fileCut": {
+        const p = msg.path;
+        if (p) {
+          pendingClipboard = { path: p, operation: "cut" };
+          setSystemClipboardFileList(p, true);
+          ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: true });
+          ctx.log("[fileCut] clipboard set: cut " + p);
+        }
+        break;
+      }
+      case "fileCopy": {
+        const p = msg.path;
+        if (p) {
+          pendingClipboard = { path: p, operation: "copy" };
+          setSystemClipboardFileList(p, false);
+          ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: true });
+          ctx.log("[fileCopy] clipboard set: copy " + p);
+        }
+        break;
+      }
+      case "filePaste": {
+        let src = pendingClipboard;
+        if (!src) {
+          const sysClipboard = readSystemClipboardFiles();
+          if (sysClipboard && sysClipboard.paths.length > 0) {
+            for (const filePath of sysClipboard.paths) {
+              src = { path: filePath, operation: sysClipboard.operation };
+              if (!src)
+                continue;
+              const targetDir2 = msg.targetDir || msg.path;
+              if (!targetDir2 || !fs2.existsSync(src.path)) {
+                ctx.log("[filePaste] invalid source: " + src.path);
+                continue;
+              }
+              try {
+                const srcName = path3.basename(src.path);
+                let destPath = path3.join(targetDir2, srcName);
+                let counter = 1;
+                while (fs2.existsSync(destPath)) {
+                  const ext = path3.extname(srcName);
+                  const base = ext ? srcName.slice(0, srcName.length - ext.length) : srcName;
+                  destPath = path3.join(targetDir2, base + " - Copy" + (counter > 1 ? counter : "") + (ext ? ext : ""));
+                  counter++;
+                }
+                if (src.operation === "cut") {
+                  const srcRoot = path3.parse(src.path).root;
+                  const destRoot = path3.parse(destPath).root;
+                  if (path3.dirname(src.path) !== path3.dirname(destPath) || srcRoot !== destRoot) {
+                    if (fs2.existsSync(src.path) && fs2.statSync(src.path).isDirectory()) {
+                      await fs2.promises.cp(src.path, destPath, { recursive: true });
+                      await fs2.promises.rm(src.path, { recursive: true, force: true });
+                    } else {
+                      await fs2.promises.copyFile(src.path, destPath);
+                      await fs2.promises.unlink(src.path);
+                    }
+                  } else {
+                    await fs2.promises.rename(src.path, destPath);
+                  }
+                } else {
+                  if (fs2.existsSync(src.path) && fs2.statSync(src.path).isDirectory()) {
+                    await fs2.promises.cp(src.path, destPath, { recursive: true });
+                  } else {
+                    await fs2.promises.copyFile(src.path, destPath);
+                  }
+                }
+                ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
+                handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+              } catch (err) {
+                ctx.log("[filePaste] error: " + (err?.message || err));
+                vscode2.window.showErrorMessage(vscode2.l10n.t("Paste failed: {0}", String(err?.message || err)));
+              }
+            }
+            pendingClipboard = null;
+            ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
+            break;
+          } else {
+            ctx.log("[filePaste] no pending clipboard");
+            break;
+          }
+        }
+        if (!src)
+          break;
+        const targetDir = msg.targetDir || msg.path;
+        if (!targetDir || !fs2.existsSync(src.path)) {
+          ctx.log("[filePaste] invalid source: " + src.path);
+          break;
+        }
+        try {
+          const srcName = path3.basename(src.path);
+          let destPath = path3.join(targetDir, srcName);
+          let counter = 1;
+          while (fs2.existsSync(destPath)) {
+            const ext = path3.extname(srcName);
+            const base = ext ? srcName.slice(0, srcName.length - ext.length) : srcName;
+            destPath = path3.join(targetDir, base + " - Copy" + (counter > 1 ? counter : "") + (ext ? ext : ""));
+            counter++;
+          }
+          if (src.operation === "cut") {
+            const srcRoot = path3.parse(src.path).root;
+            const destRoot = path3.parse(destPath).root;
+            if (path3.dirname(src.path) !== path3.dirname(destPath) || srcRoot !== destRoot) {
+              if (fs2.existsSync(src.path) && fs2.statSync(src.path).isDirectory()) {
+                await fs2.promises.cp(src.path, destPath, { recursive: true });
+                await fs2.promises.rm(src.path, { recursive: true, force: true });
+              } else {
+                await fs2.promises.copyFile(src.path, destPath);
+                await fs2.promises.unlink(src.path);
+              }
+            } else {
+              await fs2.promises.rename(src.path, destPath);
+            }
+          } else {
+            if (fs2.existsSync(src.path) && fs2.statSync(src.path).isDirectory()) {
+              await fs2.promises.cp(src.path, destPath, { recursive: true });
+            } else {
+              await fs2.promises.copyFile(src.path, destPath);
+            }
+          }
+          pendingClipboard = null;
+          ctx.postToWebview({ type: "clipboardState", hasPendingClipboard: false });
+          ctx.log("[filePaste] pasted " + src.path + " -> " + destPath);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx));
+        } catch (err) {
+          ctx.log("[filePaste] error: " + (err?.message || err));
+          vscode2.window.showErrorMessage(vscode2.l10n.t("Paste failed: {0}", String(err?.message || err)));
+        }
+        break;
+      }
       case "toggleSupervision":
         await ctx.handleToggleSupervision(msg.enabled);
         break;
@@ -2511,6 +2838,16 @@ ${getModelscopeCss()}
 .agents-tree-context-menu-item:hover {
   background: var(--hover, rgba(128,128,128,0.14));
 }
+.agents-tree-context-menu-item-disabled {
+  color: var(--text-muted, #777777);
+  cursor: default;
+  pointer-events: none;
+}
+.agents-tree-context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border, #444);
+}
 </style>
 </head>
 <body>
@@ -2702,6 +3039,7 @@ ${getModelscopeHtml()}
   let hudVisible = false;
   let agentsTreeData = null;
   let agentsTreeDir = '';
+  let agentTreeHasPendingClipboard = false;
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
@@ -3396,7 +3734,12 @@ if (resizeHandle) {
       case 'agentsTree':
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
+        agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
         renderLocalAgentsTree();
+        break;
+      case 'clipboardState':
+        // host \u5728 fileCut/fileCopy/filePaste \u540E\u63A8\u9001\u526A\u8D34\u677F\u72B6\u6001\uFF0C\u4EC5\u66F4\u65B0\u7C98\u8D34\u83DC\u5355\u7684\u53EF\u7528\u6027\u6807\u5FD7
+        agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
         break;
       case 'modelscopeAgentsResult':
         console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
@@ -4931,6 +5274,98 @@ if (resizeHandle) {
       wrapper.className = 'agents-tree-node';
       wrapper.appendChild(item);
 
+      // \u6784\u5EFA\u7EDF\u4E00\u7684\u6587\u4EF6\u64CD\u4F5C\u53F3\u952E\u83DC\u5355
+      function buildContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Remove any existing context menu
+        var existingMenu = document.querySelector('.agents-tree-context-menu');
+        if (existingMenu) existingMenu.remove();
+
+        var menu = document.createElement('div');
+        menu.className = 'agents-tree-context-menu';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+
+        // \u8BA1\u7B97\u7C98\u8D34\u76EE\u6807\u76EE\u5F55\uFF1A\u76EE\u5F55\u8282\u70B9\u81EA\u8EAB\uFF0C\u6587\u4EF6\u8282\u70B9\u53D6\u7236\u76EE\u5F55
+        var targetDir = node.type === 'directory' ? node.path : (function() {
+          // \u53D6\u7236\u76EE\u5F55\u8DEF\u5F84\uFF0C\u517C\u5BB9 / \u548C  \u5206\u9694\u7B26
+          var lastSlashPos = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\\\'));
+          return lastSlashPos > 0 ? node.path.substring(0, lastSlashPos) : node.path;
+        })();
+
+        function addMenuAction(label, type, disabled) {
+          var el = document.createElement('div');
+          el.className = 'agents-tree-context-menu-item' + (disabled ? ' agents-tree-context-menu-item-disabled' : '');
+          el.textContent = label;
+          if (!disabled) {
+            el.addEventListener('click', function() {
+              menu.remove();
+              if (typeof vscode === 'undefined') return;
+              if (type === 'fileCut') {
+                vscode.postMessage({ type: 'fileCut', path: node.path });
+              } else if (type === 'fileCopy') {
+                vscode.postMessage({ type: 'fileCopy', path: node.path });
+              } else if (type === 'filePaste') {
+                vscode.postMessage({ type: 'filePaste', path: node.path, nodeType: node.type, targetDir: targetDir });
+              } else if (type === 'fileDelete') {
+                vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
+              } else if (type === 'fileRename') {
+                vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+              } else if (type === 'copyPath') {
+                vscode.postMessage({ type: 'copyPath', path: node.path });
+              }
+            });
+          }
+          menu.appendChild(el);
+          return el;
+        }
+
+        // \u6587\u4EF6\u64CD\u4F5C\u83DC\u5355\u9879
+        addMenuAction('\u526A\u5207', 'fileCut', false);
+        addMenuAction('\u590D\u5236', 'fileCopy', false);
+        addMenuAction('\u7C98\u8D34', 'filePaste', false);
+        addMenuAction('\u5220\u9664', 'fileDelete', false);
+        addMenuAction('\u91CD\u547D\u540D', 'fileRename', false);
+        addMenuAction('\u590D\u5236\u8DEF\u5F84', 'copyPath', false);
+
+        // \u76EE\u5F55\u8282\u70B9\uFF1A\u8FFD\u52A0"\u521B\u5EFA\u667A\u80FD\u4F53"\uFF08\u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\uFF09
+        if (node.type === 'directory' && node.hasAgentsMd) {
+          var sep = document.createElement('div');
+          sep.className = 'agents-tree-context-menu-separator';
+          menu.appendChild(sep);
+          var createAgentItem = document.createElement('div');
+          createAgentItem.className = 'agents-tree-context-menu-item';
+          createAgentItem.textContent = '\u521B\u5EFA\u667A\u80FD\u4F53';
+          createAgentItem.addEventListener('click', function() {
+            if (typeof vscode !== 'undefined') {
+              vscode.postMessage({ type: 'createAgent', path: node.path });
+            }
+            menu.remove();
+          });
+          menu.appendChild(createAgentItem);
+        }
+
+        menu.classList.add('visible');
+        document.body.appendChild(menu);
+
+        // Close menu on click outside or ESC
+        function closeMenu() {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+          document.removeEventListener('keydown', onKeyDown);
+        }
+        function onKeyDown(e) {
+          if (e.key === 'Escape') closeMenu();
+        }
+        // Use setTimeout to avoid immediate closure from the current click
+        setTimeout(function() {
+          document.addEventListener('click', closeMenu);
+          document.addEventListener('keydown', onKeyDown);
+        }, 0);
+      }
+
       if (node.type === 'directory') {
         var hasChildren = node.children && node.children.length > 0;
         if (hasChildren) {
@@ -4956,57 +5391,9 @@ if (resizeHandle) {
             arrow.textContent = isHidden ? '\u25BE' : '\u25B8';
           });
 
-          // Context menu for directory nodes
+          // Context menu for directory nodes (\u7EDF\u4E00\u6587\u4EF6\u64CD\u4F5C\u83DC\u5355)
           item.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Remove any existing context menu
-            var existingMenu = document.querySelector('.agents-tree-context-menu');
-            if (existingMenu) existingMenu.remove();
-
-            var menu = document.createElement('div');
-            menu.className = 'agents-tree-context-menu';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-
-            // \u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\u663E\u793A"\u521B\u5EFA\u667A\u80FD\u4F53"\u83DC\u5355\u9879
-            if (node.hasAgentsMd) {
-              var createAgentItem = document.createElement('div');
-              createAgentItem.className = 'agents-tree-context-menu-item';
-              createAgentItem.textContent = '\u521B\u5EFA\u667A\u80FD\u4F53';
-              createAgentItem.addEventListener('click', function() {
-                if (typeof vscode !== 'undefined') {
-                  vscode.postMessage({ type: 'createAgent', path: node.path });
-                }
-                menu.remove();
-              });
-              menu.appendChild(createAgentItem);
-            } else {
-              // \u65E0 AGENTS.md\uFF1A\u663E\u793A\u7981\u7528\u63D0\u793A\u9879\uFF0C\u907F\u514D\u7A7A\u767D\u83DC\u5355
-              var hintItem = document.createElement('div');
-              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
-              hintItem.textContent = '\u6B64\u76EE\u5F55\u4E0D\u5305\u542B\u667A\u80FD\u4F53\u914D\u7F6E';
-              menu.appendChild(hintItem);
-            }
-
-            menu.classList.add('visible');
-            document.body.appendChild(menu);
-
-            // Close menu on click outside or ESC
-            function closeMenu() {
-              menu.remove();
-              document.removeEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }
-            function onKeyDown(e) {
-              if (e.key === 'Escape') closeMenu();
-            }
-            // Use setTimeout to avoid immediate closure from the current click
-            setTimeout(function() {
-              document.addEventListener('click', closeMenu);
-              document.addEventListener('keydown', onKeyDown);
-            }, 0);
+            buildContextMenu(e);
           });
         } else {
           // Empty directory: no arrow, just a spacer to align with files
@@ -5017,57 +5404,9 @@ if (resizeHandle) {
           item.title = t('Empty directory');
           item.classList.add('empty-dir');
 
-          // Context menu for empty directory nodes
+          // Context menu for empty directory nodes (\u7EDF\u4E00\u6587\u4EF6\u64CD\u4F5C\u83DC\u5355)
           item.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Remove any existing context menu
-            var existingMenu = document.querySelector('.agents-tree-context-menu');
-            if (existingMenu) existingMenu.remove();
-
-            var menu = document.createElement('div');
-            menu.className = 'agents-tree-context-menu';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-
-            // \u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\u663E\u793A"\u521B\u5EFA\u667A\u80FD\u4F53"\u83DC\u5355\u9879
-            if (node.hasAgentsMd) {
-              var createAgentItem = document.createElement('div');
-              createAgentItem.className = 'agents-tree-context-menu-item';
-              createAgentItem.textContent = '\u521B\u5EFA\u667A\u80FD\u4F53';
-              createAgentItem.addEventListener('click', function() {
-                if (typeof vscode !== 'undefined') {
-                  vscode.postMessage({ type: 'createAgent', path: node.path });
-                }
-                menu.remove();
-              });
-              menu.appendChild(createAgentItem);
-            } else {
-              // \u65E0 AGENTS.md\uFF1A\u663E\u793A\u7981\u7528\u63D0\u793A\u9879\uFF0C\u907F\u514D\u7A7A\u767D\u83DC\u5355
-              var hintItem = document.createElement('div');
-              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
-              hintItem.textContent = '\u6B64\u76EE\u5F55\u4E0D\u5305\u542B\u667A\u80FD\u4F53\u914D\u7F6E';
-              menu.appendChild(hintItem);
-            }
-
-            menu.classList.add('visible');
-            document.body.appendChild(menu);
-
-            // Close menu on click outside or ESC
-            function closeMenu() {
-              menu.remove();
-              document.removeEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }
-            function onKeyDown(e) {
-              if (e.key === 'Escape') closeMenu();
-            }
-            // Use setTimeout to avoid immediate closure from the current click
-            setTimeout(function() {
-              document.addEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }, 0);
+            buildContextMenu(e);
           });
         }
       } else {
@@ -5081,6 +5420,81 @@ if (resizeHandle) {
           if (typeof vscode !== 'undefined') {
             vscode.postMessage({ type: 'openFile', path: node.path });
           }
+        });
+        
+        // Add context menu for file nodes
+        item.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Remove any existing context menu
+          var existingMenu = document.querySelector('.agents-tree-context-menu');
+          if (existingMenu) existingMenu.remove();
+
+          var menu = document.createElement('div');
+          menu.className = 'agents-tree-context-menu';
+          menu.style.left = e.clientX + 'px';
+          menu.style.top = e.clientY + 'px';
+
+          // \u8BA1\u7B97\u7C98\u8D34\u76EE\u6807\u76EE\u5F55\uFF1A\u6587\u4EF6\u8282\u70B9\u53D6\u7236\u76EE\u5F55
+          var targetDir = (function() {
+            // \u53D6\u7236\u76EE\u5F55\u8DEF\u5F84\uFF0C\u517C\u5BB9 / \u548C  \u5206\u9694\u7B26
+            var lastSlashPos = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\\\'));
+            return lastSlashPos > 0 ? node.path.substring(0, lastSlashPos) : node.path;
+          })();
+
+          function addMenuAction(label, type, disabled) {
+            var el = document.createElement('div');
+            el.className = 'agents-tree-context-menu-item' + (disabled ? ' agents-tree-context-menu-item-disabled' : '');
+            el.textContent = label;
+            if (!disabled) {
+              el.addEventListener('click', function() {
+                menu.remove();
+                if (typeof vscode === 'undefined') return;
+                if (type === 'fileCut') {
+                  vscode.postMessage({ type: 'fileCut', path: node.path });
+                } else if (type === 'fileCopy') {
+                  vscode.postMessage({ type: 'fileCopy', path: node.path });
+                } else if (type === 'filePaste') {
+                  vscode.postMessage({ type: 'filePaste', path: node.path, nodeType: node.type, targetDir: targetDir });
+                } else if (type === 'fileDelete') {
+                  vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
+                } else if (type === 'fileRename') {
+                  vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                } else if (type === 'copyPath') {
+                  vscode.postMessage({ type: 'copyPath', path: node.path });
+                }
+              });
+            }
+            menu.appendChild(el);
+            return el;
+          }
+
+          // \u6587\u4EF6\u64CD\u4F5C\u83DC\u5355\u9879
+          addMenuAction('\u526A\u5207', 'fileCut', false);
+          addMenuAction('\u590D\u5236', 'fileCopy', false);
+          addMenuAction('\u7C98\u8D34', 'filePaste', false);
+          addMenuAction('\u5220\u9664', 'fileDelete', false);
+          addMenuAction('\u91CD\u547D\u540D', 'fileRename', false);
+          addMenuAction('\u590D\u5236\u8DEF\u5F84', 'copyPath', false);
+
+          menu.classList.add('visible');
+          document.body.appendChild(menu);
+
+          // Close menu on click outside or ESC
+          function closeMenu() {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+            document.removeEventListener('keydown', onKeyDown);
+          }
+          function onKeyDown(e) {
+            if (e.key === 'Escape') closeMenu();
+          }
+          // Use setTimeout to avoid immediate closure from the current click
+          setTimeout(function() {
+            document.addEventListener('click', closeMenu);
+            document.addEventListener('keydown', onKeyDown);
+          }, 0);
         });
       }
       return wrapper;
@@ -6430,16 +6844,16 @@ if (resizeHandle) {
       }
     }
     waitForSupervisorResponse(supervisorSessionKey, timeoutMs = 12e4) {
-      return new Promise((resolve2) => {
+      return new Promise((resolve3) => {
         this.supervisorPendingSessionKey = supervisorSessionKey;
-        this.supervisorResponseResolver = resolve2;
+        this.supervisorResponseResolver = resolve3;
         this.supervisorAccumulated = "";
         const timeout = setTimeout(() => {
           this.log(`Supervisor response timeout after ${timeoutMs}ms (accumulated=${this.supervisorAccumulated.length})`);
           this.supervisorTimeout = null;
           this.supervisorPendingSessionKey = null;
           this.supervisorResponseResolver = null;
-          resolve2(this.supervisorAccumulated || null);
+          resolve3(this.supervisorAccumulated || null);
         }, timeoutMs);
         this.supervisorTimeout = timeout;
       });

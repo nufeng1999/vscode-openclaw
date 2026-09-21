@@ -954,6 +954,16 @@ ${getModelscopeCss()}
 .agents-tree-context-menu-item:hover {
   background: var(--hover, rgba(128,128,128,0.14));
 }
+.agents-tree-context-menu-item-disabled {
+  color: var(--text-muted, #777777);
+  cursor: default;
+  pointer-events: none;
+}
+.agents-tree-context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border, #444);
+}
 </style>
 </head>
 <body>
@@ -1145,6 +1155,7 @@ ${getModelscopeHtml()}
   let hudVisible = false;
   let agentsTreeData = null;
   let agentsTreeDir = '';
+  let agentTreeHasPendingClipboard = false;
   // ModelScope agents state
   let modelscopeState = {
     page: 1,
@@ -1839,7 +1850,12 @@ if (resizeHandle) {
       case 'agentsTree':
         agentsTreeData = msg.tree;
         agentsTreeDir = msg.dir || '';
+        agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
         renderLocalAgentsTree();
+        break;
+      case 'clipboardState':
+        // host 在 fileCut/fileCopy/filePaste 后推送剪贴板状态，仅更新粘贴菜单的可用性标志
+        agentTreeHasPendingClipboard = msg.hasPendingClipboard ?? false;
         break;
       case 'modelscopeAgentsResult':
         console.log('[MS] modelscopeAgentsResult handler, agents count:', msg.agents ? msg.agents.length : 0);
@@ -3374,6 +3390,98 @@ if (resizeHandle) {
       wrapper.className = 'agents-tree-node';
       wrapper.appendChild(item);
 
+      // 构建统一的文件操作右键菜单
+      function buildContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Remove any existing context menu
+        var existingMenu = document.querySelector('.agents-tree-context-menu');
+        if (existingMenu) existingMenu.remove();
+
+        var menu = document.createElement('div');
+        menu.className = 'agents-tree-context-menu';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+
+        // 计算粘贴目标目录：目录节点自身，文件节点取父目录
+        var targetDir = node.type === 'directory' ? node.path : (function() {
+          // 取父目录路径，兼容 / 和 \ 分隔符
+          var lastSlashPos = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\\\'));
+          return lastSlashPos > 0 ? node.path.substring(0, lastSlashPos) : node.path;
+        })();
+
+        function addMenuAction(label, type, disabled) {
+          var el = document.createElement('div');
+          el.className = 'agents-tree-context-menu-item' + (disabled ? ' agents-tree-context-menu-item-disabled' : '');
+          el.textContent = label;
+          if (!disabled) {
+            el.addEventListener('click', function() {
+              menu.remove();
+              if (typeof vscode === 'undefined') return;
+              if (type === 'fileCut') {
+                vscode.postMessage({ type: 'fileCut', path: node.path });
+              } else if (type === 'fileCopy') {
+                vscode.postMessage({ type: 'fileCopy', path: node.path });
+              } else if (type === 'filePaste') {
+                vscode.postMessage({ type: 'filePaste', path: node.path, nodeType: node.type, targetDir: targetDir });
+              } else if (type === 'fileDelete') {
+                vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
+              } else if (type === 'fileRename') {
+                vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+              } else if (type === 'copyPath') {
+                vscode.postMessage({ type: 'copyPath', path: node.path });
+              }
+            });
+          }
+          menu.appendChild(el);
+          return el;
+        }
+
+        // 文件操作菜单项
+        addMenuAction('剪切', 'fileCut', false);
+        addMenuAction('复制', 'fileCopy', false);
+        addMenuAction('粘贴', 'filePaste', false);
+        addMenuAction('删除', 'fileDelete', false);
+        addMenuAction('重命名', 'fileRename', false);
+        addMenuAction('复制路径', 'copyPath', false);
+
+        // 目录节点：追加"创建智能体"（仅当目录包含 AGENTS.md 时）
+        if (node.type === 'directory' && node.hasAgentsMd) {
+          var sep = document.createElement('div');
+          sep.className = 'agents-tree-context-menu-separator';
+          menu.appendChild(sep);
+          var createAgentItem = document.createElement('div');
+          createAgentItem.className = 'agents-tree-context-menu-item';
+          createAgentItem.textContent = '创建智能体';
+          createAgentItem.addEventListener('click', function() {
+            if (typeof vscode !== 'undefined') {
+              vscode.postMessage({ type: 'createAgent', path: node.path });
+            }
+            menu.remove();
+          });
+          menu.appendChild(createAgentItem);
+        }
+
+        menu.classList.add('visible');
+        document.body.appendChild(menu);
+
+        // Close menu on click outside or ESC
+        function closeMenu() {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+          document.removeEventListener('keydown', onKeyDown);
+        }
+        function onKeyDown(e) {
+          if (e.key === 'Escape') closeMenu();
+        }
+        // Use setTimeout to avoid immediate closure from the current click
+        setTimeout(function() {
+          document.addEventListener('click', closeMenu);
+          document.addEventListener('keydown', onKeyDown);
+        }, 0);
+      }
+
       if (node.type === 'directory') {
         var hasChildren = node.children && node.children.length > 0;
         if (hasChildren) {
@@ -3399,57 +3507,9 @@ if (resizeHandle) {
             arrow.textContent = isHidden ? '▾' : '▸';
           });
 
-          // Context menu for directory nodes
+          // Context menu for directory nodes (统一文件操作菜单)
           item.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Remove any existing context menu
-            var existingMenu = document.querySelector('.agents-tree-context-menu');
-            if (existingMenu) existingMenu.remove();
-
-            var menu = document.createElement('div');
-            menu.className = 'agents-tree-context-menu';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-
-            // 仅当目录包含 AGENTS.md 时显示"创建智能体"菜单项
-            if (node.hasAgentsMd) {
-              var createAgentItem = document.createElement('div');
-              createAgentItem.className = 'agents-tree-context-menu-item';
-              createAgentItem.textContent = '创建智能体';
-              createAgentItem.addEventListener('click', function() {
-                if (typeof vscode !== 'undefined') {
-                  vscode.postMessage({ type: 'createAgent', path: node.path });
-                }
-                menu.remove();
-              });
-              menu.appendChild(createAgentItem);
-            } else {
-              // 无 AGENTS.md：显示禁用提示项，避免空白菜单
-              var hintItem = document.createElement('div');
-              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
-              hintItem.textContent = '此目录不包含智能体配置';
-              menu.appendChild(hintItem);
-            }
-
-            menu.classList.add('visible');
-            document.body.appendChild(menu);
-
-            // Close menu on click outside or ESC
-            function closeMenu() {
-              menu.remove();
-              document.removeEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }
-            function onKeyDown(e) {
-              if (e.key === 'Escape') closeMenu();
-            }
-            // Use setTimeout to avoid immediate closure from the current click
-            setTimeout(function() {
-              document.addEventListener('click', closeMenu);
-              document.addEventListener('keydown', onKeyDown);
-            }, 0);
+            buildContextMenu(e);
           });
         } else {
           // Empty directory: no arrow, just a spacer to align with files
@@ -3460,57 +3520,9 @@ if (resizeHandle) {
           item.title = t('Empty directory');
           item.classList.add('empty-dir');
 
-          // Context menu for empty directory nodes
+          // Context menu for empty directory nodes (统一文件操作菜单)
           item.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Remove any existing context menu
-            var existingMenu = document.querySelector('.agents-tree-context-menu');
-            if (existingMenu) existingMenu.remove();
-
-            var menu = document.createElement('div');
-            menu.className = 'agents-tree-context-menu';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-
-            // 仅当目录包含 AGENTS.md 时显示"创建智能体"菜单项
-            if (node.hasAgentsMd) {
-              var createAgentItem = document.createElement('div');
-              createAgentItem.className = 'agents-tree-context-menu-item';
-              createAgentItem.textContent = '创建智能体';
-              createAgentItem.addEventListener('click', function() {
-                if (typeof vscode !== 'undefined') {
-                  vscode.postMessage({ type: 'createAgent', path: node.path });
-                }
-                menu.remove();
-              });
-              menu.appendChild(createAgentItem);
-            } else {
-              // 无 AGENTS.md：显示禁用提示项，避免空白菜单
-              var hintItem = document.createElement('div');
-              hintItem.className = 'agents-tree-context-menu-item agents-tree-context-menu-item-disabled';
-              hintItem.textContent = '此目录不包含智能体配置';
-              menu.appendChild(hintItem);
-            }
-
-            menu.classList.add('visible');
-            document.body.appendChild(menu);
-
-            // Close menu on click outside or ESC
-            function closeMenu() {
-              menu.remove();
-              document.removeEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }
-            function onKeyDown(e) {
-              if (e.key === 'Escape') closeMenu();
-            }
-            // Use setTimeout to avoid immediate closure from the current click
-            setTimeout(function() {
-              document.addEventListener('click', closeMenu);
-              document.removeEventListener('keydown', onKeyDown);
-            }, 0);
+            buildContextMenu(e);
           });
         }
       } else {
@@ -3524,6 +3536,81 @@ if (resizeHandle) {
           if (typeof vscode !== 'undefined') {
             vscode.postMessage({ type: 'openFile', path: node.path });
           }
+        });
+        
+        // Add context menu for file nodes
+        item.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Remove any existing context menu
+          var existingMenu = document.querySelector('.agents-tree-context-menu');
+          if (existingMenu) existingMenu.remove();
+
+          var menu = document.createElement('div');
+          menu.className = 'agents-tree-context-menu';
+          menu.style.left = e.clientX + 'px';
+          menu.style.top = e.clientY + 'px';
+
+          // 计算粘贴目标目录：文件节点取父目录
+          var targetDir = (function() {
+            // 取父目录路径，兼容 / 和 \ 分隔符
+            var lastSlashPos = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\\\'));
+            return lastSlashPos > 0 ? node.path.substring(0, lastSlashPos) : node.path;
+          })();
+
+          function addMenuAction(label, type, disabled) {
+            var el = document.createElement('div');
+            el.className = 'agents-tree-context-menu-item' + (disabled ? ' agents-tree-context-menu-item-disabled' : '');
+            el.textContent = label;
+            if (!disabled) {
+              el.addEventListener('click', function() {
+                menu.remove();
+                if (typeof vscode === 'undefined') return;
+                if (type === 'fileCut') {
+                  vscode.postMessage({ type: 'fileCut', path: node.path });
+                } else if (type === 'fileCopy') {
+                  vscode.postMessage({ type: 'fileCopy', path: node.path });
+                } else if (type === 'filePaste') {
+                  vscode.postMessage({ type: 'filePaste', path: node.path, nodeType: node.type, targetDir: targetDir });
+                } else if (type === 'fileDelete') {
+                  vscode.postMessage({ type: 'fileDelete', path: node.path, name: node.name });
+                } else if (type === 'fileRename') {
+                  vscode.postMessage({ type: 'fileRename', path: node.path, name: node.name });
+                } else if (type === 'copyPath') {
+                  vscode.postMessage({ type: 'copyPath', path: node.path });
+                }
+              });
+            }
+            menu.appendChild(el);
+            return el;
+          }
+
+          // 文件操作菜单项
+          addMenuAction('剪切', 'fileCut', false);
+          addMenuAction('复制', 'fileCopy', false);
+          addMenuAction('粘贴', 'filePaste', false);
+          addMenuAction('删除', 'fileDelete', false);
+          addMenuAction('重命名', 'fileRename', false);
+          addMenuAction('复制路径', 'copyPath', false);
+
+          menu.classList.add('visible');
+          document.body.appendChild(menu);
+
+          // Close menu on click outside or ESC
+          function closeMenu() {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+            document.removeEventListener('keydown', onKeyDown);
+          }
+          function onKeyDown(e) {
+            if (e.key === 'Escape') closeMenu();
+          }
+          // Use setTimeout to avoid immediate closure from the current click
+          setTimeout(function() {
+            document.addEventListener('click', closeMenu);
+            document.addEventListener('keydown', onKeyDown);
+          }, 0);
         });
       }
       return wrapper;

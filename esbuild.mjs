@@ -21,7 +21,7 @@ const chatViewBuildOptions = {
   entryPoints: ["src/chatView.ts"],
   bundle: true,
   outfile: "out/chatView.js",
-  external: ["vscode", "ws", "fs", "path", "os"],
+  external: ["vscode", "ws", "fs", "path", "os", "url", "child_process"],
   format: "iife",
   platform: "browser",
   target: "es2020",
