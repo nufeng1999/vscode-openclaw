@@ -994,6 +994,53 @@
         }
         break;
       }
+      case "fileMove": {
+        const sourcePath = msg.sourcePath;
+        const targetDir = msg.targetDir;
+        if (!sourcePath || !targetDir || typeof sourcePath !== "string" || typeof targetDir !== "string") {
+          ctx.log(`[fileMove] invalid parameters: sourcePath=${sourcePath}, targetDir=${targetDir}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u79FB\u52A8\u53C2\u6570\u65E0\u6548"));
+          break;
+        }
+        if (!fs2.existsSync(sourcePath)) {
+          ctx.log(`[fileMove] source not found: ${sourcePath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u6E90\u8DEF\u5F84\u4E0D\u5B58\u5728: {0}", sourcePath));
+          break;
+        }
+        if (!fs2.existsSync(targetDir)) {
+          ctx.log(`[fileMove] target dir not found: ${targetDir}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u76EE\u6807\u76EE\u5F55\u4E0D\u5B58\u5728: {0}", targetDir));
+          break;
+        }
+        const srcResolved = path3.resolve(sourcePath);
+        const targetResolved = path3.resolve(targetDir);
+        if (srcResolved === targetResolved) {
+          ctx.log(`[fileMove] invalid move: source equals target`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u6E90\u548C\u76EE\u6807\u4E0D\u80FD\u76F8\u540C"));
+          break;
+        }
+        if (targetResolved.startsWith(srcResolved + path3.sep)) {
+          ctx.log(`[fileMove] invalid move: target is inside source`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u4E0D\u80FD\u5C06\u76EE\u5F55\u79FB\u52A8\u5230\u5176\u81EA\u8EAB\u6216\u5B50\u76EE\u5F55\u4E2D"));
+          break;
+        }
+        const baseName = path3.basename(sourcePath);
+        const destPath = path3.join(targetDir, baseName);
+        if (fs2.existsSync(destPath)) {
+          ctx.log(`[fileMove] destination exists: ${destPath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u76EE\u6807\u4F4D\u7F6E\u5DF2\u5B58\u5728\u540C\u540D\u6587\u4EF6/\u6587\u4EF6\u5939: {0}", baseName));
+          break;
+        }
+        try {
+          await fs2.promises.rename(sourcePath, destPath);
+          ctx.log(`[fileMove] moved ${sourcePath} -> ${destPath}`);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+        } catch (err) {
+          ctx.log(`[fileMove] error: ${err?.message || err}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u79FB\u52A8\u5931\u8D25: {0}", String(err?.message || err)));
+        }
+        break;
+      }
       case "fileRename": {
         const oldPath = msg.path;
         const oldName = msg.name;
@@ -2889,6 +2936,15 @@ ${getModelscopeCss()}
 }
 .agents-tree-item.folder {
   font-weight: 500;
+}
+.agents-tree-item.dragging {
+  opacity: 0.4;
+  background-color: rgba(0, 120, 215, 0.2);
+}
+.agents-tree-item.drag-over {
+  background-color: rgba(0, 120, 215, 0.3);
+  outline: 2px solid var(--accent, #3794ff);
+  outline-offset: -2px;
 }
 .agents-tree-item.file {
   font-weight: normal;
@@ -5691,6 +5747,67 @@ if (resizeHandle) {
       var wrapper = document.createElement('div');
       wrapper.className = 'agents-tree-node';
       wrapper.appendChild(item);
+      
+      // Enable drag and drop for file/folder movement
+      item.draggable = true;
+      
+      // Drag start - store source path and add visual feedback
+      item.addEventListener('dragstart', function(e) {
+        e.dataTransfer.setData('text/plain', node.path);
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      
+      // Drag end - clean up visual feedback
+      item.addEventListener('dragend', function(e) {
+        item.classList.remove('dragging');
+        // Clean up all possible drag hover states
+        document.querySelectorAll('.agents-tree-item.drag-over').forEach(function(el) {
+          el.classList.remove('drag-over');
+        });
+      });
+      
+      // Drag enter - highlight target if it's a folder
+      item.addEventListener('dragenter', function(e) {
+        e.preventDefault(); // Must prevent default to allow drop
+        if (node.type === 'directory') {
+          item.classList.add('drag-over');
+        }
+      });
+      
+      // Dragover - maintain highlight
+      item.addEventListener('dragover', function(e) {
+        e.preventDefault(); // Must prevent default to allow drop
+        if (node.type === 'directory') {
+          item.classList.add('drag-over');
+        }
+      });
+      
+      // Drag leave - remove highlight
+      item.addEventListener('dragleave', function(e) {
+        if (node.type === 'directory') {
+          item.classList.remove('drag-over');
+        }
+      });
+      
+      // Handle drop - process the move operation
+      item.addEventListener('drop', function(e) {
+        e.preventDefault();
+        if (node.type === 'directory') {
+          item.classList.remove('drag-over');
+          // Get source path
+          var sourcePath = e.dataTransfer.getData('text/plain');
+          if (sourcePath && sourcePath.trim() !== '') {
+            // Send move message to host
+            var targetDir = node.path;
+            vscode.postMessage({
+              type: 'fileMove',
+              sourcePath: sourcePath,
+              targetDir: targetDir
+            });
+          }
+        }
+      });
 
       // \u6784\u5EFA\u7EDF\u4E00\u7684\u6587\u4EF6\u64CD\u4F5C\u53F3\u952E\u83DC\u5355
       function buildContextMenu(e) {
@@ -6888,12 +7005,12 @@ if (resizeHandle) {
             displayPrefix = cleanQuery;
           }
         } else {
-          const sep = cleanQuery.indexOf("/");
-          if (sep > 0) {
-            const folderName = cleanQuery.substring(0, sep);
+          const sep2 = cleanQuery.indexOf("/");
+          if (sep2 > 0) {
+            const folderName = cleanQuery.substring(0, sep2);
             const folder = folders.find((f) => f.name.toLowerCase() === folderName.toLowerCase());
             if (folder) {
-              const relPath = cleanQuery.substring(sep + 1);
+              const relPath = cleanQuery.substring(sep2 + 1);
               browseUri = vscode4.Uri.joinPath(folder.uri, relPath);
               displayPrefix = cleanQuery;
             }
