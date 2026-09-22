@@ -422,6 +422,20 @@ export async function handleWebviewMessage(
           await ctx.handleLoadMessages(localSessionKey, undefined, msg.sessionId);
           ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
           break;
+        case "confirmDeleteSession": {
+          const sessionKey = msg.sessionKey || '';
+          if (!sessionKey) break;
+          const confirm = await vscode.window.showWarningMessage(
+            vscode.l10n.t('是否删除此会话？'),
+            { modal: true },
+            vscode.l10n.t('是'),
+            vscode.l10n.t('否')
+          );
+          if (confirm === vscode.l10n.t('是')) {
+            await ctx.handleDeleteSession(sessionKey);
+          }
+          break;
+        }
         case "deleteSession":
           await ctx.handleDeleteSession(msg.sessionKey);
           break;

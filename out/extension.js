@@ -4437,6 +4437,21 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       await ctx.handleLoadMessages(localSessionKey, void 0, msg.sessionId);
       ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
       break;
+    case "confirmDeleteSession": {
+      const sessionKey = msg.sessionKey || "";
+      if (!sessionKey)
+        break;
+      const confirm = await vscode2.window.showWarningMessage(
+        vscode2.l10n.t("\u662F\u5426\u5220\u9664\u6B64\u4F1A\u8BDD\uFF1F"),
+        { modal: true },
+        vscode2.l10n.t("\u662F"),
+        vscode2.l10n.t("\u5426")
+      );
+      if (confirm === vscode2.l10n.t("\u662F")) {
+        await ctx.handleDeleteSession(sessionKey);
+      }
+      break;
+    }
     case "deleteSession":
       await ctx.handleDeleteSession(msg.sessionKey);
       break;
@@ -9224,7 +9239,10 @@ if (resizeHandle) {
         });
         el.querySelector('.device-delete')?.addEventListener('click', (e) => {
           e.stopPropagation();
-          vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+          const sessionKey = el.getAttribute('data-key');
+          if (sessionKey) {
+            vscode.postMessage({ type: 'confirmDeleteSession', sessionKey });
+          }
         });
       });
     }
@@ -9250,7 +9268,10 @@ if (resizeHandle) {
           });
           el.querySelector('.device-delete')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+            const sessionKey = el.getAttribute('data-key');
+            if (sessionKey) {
+              vscode.postMessage({ type: 'confirmDeleteSession', sessionKey });
+            }
           });
         });
       }

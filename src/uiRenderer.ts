@@ -3421,7 +3421,10 @@ if (resizeHandle) {
         });
         el.querySelector('.device-delete')?.addEventListener('click', (e) => {
           e.stopPropagation();
-          vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+          const sessionKey = el.getAttribute('data-key');
+          if (sessionKey) {
+            vscode.postMessage({ type: 'confirmDeleteSession', sessionKey });
+          }
         });
       });
     }
@@ -3447,7 +3450,10 @@ if (resizeHandle) {
           });
           el.querySelector('.device-delete')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            vscode.postMessage({ type: 'deleteSession', sessionKey: el.getAttribute('data-key') });
+            const sessionKey = el.getAttribute('data-key');
+            if (sessionKey) {
+              vscode.postMessage({ type: 'confirmDeleteSession', sessionKey });
+            }
           });
         });
       }
