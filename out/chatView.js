@@ -2420,10 +2420,45 @@ body {
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
 
 /* Panel Tab \u680F */
+.panel-tabs-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.panel-tabs-arrow {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 6px 6px;
+  line-height: 1;
+  border-radius: 4px;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.panel-tabs-arrow:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.scroll-left-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.scroll-right-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
 .panel-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
   flex-shrink: 0;
   padding: 0 6px;
   flex-wrap: nowrap;
@@ -3163,12 +3198,16 @@ ${getModelscopeCss()}
   </div> <!-- /messages-container -->
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
-      <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode3.l10n.t("Progress Notes")}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode3.l10n.t("Tasks")}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode3.l10n.t("Sessions")}</div>
-        <div class="panel-tab" data-tab="agents">${vscode3.l10n.t("Agents")}</div>
-        <button id="progress-note-panel-toggle" title="${vscode3.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25C0\u25B6</button>
+      <div class="panel-tabs-wrap">
+        <button class="panel-tabs-arrow" id="panelTabsArrowLeft" title="Scroll left" style="display:none;">\u25C0</button>
+        <div class="panel-tabs" id="panelTabsBar">
+          <div class="panel-tab active" data-tab="notes">${vscode3.l10n.t("Progress Notes")}</div>
+          <div class="panel-tab" data-tab="tasks">${vscode3.l10n.t("Tasks")}</div>
+          <div class="panel-tab" data-tab="sessions">${vscode3.l10n.t("Sessions")}</div>
+          <div class="panel-tab" data-tab="agents">${vscode3.l10n.t("Agents")}</div>
+        </div>
+        <button class="panel-tabs-arrow" id="panelTabsArrowRight" title="Scroll right" style="display:none;">\u25B6</button>
+        <button id="progress-note-panel-toggle" title="${vscode3.l10n.t("Toggle progress note panel")}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">\u25B6</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
@@ -3579,12 +3618,47 @@ ${getModelscopeHtml()}
   window.addEventListener('resize', updatePanelPosition);
 
   // Tab \u5207\u6362
+  const panelTabsBar = document.getElementById('panelTabsBar');
+  function updatePanelTabsArrows() {
+    const left = document.getElementById('panelTabsArrowLeft');
+    const right = document.getElementById('panelTabsArrowRight');
+    if (!panelTabsBar || !left || !right) return;
+    const canScroll = panelTabsBar.scrollWidth > panelTabsBar.clientWidth + 1;
+    left.classList.toggle('scroll-left-visible', canScroll && panelTabsBar.scrollLeft > 1);
+    right.classList.toggle('scroll-right-visible', canScroll && panelTabsBar.scrollLeft < panelTabsBar.scrollWidth - panelTabsBar.clientWidth - 1);
+  }
+  if (panelTabsBar) {
+    panelTabsBar.addEventListener('scroll', updatePanelTabsArrows);
+    window.addEventListener('resize', updatePanelTabsArrows);
+    // \u9F20\u6807\u6EDA\u8F6E\u6A2A\u5411\u6EDA\u52A8\uFF1A\u7EB5\u5411 deltaY \u8F6C\u4E3A\u6A2A\u5411 scrollLeft
+    panelTabsBar.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        panelTabsBar.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+    updatePanelTabsArrows();
+  }
+  const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');
+  const panelTabsArrowRight = document.getElementById('panelTabsArrowRight');
+  if (panelTabsArrowLeft) {
+    panelTabsArrowLeft.addEventListener('click', () => {
+      if (panelTabsBar) panelTabsBar.scrollLeft -= 120;
+    });
+  }
+  if (panelTabsArrowRight) {
+    panelTabsArrowRight.addEventListener('click', () => {
+      if (panelTabsBar) panelTabsBar.scrollLeft += 120;
+    });
+  }
   document.querySelectorAll('.panel-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      // \u6FC0\u6D3B tab \u81EA\u52A8\u6EDA\u52A8\u5230\u53EF\u89C1\u533A\u57DF\u4E2D\u5FC3
+      tab.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' });
       
       // \u5237\u65B0\u5BF9\u5E94\u9762\u677F\u6570\u636E
       if (tab.dataset.tab === 'tasks') {

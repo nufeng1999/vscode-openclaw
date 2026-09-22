@@ -362,10 +362,45 @@ body {
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
 
 /* Panel Tab 栏 */
+.panel-tabs-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.panel-tabs-arrow {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 6px 6px;
+  line-height: 1;
+  border-radius: 4px;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.panel-tabs-arrow:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.scroll-left-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.scroll-right-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
 .panel-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
   flex-shrink: 0;
   padding: 0 6px;
   flex-wrap: nowrap;
@@ -1105,12 +1140,16 @@ ${getModelscopeCss()}
   </div> <!-- /messages-container -->
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
-      <div class="panel-tabs">
-        <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('Progress Notes')}</div>
-        <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('Tasks')}</div>
-        <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('Sessions')}</div>
-        <div class="panel-tab" data-tab="agents">${vscode.l10n.t('Agents')}</div>
-        <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">◀▶</button>
+      <div class="panel-tabs-wrap">
+        <button class="panel-tabs-arrow" id="panelTabsArrowLeft" title="Scroll left" style="display:none;">◀</button>
+        <div class="panel-tabs" id="panelTabsBar">
+          <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('Progress Notes')}</div>
+          <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('Tasks')}</div>
+          <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('Sessions')}</div>
+          <div class="panel-tab" data-tab="agents">${vscode.l10n.t('Agents')}</div>
+        </div>
+        <button class="panel-tabs-arrow" id="panelTabsArrowRight" title="Scroll right" style="display:none;">▶</button>
+        <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">▶</button>
       </div>
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
@@ -1521,12 +1560,47 @@ ${getModelscopeHtml()}
   window.addEventListener('resize', updatePanelPosition);
 
   // Tab 切换
+  const panelTabsBar = document.getElementById('panelTabsBar');
+  function updatePanelTabsArrows() {
+    const left = document.getElementById('panelTabsArrowLeft');
+    const right = document.getElementById('panelTabsArrowRight');
+    if (!panelTabsBar || !left || !right) return;
+    const canScroll = panelTabsBar.scrollWidth > panelTabsBar.clientWidth + 1;
+    left.classList.toggle('scroll-left-visible', canScroll && panelTabsBar.scrollLeft > 1);
+    right.classList.toggle('scroll-right-visible', canScroll && panelTabsBar.scrollLeft < panelTabsBar.scrollWidth - panelTabsBar.clientWidth - 1);
+  }
+  if (panelTabsBar) {
+    panelTabsBar.addEventListener('scroll', updatePanelTabsArrows);
+    window.addEventListener('resize', updatePanelTabsArrows);
+    // 鼠标滚轮横向滚动：纵向 deltaY 转为横向 scrollLeft
+    panelTabsBar.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        panelTabsBar.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+    updatePanelTabsArrows();
+  }
+  const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');
+  const panelTabsArrowRight = document.getElementById('panelTabsArrowRight');
+  if (panelTabsArrowLeft) {
+    panelTabsArrowLeft.addEventListener('click', () => {
+      if (panelTabsBar) panelTabsBar.scrollLeft -= 120;
+    });
+  }
+  if (panelTabsArrowRight) {
+    panelTabsArrowRight.addEventListener('click', () => {
+      if (panelTabsBar) panelTabsBar.scrollLeft += 120;
+    });
+  }
   document.querySelectorAll('.panel-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      // 激活 tab 自动滚动到可见区域中心
+      tab.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' });
       
       // 刷新对应面板数据
       if (tab.dataset.tab === 'tasks') {
