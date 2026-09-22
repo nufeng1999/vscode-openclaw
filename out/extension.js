@@ -4872,9 +4872,9 @@ async function handleRequestTasks(cv) {
       limit: 500
     });
     const allTasks = res?.tasks || [];
-    const activeTasks = allTasks.filter((t) => t.status === "queued" || t.status === "running");
-    cv.log(`tasks.list: ${activeTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
-    cv.postToWebview({ type: "tasksList", tasks: activeTasks });
+    const recentTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 10);
+    cv.log(`tasks.list: ${recentTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
+    cv.postToWebview({ type: "tasksList", tasks: recentTasks });
   } catch (err) {
     cv.log(`tasks.list error: ${err.message}`);
     cv.postToWebview({ type: "tasksList", tasks: [] });
@@ -10019,6 +10019,7 @@ var OpenClawChatView = class _OpenClawChatView {
     this.busyCount = 0;
     this.serverVersion = "";
     this.seenPreambleTexts = [];
+    this.refreshTimer = null;
     // Subagent activity tracking (Requirement A)
     this.lastSubagentEventMs = 0;
     this.activeSubagentCount = 0;
@@ -10065,6 +10066,21 @@ var OpenClawChatView = class _OpenClawChatView {
       this.handleRequestSessions();
     });
     this.gateway.on("session.deleted", () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on("tasks.changed", () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on("sessions.changed", () => {
+      this.handleRequestSessions();
+    });
+    this.gateway.on("task.started", () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on("task.completed", () => {
+      this.handleRequestTasks();
+    });
+    this.gateway.on("session.changed", () => {
       this.handleRequestSessions();
     });
   }
@@ -10587,6 +10603,16 @@ var OpenClawChatView = class _OpenClawChatView {
         return;
       }
       handleWebviewMessage(msg, this);
+    });
+    this.view = webviewView;
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.handleRequestTasks();
+        this.handleRequestSessions();
+        this.startRefreshTimer();
+      } else {
+        this.stopRefreshTimer();
+      }
     });
   }
   async handleSendMessage(text, fileRefs, webviewAttachments) {
@@ -11437,8 +11463,31 @@ var OpenClawChatView = class _OpenClawChatView {
       label: shouldYield ? vscode4.l10n.t("Waiting for subagent\u2026") : ""
     });
   }
+  startRefreshTimer() {
+    if (this.refreshTimer)
+      return;
+    this.refreshTimer = setInterval(() => {
+      if (this.view?.visible) {
+        this.handleRequestTasks();
+        this.handleRequestSessions();
+      }
+    }, 12e3);
+  }
+  stopRefreshTimer() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
   getHtml() {
     return getHtml();
+  }
+  dispose() {
+    this.stopRefreshTimer();
+    if (this._messageHandlerDisposable) {
+      this._messageHandlerDisposable.dispose();
+      this._messageHandlerDisposable = void 0;
+    }
   }
 };
 

@@ -26,12 +26,13 @@ export async function handleRequestTasks(cv: ChatViewLike) {
     const res = await cv.gateway.request("tasks.list", {
       limit: 500
     });
-    // 后端过滤：只保留 queued 和 running 状态的任务
+    // 全部任务按创建/更新时间倒序，取最近 10 条（含 completed/failed），前端据实渲染
     const allTasks = res?.tasks || [];
-    
-    const activeTasks = allTasks.filter((t: any) => t.status === "queued" || t.status === "running");
-    cv.log(`tasks.list: ${activeTasks.length} 条 (总 ${allTasks.length} 条)`);
-    cv.postToWebview({ type: "tasksList", tasks: activeTasks });
+    const recentTasks = [...allTasks]
+      .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
+      .slice(0, 10);
+    cv.log(`tasks.list: ${recentTasks.length} 条 (总 ${allTasks.length} 条)`);
+    cv.postToWebview({ type: "tasksList", tasks: recentTasks });
   } catch (err: any) {
     cv.log(`tasks.list error: ${err.message}`);
     cv.postToWebview({ type: "tasksList", tasks: [] });

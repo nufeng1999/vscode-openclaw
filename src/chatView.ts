@@ -68,6 +68,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private busyCount = 0;
   private serverVersion: string = '';
   private seenPreambleTexts: string[] = [];
+  private refreshTimer: NodeJS.Timeout | null = null;
   // Subagent activity tracking (Requirement A)
   private lastSubagentEventMs = 0;
   private activeSubagentCount = 0;
@@ -142,6 +143,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.gateway.on('session.deleted', () => {
       this.handleRequestSessions();
     });
+    // 扩展事件监听（补充更多事件名以覆盖后端实际推送）
+    this.gateway.on('tasks.changed', () => { this.handleRequestTasks(); });
+    this.gateway.on('sessions.changed', () => { this.handleRequestSessions(); });
+    this.gateway.on('task.started', () => { this.handleRequestTasks(); });
+    this.gateway.on('task.completed', () => { this.handleRequestTasks(); });
+    this.gateway.on('session.changed', () => { this.handleRequestSessions(); });
   }
 
   public show() {
@@ -734,6 +741,18 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         return;
       }
       handleWebviewMessage(msg, this as any);
+    });
+
+    // 面板可见性变化：可见时立即刷新并开启兜底轮询，隐藏时关闭轮询
+    this.view = webviewView;
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.handleRequestTasks();
+        this.handleRequestSessions();
+        this.startRefreshTimer();
+      } else {
+        this.stopRefreshTimer();
+      }
     });
   }
 
@@ -1723,8 +1742,33 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     });
   }
 
+  private startRefreshTimer() {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setInterval(() => {
+      if (this.view?.visible) {
+        this.handleRequestTasks();
+        this.handleRequestSessions();
+      }
+    }, 12000);
+  }
+
+  private stopRefreshTimer() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
+
   private getHtml(): string {
     return getHtml();
+  }
+
+  public dispose() {
+    this.stopRefreshTimer();
+    if (this._messageHandlerDisposable) {
+      this._messageHandlerDisposable.dispose();
+      this._messageHandlerDisposable = undefined;
+    }
   }
 }
 
