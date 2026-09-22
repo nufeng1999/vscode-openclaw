@@ -74,6 +74,14 @@
 			{
 				"command": "openclaw.createAgent",
 				"title": "%createAgent.title%"
+			},
+			{
+				"command": "openclaw.newFile",
+				"title": "New File..."
+			},
+			{
+				"command": "openclaw.newFolder",
+				"title": "New Folder..."
 			}
 		],
 		"submenus": [
@@ -123,6 +131,16 @@
 					"command": "openclaw.createAgent",
 					"when": "explorerResourceIsFolder",
 					"group": "navigation@3"
+				},
+				{
+					"command": "openclaw.newFile",
+					"when": "explorerResourceIsFolder",
+					"group": "navigation@4"
+				},
+				{
+					"command": "openclaw.newFolder",
+					"when": "explorerResourceIsFolder",
+					"group": "navigation@5"
 				}
 			]
 		},

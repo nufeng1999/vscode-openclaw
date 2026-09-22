@@ -1020,6 +1020,52 @@
       case "toggleSupervision":
         await ctx.handleToggleSupervision(msg.enabled);
         break;
+      case "fileNew": {
+        const dirPath = msg.path;
+        if (!dirPath || !fs2.existsSync(dirPath)) {
+          ctx.log(`[fileNew] path not found: ${dirPath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u76EE\u5F55\u4E0D\u5B58\u5728: {0}", dirPath));
+          break;
+        }
+        const fileName = (msg.name || "").trim();
+        if (!fileName) {
+          ctx.log(`[fileNew] \u6587\u4EF6\u540D\u4E3A\u7A7A`);
+          break;
+        }
+        const newFilePath = path3.join(dirPath, fileName);
+        try {
+          await fs2.promises.writeFile(newFilePath, "");
+          ctx.log(`[fileNew] \u521B\u5EFA\u6587\u4EF6\u6210\u529F: ${newFilePath}`);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+        } catch (err) {
+          ctx.log(`[fileNew] \u521B\u5EFA\u6587\u4EF6\u5931\u8D25: ${err?.message || err}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u521B\u5EFA\u6587\u4EF6\u5931\u8D25: {0}", String(err?.message || err)));
+        }
+        break;
+      }
+      case "folderNew": {
+        const dirPath = msg.path;
+        if (!dirPath || !fs2.existsSync(dirPath)) {
+          ctx.log(`[folderNew] path not found: ${dirPath}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u76EE\u5F55\u4E0D\u5B58\u5728: {0}", dirPath));
+          break;
+        }
+        const folderName = (msg.name || "").trim();
+        if (!folderName) {
+          ctx.log(`[folderNew] \u6587\u4EF6\u5939\u540D\u4E3A\u7A7A`);
+          break;
+        }
+        const newFolderPath = path3.join(dirPath, folderName);
+        try {
+          await fs2.promises.mkdir(newFolderPath, { recursive: true });
+          ctx.log(`[folderNew] \u521B\u5EFA\u6587\u4EF6\u5939\u6210\u529F: ${newFolderPath}`);
+          handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+        } catch (err) {
+          ctx.log(`[folderNew] \u521B\u5EFA\u6587\u4EF6\u5939\u5931\u8D25: ${err?.message || err}`);
+          vscode2.window.showErrorMessage(vscode2.l10n.t("\u521B\u5EFA\u6587\u4EF6\u5939\u5931\u8D25: {0}", String(err?.message || err)));
+        }
+        break;
+      }
       case "reconnect":
         vscode2.commands.executeCommand("openclaw.reconnect");
         break;
@@ -5492,6 +5538,143 @@ if (resizeHandle) {
       }
     }
 
+    /**
+     * \u5728\u76EE\u5F55\u6811\u4E2D\u63D2\u5165\u5185\u8054\u65B0\u5EFA\u6587\u4EF6/\u6587\u4EF6\u5939\u8F93\u5165\u6846\uFF08\u7C7B\u4F3C startRename \u7684\u4EA4\u4E92\u65B9\u5F0F\uFF09
+     * @param dirNode \u76EE\u5F55\u8282\u70B9\u6570\u636E { path, type, name }
+     * @param kind 'file' \u6216 'folder'
+     * @param wrapperEl \u76EE\u5F55\u8282\u70B9\u7684 DOM wrapper \u5143\u7D20 (.agents-tree-node)
+     */
+    function startNewItem(dirNode, kind, wrapperEl) {
+      // \u5982\u679C\u6B63\u5728\u91CD\u547D\u540D\uFF0C\u5148\u53D6\u6D88
+      stopRename();
+
+      // \u83B7\u53D6 item \u5143\u7D20\uFF08wrapper \u7684\u76F4\u63A5\u5B50\u5143\u7D20\u4E2D class \u542B agents-tree-item \u8005\uFF09
+      var itemEl = null;
+      for (var i = 0; i < wrapperEl.children.length; i++) {
+        if (wrapperEl.children[i].classList.contains('agents-tree-item')) {
+          itemEl = wrapperEl.children[i];
+          break;
+        }
+      }
+      if (!itemEl) return;
+
+      // \u67E5\u627E\u6216\u521B\u5EFA childrenWrapper
+      var childrenWrapper = null;
+      for (var j = 0; j < wrapperEl.children.length; j++) {
+        if (wrapperEl.children[j].classList.contains('agents-tree-children')) {
+          childrenWrapper = wrapperEl.children[j];
+          break;
+        }
+      }
+
+      var wasHidden = false;
+      var wasCreated = false;
+
+      if (!childrenWrapper) {
+        // \u7A7A\u76EE\u5F55\uFF1A\u521B\u5EFA childrenWrapper
+        childrenWrapper = document.createElement('div');
+        childrenWrapper.className = 'agents-tree-children';
+        wrapperEl.appendChild(childrenWrapper);
+        wasCreated = true;
+      } else {
+        // \u5DF2\u6709 childrenWrapper\uFF1A\u5982\u679C\u9690\u85CF\u5219\u4E34\u65F6\u663E\u793A
+        wasHidden = childrenWrapper.style.display === 'none';
+        if (wasHidden) {
+          childrenWrapper.style.display = '';
+          var arrowEl = itemEl.querySelector('.agents-tree-arrow');
+          if (arrowEl) arrowEl.textContent = '\u25BE';
+        }
+      }
+
+      // \u8BA1\u7B97\u5B50\u8282\u70B9\u7684\u7F29\u8FDB\uFF08depth + 1\uFF09
+      var currentPadding = parseInt(itemEl.style.paddingLeft, 10) || 8;
+      var currentDepth = Math.round((currentPadding - 8) / 16);
+      var childPadding = ((currentDepth + 1) * 16 + 8) + 'px';
+
+      // \u521B\u5EFA\u4E34\u65F6\u8F93\u5165\u884C
+      var tempItem = document.createElement('div');
+      tempItem.className = 'agents-tree-item editing';
+      tempItem.style.paddingLeft = childPadding;
+
+      var spacer = document.createElement('span');
+      spacer.className = 'agents-tree-arrow';
+      spacer.innerHTML = '&nbsp;';
+
+      var iconSpan = document.createElement('span');
+      iconSpan.className = 'agents-tree-icon';
+      iconSpan.textContent = kind === 'file' ? '\u{1F4C4}' : '\u{1F4C1}';
+
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'agents-tree-rename-input';
+      input.placeholder = kind === 'file' ? '\u8F93\u5165\u6587\u4EF6\u540D...' : '\u8F93\u5165\u6587\u4EF6\u5939\u540D...';
+
+      tempItem.appendChild(spacer);
+      tempItem.appendChild(iconSpan);
+      tempItem.appendChild(input);
+
+      // \u63D2\u5165\u5230 childrenWrapper \u6700\u524D\u9762
+      childrenWrapper.insertBefore(tempItem, childrenWrapper.firstChild);
+
+      input.focus();
+
+      // \u786E\u8BA4\u521B\u5EFA
+      function confirmNew() {
+        var name = input.value.trim();
+        if (!name) {
+          cleanup();
+          return;
+        }
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: kind === 'file' ? 'fileNew' : 'folderNew', path: dirNode.path, name: name });
+        }
+        cleanup();
+      }
+
+      // \u6E05\u7406\u4E34\u65F6\u884C\u53CA\u6062\u590D\u72B6\u6001
+      function cleanup() {
+        if (tempItem.parentElement) {
+          tempItem.remove();
+        }
+        // \u5982\u679C childrenWrapper \u662F\u65B0\u5EFA\u7684\u4E14\u73B0\u5728\u4E3A\u7A7A\uFF0C\u79FB\u9664\u5B83
+        if (wasCreated && childrenWrapper && childrenWrapper.children.length === 0) {
+          childrenWrapper.remove();
+        }
+        // \u5982\u679C\u539F\u6765\u9690\u85CF\uFF0C\u6062\u590D\u9690\u85CF\u72B6\u6001
+        if (wasHidden && childrenWrapper && childrenWrapper.parentElement) {
+          childrenWrapper.style.display = 'none';
+          var arrowEl2 = itemEl.querySelector('.agents-tree-arrow');
+          if (arrowEl2) arrowEl2.textContent = '\u25B8';
+        }
+        if (window._currentRenameState) {
+          delete window._currentRenameState;
+        }
+      }
+
+      // \u5168\u5C40\u72B6\u6001\uFF08\u4E0E stopRename \u534F\u8C03\uFF09
+      window._currentRenameState = { confirm: confirmNew, cancel: cleanup };
+
+      // Enter \u786E\u8BA4 / Esc \u53D6\u6D88
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          confirmNew();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cleanup();
+        }
+      });
+
+      // \u5931\u7126\u81EA\u52A8\u786E\u8BA4\uFF08\u5982\u679C\u4E34\u65F6\u884C\u8FD8\u5728 DOM \u4E2D\uFF09
+      input.addEventListener('blur', function() {
+        setTimeout(function() {
+          if (document.body.contains(tempItem) && window._currentRenameState) {
+            confirmNew();
+          }
+        }, 100);
+      });
+    }
+
     function createItem(node, depth) {
       var item = document.createElement('div');
       item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
@@ -5550,6 +5733,10 @@ if (resizeHandle) {
                 startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
               } else if (type === 'copyPath') {
                 vscode.postMessage({ type: 'copyPath', path: node.path });
+              } else if (type === 'fileNew') {
+                startNewItem(node, 'file', wrapper);
+              } else if (type === 'folderNew') {
+                startNewItem(node, 'folder', wrapper);
               }
             });
           }
@@ -5564,6 +5751,15 @@ if (resizeHandle) {
         addMenuAction('\u5220\u9664', 'fileDelete', false);
         addMenuAction('\u91CD\u547D\u540D', 'fileRename', false);
         addMenuAction('\u590D\u5236\u8DEF\u5F84', 'copyPath', false);
+
+        // \u76EE\u5F55\u8282\u70B9\uFF1A\u65B0\u5EFA\u6587\u4EF6/\u6587\u4EF6\u5939
+        if (node.type === 'directory') {
+          var sep2 = document.createElement('div');
+          sep2.className = 'agents-tree-context-menu-separator';
+          menu.appendChild(sep2);
+          addMenuAction('\u65B0\u5EFA\u6587\u4EF6...', 'fileNew', false);
+          addMenuAction('\u65B0\u5EFA\u6587\u4EF6\u5939...', 'folderNew', false);
+        }
 
         // \u76EE\u5F55\u8282\u70B9\uFF1A\u8FFD\u52A0"\u521B\u5EFA\u667A\u80FD\u4F53"\uFF08\u4EC5\u5F53\u76EE\u5F55\u5305\u542B AGENTS.md \u65F6\uFF09
         if (node.type === 'directory' && node.hasAgentsMd) {
@@ -5713,6 +5909,10 @@ if (resizeHandle) {
                   startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
                 } else if (type === 'copyPath') {
                   vscode.postMessage({ type: 'copyPath', path: node.path });
+                } else if (type === 'fileNew') {
+                  startNewItem(node, 'file', wrapper);
+                } else if (type === 'folderNew') {
+                  startNewItem(node, 'folder', wrapper);
                 }
               });
             }

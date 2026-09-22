@@ -3527,6 +3527,143 @@ if (resizeHandle) {
       }
     }
 
+    /**
+     * 在目录树中插入内联新建文件/文件夹输入框（类似 startRename 的交互方式）
+     * @param dirNode 目录节点数据 { path, type, name }
+     * @param kind 'file' 或 'folder'
+     * @param wrapperEl 目录节点的 DOM wrapper 元素 (.agents-tree-node)
+     */
+    function startNewItem(dirNode, kind, wrapperEl) {
+      // 如果正在重命名，先取消
+      stopRename();
+
+      // 获取 item 元素（wrapper 的直接子元素中 class 含 agents-tree-item 者）
+      var itemEl = null;
+      for (var i = 0; i < wrapperEl.children.length; i++) {
+        if (wrapperEl.children[i].classList.contains('agents-tree-item')) {
+          itemEl = wrapperEl.children[i];
+          break;
+        }
+      }
+      if (!itemEl) return;
+
+      // 查找或创建 childrenWrapper
+      var childrenWrapper = null;
+      for (var j = 0; j < wrapperEl.children.length; j++) {
+        if (wrapperEl.children[j].classList.contains('agents-tree-children')) {
+          childrenWrapper = wrapperEl.children[j];
+          break;
+        }
+      }
+
+      var wasHidden = false;
+      var wasCreated = false;
+
+      if (!childrenWrapper) {
+        // 空目录：创建 childrenWrapper
+        childrenWrapper = document.createElement('div');
+        childrenWrapper.className = 'agents-tree-children';
+        wrapperEl.appendChild(childrenWrapper);
+        wasCreated = true;
+      } else {
+        // 已有 childrenWrapper：如果隐藏则临时显示
+        wasHidden = childrenWrapper.style.display === 'none';
+        if (wasHidden) {
+          childrenWrapper.style.display = '';
+          var arrowEl = itemEl.querySelector('.agents-tree-arrow');
+          if (arrowEl) arrowEl.textContent = '▾';
+        }
+      }
+
+      // 计算子节点的缩进（depth + 1）
+      var currentPadding = parseInt(itemEl.style.paddingLeft, 10) || 8;
+      var currentDepth = Math.round((currentPadding - 8) / 16);
+      var childPadding = ((currentDepth + 1) * 16 + 8) + 'px';
+
+      // 创建临时输入行
+      var tempItem = document.createElement('div');
+      tempItem.className = 'agents-tree-item editing';
+      tempItem.style.paddingLeft = childPadding;
+
+      var spacer = document.createElement('span');
+      spacer.className = 'agents-tree-arrow';
+      spacer.innerHTML = '&nbsp;';
+
+      var iconSpan = document.createElement('span');
+      iconSpan.className = 'agents-tree-icon';
+      iconSpan.textContent = kind === 'file' ? '📄' : '📁';
+
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'agents-tree-rename-input';
+      input.placeholder = kind === 'file' ? '输入文件名...' : '输入文件夹名...';
+
+      tempItem.appendChild(spacer);
+      tempItem.appendChild(iconSpan);
+      tempItem.appendChild(input);
+
+      // 插入到 childrenWrapper 最前面
+      childrenWrapper.insertBefore(tempItem, childrenWrapper.firstChild);
+
+      input.focus();
+
+      // 确认创建
+      function confirmNew() {
+        var name = input.value.trim();
+        if (!name) {
+          cleanup();
+          return;
+        }
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: kind === 'file' ? 'fileNew' : 'folderNew', path: dirNode.path, name: name });
+        }
+        cleanup();
+      }
+
+      // 清理临时行及恢复状态
+      function cleanup() {
+        if (tempItem.parentElement) {
+          tempItem.remove();
+        }
+        // 如果 childrenWrapper 是新建的且现在为空，移除它
+        if (wasCreated && childrenWrapper && childrenWrapper.children.length === 0) {
+          childrenWrapper.remove();
+        }
+        // 如果原来隐藏，恢复隐藏状态
+        if (wasHidden && childrenWrapper && childrenWrapper.parentElement) {
+          childrenWrapper.style.display = 'none';
+          var arrowEl2 = itemEl.querySelector('.agents-tree-arrow');
+          if (arrowEl2) arrowEl2.textContent = '▸';
+        }
+        if (window._currentRenameState) {
+          delete window._currentRenameState;
+        }
+      }
+
+      // 全局状态（与 stopRename 协调）
+      window._currentRenameState = { confirm: confirmNew, cancel: cleanup };
+
+      // Enter 确认 / Esc 取消
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          confirmNew();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cleanup();
+        }
+      });
+
+      // 失焦自动确认（如果临时行还在 DOM 中）
+      input.addEventListener('blur', function() {
+        setTimeout(function() {
+          if (document.body.contains(tempItem) && window._currentRenameState) {
+            confirmNew();
+          }
+        }, 100);
+      });
+    }
+
     function createItem(node, depth) {
       var item = document.createElement('div');
       item.className = 'agents-tree-item ' + (node.type === 'directory' ? 'folder' : 'file');
@@ -3585,6 +3722,10 @@ if (resizeHandle) {
                 startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
               } else if (type === 'copyPath') {
                 vscode.postMessage({ type: 'copyPath', path: node.path });
+              } else if (type === 'fileNew') {
+                startNewItem(node, 'file', wrapper);
+              } else if (type === 'folderNew') {
+                startNewItem(node, 'folder', wrapper);
               }
             });
           }
@@ -3599,6 +3740,15 @@ if (resizeHandle) {
         addMenuAction('删除', 'fileDelete', false);
         addMenuAction('重命名', 'fileRename', false);
         addMenuAction('复制路径', 'copyPath', false);
+
+        // 目录节点：新建文件/文件夹
+        if (node.type === 'directory') {
+          var sep2 = document.createElement('div');
+          sep2.className = 'agents-tree-context-menu-separator';
+          menu.appendChild(sep2);
+          addMenuAction('新建文件...', 'fileNew', false);
+          addMenuAction('新建文件夹...', 'folderNew', false);
+        }
 
         // 目录节点：追加"创建智能体"（仅当目录包含 AGENTS.md 时）
         if (node.type === 'directory' && node.hasAgentsMd) {
@@ -3748,6 +3898,10 @@ if (resizeHandle) {
                   startRename({ name: node.name, path: node.path, type: node.type }, nameSpan);
                 } else if (type === 'copyPath') {
                   vscode.postMessage({ type: 'copyPath', path: node.path });
+                } else if (type === 'fileNew') {
+                  startNewItem(node, 'file', wrapper);
+                } else if (type === 'folderNew') {
+                  startNewItem(node, 'folder', wrapper);
                 }
               });
             }

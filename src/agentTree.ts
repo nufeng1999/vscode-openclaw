@@ -218,6 +218,43 @@ export function getAgentsTabRenderer(): string {
             childrenWrapper.style.display = isHidden ? '' : 'none';
             arrow.textContent = isHidden ? '▾' : '▸';
           });
+          // 右键菜单：新建文件 / 新建文件夹
+          item.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var existing = document.querySelector('.agents-tree-context-menu');
+            if (existing) existing.remove();
+            var menu = document.createElement('div');
+            menu.className = 'agents-tree-context-menu';
+            menu.style.cssText = 'position:fixed;z-index:1000;background:var(--vscode-menu-background);border:1px solid var(--vscode-menu-border);padding:4px 0;min-width:140px;';
+            var fileItem = document.createElement('div');
+            fileItem.className = 'agents-tree-context-menu-item';
+            fileItem.textContent = vscode && vscode.l10n && vscode.l10n.t ? vscode.l10n.t('New File...') : 'New File...';
+            fileItem.style.cssText = 'padding:4px 12px;cursor:pointer;font-size:12px;';
+            fileItem.addEventListener('mouseenter', function() { this.style.background = 'var(--vscode-list-hoverBackground)'; });
+            fileItem.addEventListener('mouseleave', function() { this.style.background = 'transparent'; });
+            fileItem.addEventListener('click', function(e) {
+              e.stopPropagation();
+              if (typeof vscode !== 'undefined') vscode.postMessage({ type: 'fileNew', path: node.path });
+              menu.remove();
+            });
+            menu.appendChild(fileItem);
+            var folderItem = document.createElement('div');
+            folderItem.className = 'agents-tree-context-menu-item';
+            folderItem.textContent = vscode && vscode.l10n && vscode.l10n.t ? vscode.l10n.t('New Folder...') : 'New Folder...';
+            folderItem.style.cssText = 'padding:4px 12px;cursor:pointer;font-size:12px;';
+            folderItem.addEventListener('mouseenter', function() { this.style.background = 'var(--vscode-list-hoverBackground)'; });
+            folderItem.addEventListener('mouseleave', function() { this.style.background = 'transparent'; });
+            folderItem.addEventListener('click', function(e) {
+              e.stopPropagation();
+              if (typeof vscode !== 'undefined') vscode.postMessage({ type: 'folderNew', path: node.path });
+              menu.remove();
+            });
+            menu.appendChild(folderItem);
+            document.body.appendChild(menu);
+            var closeMenu = function() { menu.remove(); document.removeEventListener('click', closeMenu); };
+            setTimeout(function() { document.addEventListener('click', closeMenu); }, 0);
+          });
         } else {
           // Empty directory: no arrow, just a spacer to align with files
           var spacer = document.createElement('span');

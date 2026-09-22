@@ -764,6 +764,52 @@ export async function handleWebviewMessage(
         case "toggleSupervision":
           await ctx.handleToggleSupervision(msg.enabled);
           break;
+        case "fileNew": {
+          const dirPath = msg.path as string;
+          if (!dirPath || !fs.existsSync(dirPath)) {
+            ctx.log(`[fileNew] path not found: ${dirPath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("目录不存在: {0}", dirPath));
+            break;
+          }
+          const fileName = (msg.name as string || "").trim();
+          if (!fileName) {
+            ctx.log(`[fileNew] 文件名为空`);
+            break;
+          }
+          const newFilePath = path.join(dirPath, fileName);
+          try {
+            await fs.promises.writeFile(newFilePath, "");
+            ctx.log(`[fileNew] 创建文件成功: ${newFilePath}`);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+          } catch (err: any) {
+            ctx.log(`[fileNew] 创建文件失败: ${err?.message || err}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("创建文件失败: {0}", String(err?.message || err)));
+          }
+          break;
+        }
+        case "folderNew": {
+          const dirPath = msg.path as string;
+          if (!dirPath || !fs.existsSync(dirPath)) {
+            ctx.log(`[folderNew] path not found: ${dirPath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("目录不存在: {0}", dirPath));
+            break;
+          }
+          const folderName = (msg.name as string || "").trim();
+          if (!folderName) {
+            ctx.log(`[folderNew] 文件夹名为空`);
+            break;
+          }
+          const newFolderPath = path.join(dirPath, folderName);
+          try {
+            await fs.promises.mkdir(newFolderPath, { recursive: true });
+            ctx.log(`[folderNew] 创建文件夹成功: ${newFolderPath}`);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+          } catch (err: any) {
+            ctx.log(`[folderNew] 创建文件夹失败: ${err?.message || err}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("创建文件夹失败: {0}", String(err?.message || err)));
+          }
+          break;
+        }
         case "reconnect":
           vscode.commands.executeCommand('openclaw.reconnect');
           break;

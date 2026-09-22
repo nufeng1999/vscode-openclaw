@@ -13,5 +13,7 @@
 	"config.supervisor.stopInquiryMethod.description": "Prompt method prefix for supervisor inquiry (e.g. 请判断, Judge, Evaluate).",
 	"config.supervisor.stopSignalReply.description": "Reply text from the supervisor agent that triggers stop (case-insensitive match).",
 	"config.promptForNewAgent.description": "Prompt to create a new agent in OpenClaw using the agent ID from the 'OpenClaw: Agent ID' setting, based on the default configuration, with the workspace as the working directory.",
-	"createAgent.title": "Create Agent"
+	"createAgent.title": "Create Agent",
+	"newFile.title": "New File...",
+	"newFolder.title": "New Folder..."
 }
