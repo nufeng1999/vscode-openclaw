@@ -368,6 +368,22 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   padding: 0 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+}
+/* Hide scrollbar for Chrome, Safari and Opera */
+.panel-tabs::-webkit-scrollbar {
+  height: 2px;
+}
+.panel-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 1px;
+}
+/* Hide scrollbar for IE and Edge */
+.panel-tabs {
+  -ms-overflow-style: none;
+  scrollbar-width: thin;
 }
 .panel-tab {
   padding: 6px 12px;
@@ -376,6 +392,8 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .panel-tab:hover { color: var(--text); }
 .panel-tab.active {
