@@ -879,6 +879,15 @@ ${getModelscopeCss()}
 .agents-tree-item.folder {
   font-weight: 500;
 }
+.agents-tree-item.dragging {
+  opacity: 0.4;
+  background-color: rgba(0, 120, 215, 0.2);
+}
+.agents-tree-item.drag-over {
+  background-color: rgba(0, 120, 215, 0.3);
+  outline: 2px solid var(--accent, #3794ff);
+  outline-offset: -2px;
+}
 .agents-tree-item.file {
   font-weight: normal;
   opacity: 0.8;
@@ -3680,6 +3689,67 @@ if (resizeHandle) {
       var wrapper = document.createElement('div');
       wrapper.className = 'agents-tree-node';
       wrapper.appendChild(item);
+      
+      // Enable drag and drop for file/folder movement
+      item.draggable = true;
+      
+      // Drag start - store source path and add visual feedback
+      item.addEventListener('dragstart', function(e) {
+        e.dataTransfer.setData('text/plain', node.path);
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      
+      // Drag end - clean up visual feedback
+      item.addEventListener('dragend', function(e) {
+        item.classList.remove('dragging');
+        // Clean up all possible drag hover states
+        document.querySelectorAll('.agents-tree-item.drag-over').forEach(function(el) {
+          el.classList.remove('drag-over');
+        });
+      });
+      
+      // Drag enter - highlight target if it's a folder
+      item.addEventListener('dragenter', function(e) {
+        e.preventDefault(); // Must prevent default to allow drop
+        if (node.type === 'directory') {
+          item.classList.add('drag-over');
+        }
+      });
+      
+      // Dragover - maintain highlight
+      item.addEventListener('dragover', function(e) {
+        e.preventDefault(); // Must prevent default to allow drop
+        if (node.type === 'directory') {
+          item.classList.add('drag-over');
+        }
+      });
+      
+      // Drag leave - remove highlight
+      item.addEventListener('dragleave', function(e) {
+        if (node.type === 'directory') {
+          item.classList.remove('drag-over');
+        }
+      });
+      
+      // Handle drop - process the move operation
+      item.addEventListener('drop', function(e) {
+        e.preventDefault();
+        if (node.type === 'directory') {
+          item.classList.remove('drag-over');
+          // Get source path
+          var sourcePath = e.dataTransfer.getData('text/plain');
+          if (sourcePath && sourcePath.trim() !== '') {
+            // Send move message to host
+            var targetDir = node.path;
+            vscode.postMessage({
+              type: 'fileMove',
+              sourcePath: sourcePath,
+              targetDir: targetDir
+            });
+          }
+        }
+      });
 
       // 构建统一的文件操作右键菜单
       function buildContextMenu(e) {

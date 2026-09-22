@@ -739,6 +739,62 @@ export async function handleWebviewMessage(
           }
           break;
         }
+        case "fileMove": {
+          const sourcePath = msg.sourcePath as string;
+          const targetDir = msg.targetDir as string;
+
+          if (!sourcePath || !targetDir || typeof sourcePath !== 'string' || typeof targetDir !== 'string') {
+            ctx.log(`[fileMove] invalid parameters: sourcePath=${sourcePath}, targetDir=${targetDir}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("移动参数无效"));
+            break;
+          }
+
+          if (!fs.existsSync(sourcePath)) {
+            ctx.log(`[fileMove] source not found: ${sourcePath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("源路径不存在: {0}", sourcePath));
+            break;
+          }
+
+          if (!fs.existsSync(targetDir)) {
+            ctx.log(`[fileMove] target dir not found: ${targetDir}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("目标目录不存在: {0}", targetDir));
+            break;
+          }
+
+          const srcResolved = path.resolve(sourcePath);
+          const targetResolved = path.resolve(targetDir);
+
+          if (srcResolved === targetResolved) {
+            ctx.log(`[fileMove] invalid move: source equals target`);
+            vscode.window.showErrorMessage(vscode.l10n.t("源和目标不能相同"));
+            break;
+          }
+
+          if (targetResolved.startsWith(srcResolved + path.sep)) {
+            ctx.log(`[fileMove] invalid move: target is inside source`);
+            vscode.window.showErrorMessage(vscode.l10n.t("不能将目录移动到其自身或子目录中"));
+            break;
+          }
+
+          const baseName = path.basename(sourcePath);
+          const destPath = path.join(targetDir, baseName);
+
+          if (fs.existsSync(destPath)) {
+            ctx.log(`[fileMove] destination exists: ${destPath}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("目标位置已存在同名文件/文件夹: {0}", baseName));
+            break;
+          }
+
+          try {
+            await fs.promises.rename(sourcePath, destPath);
+            ctx.log(`[fileMove] moved ${sourcePath} -> ${destPath}`);
+            handleRequestAgentsTree(ctx.agentsDir, ctx.postToWebview.bind(ctx), ctx.log.bind(ctx), ctx.context);
+          } catch (err: any) {
+            ctx.log(`[fileMove] error: ${err?.message || err}`);
+            vscode.window.showErrorMessage(vscode.l10n.t("移动失败: {0}", String(err?.message || err)));
+          }
+          break;
+        }
         case "fileRename": {
           const oldPath = msg.path as string;
           const oldName = msg.name as string;
