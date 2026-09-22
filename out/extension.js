@@ -10605,7 +10605,7 @@ var OpenClawChatView = class _OpenClawChatView {
       handleWebviewMessage(msg, this);
     });
     this.view = webviewView;
-    webviewView.onDidChangeVisibility(() => {
+    this._visibilityChangeDisposable = webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
         this.handleRequestTasks();
         this.handleRequestSessions();
@@ -10614,6 +10614,11 @@ var OpenClawChatView = class _OpenClawChatView {
         this.stopRefreshTimer();
       }
     });
+    if (webviewView.visible) {
+      this.handleRequestTasks();
+      this.handleRequestSessions();
+      this.startRefreshTimer();
+    }
   }
   async handleSendMessage(text, fileRefs, webviewAttachments) {
     if (!text.trim())
@@ -11487,6 +11492,10 @@ var OpenClawChatView = class _OpenClawChatView {
     if (this._messageHandlerDisposable) {
       this._messageHandlerDisposable.dispose();
       this._messageHandlerDisposable = void 0;
+    }
+    if (this._visibilityChangeDisposable) {
+      this._visibilityChangeDisposable.dispose();
+      this._visibilityChangeDisposable = void 0;
     }
   }
 };

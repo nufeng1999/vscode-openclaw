@@ -69,6 +69,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private serverVersion: string = '';
   private seenPreambleTexts: string[] = [];
   private refreshTimer: NodeJS.Timeout | null = null;
+  // 存储 onDidChangeVisibility 返回的 Disposable，用于清理旧监听器
+  private _visibilityChangeDisposable?: vscode.Disposable;
   // Subagent activity tracking (Requirement A)
   private lastSubagentEventMs = 0;
   private activeSubagentCount = 0;
@@ -745,7 +747,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
     // 面板可见性变化：可见时立即刷新并开启兜底轮询，隐藏时关闭轮询
     this.view = webviewView;
-    webviewView.onDidChangeVisibility(() => {
+    this._visibilityChangeDisposable = webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
         this.handleRequestTasks();
         this.handleRequestSessions();
@@ -754,6 +756,12 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         this.stopRefreshTimer();
       }
     });
+    // 若视图在注册监听器时已可见（初次 resolve），立即触发刷新
+    if (webviewView.visible) {
+      this.handleRequestTasks();
+      this.handleRequestSessions();
+      this.startRefreshTimer();
+    }
   }
 
   private async handleSendMessage(text: string, fileRefs?: string[], webviewAttachments?: any[]) {
@@ -1768,6 +1776,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (this._messageHandlerDisposable) {
       this._messageHandlerDisposable.dispose();
       this._messageHandlerDisposable = undefined;
+    }
+    if (this._visibilityChangeDisposable) {
+      this._visibilityChangeDisposable.dispose();
+      this._visibilityChangeDisposable = undefined;
     }
   }
 }
