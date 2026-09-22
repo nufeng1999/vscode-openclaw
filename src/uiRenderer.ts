@@ -409,7 +409,7 @@ body {
 }
 /* Hide scrollbar for Chrome, Safari and Opera */
 .panel-tabs::-webkit-scrollbar {
-  height: 2px;
+  height: 0;
 }
 .panel-tabs::-webkit-scrollbar-thumb {
   background: var(--border);
@@ -418,7 +418,7 @@ body {
 /* Hide scrollbar for IE and Edge */
 .panel-tabs {
   -ms-overflow-style: none;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .panel-tab {
   padding: 6px 12px;
@@ -1141,14 +1141,14 @@ ${getModelscopeCss()}
     <div class="progress-resize-handle" id="progressResizeHandle" title="Drag to resize panel"></div>
     <div id="progress-note-panel">
       <div class="panel-tabs-wrap">
-        <button class="panel-tabs-arrow" id="panelTabsArrowLeft" title="Scroll left" style="display:none;">◀</button>
+        <button class="panel-tabs-arrow" id="panelTabsArrowLeft" title="Scroll left">◀</button>
         <div class="panel-tabs" id="panelTabsBar">
           <div class="panel-tab active" data-tab="notes">${vscode.l10n.t('Progress Notes')}</div>
           <div class="panel-tab" data-tab="tasks">${vscode.l10n.t('Tasks')}</div>
           <div class="panel-tab" data-tab="sessions">${vscode.l10n.t('Sessions')}</div>
           <div class="panel-tab" data-tab="agents">${vscode.l10n.t('Agents')}</div>
         </div>
-        <button class="panel-tabs-arrow" id="panelTabsArrowRight" title="Scroll right" style="display:none;">▶</button>
+        <button class="panel-tabs-arrow" id="panelTabsArrowRight" title="Scroll right">▶</button>
         <button id="progress-note-panel-toggle" title="${vscode.l10n.t('Toggle progress note panel')}" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:4px;line-height:1;">▶</button>
       </div>
       <div class="panel-tab-content">
