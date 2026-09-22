@@ -717,7 +717,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: []
+      localResourceRoots: [vscode.Uri.file(this.context.extensionPath)]
     };
 
     webviewView.webview.html = this.getHtml();

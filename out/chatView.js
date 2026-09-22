@@ -6708,7 +6708,7 @@ if (resizeHandle) {
       this.view = webviewView;
       webviewView.webview.options = {
         enableScripts: true,
-        localResourceRoots: []
+        localResourceRoots: [vscode4.Uri.file(this.context.extensionPath)]
       };
       webviewView.webview.html = this.getHtml();
       if (this._messageHandlerDisposable) {
