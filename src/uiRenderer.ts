@@ -1579,6 +1579,11 @@ ${getModelscopeHtml()}
         panelTabsBar.scrollLeft += e.deltaY;
       }
     }, { passive: false });
+    // 监听容器尺寸变化，确保箭头按钮状态随视图尺寸更新
+    const resizeObserver = new ResizeObserver(() => {
+      updatePanelTabsArrows();
+    });
+    resizeObserver.observe(panelTabsBar);
     updatePanelTabsArrows();
   }
   const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');

@@ -7382,6 +7382,11 @@ ${getModelscopeHtml()}
         panelTabsBar.scrollLeft += e.deltaY;
       }
     }, { passive: false });
+    // \u76D1\u542C\u5BB9\u5668\u5C3A\u5BF8\u53D8\u5316\uFF0C\u786E\u4FDD\u7BAD\u5934\u6309\u94AE\u72B6\u6001\u968F\u89C6\u56FE\u5C3A\u5BF8\u66F4\u65B0
+    const resizeObserver = new ResizeObserver(() => {
+      updatePanelTabsArrows();
+    });
+    resizeObserver.observe(panelTabsBar);
     updatePanelTabsArrows();
   }
   const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');
