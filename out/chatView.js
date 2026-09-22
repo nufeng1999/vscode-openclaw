@@ -3623,9 +3623,8 @@ ${getModelscopeHtml()}
     const left = document.getElementById('panelTabsArrowLeft');
     const right = document.getElementById('panelTabsArrowRight');
     if (!panelTabsBar || !left || !right) return;
-    const canScroll = panelTabsBar.scrollWidth > panelTabsBar.clientWidth + 1;
-    left.classList.toggle('scroll-left-visible', canScroll);
-    right.classList.toggle('scroll-right-visible', canScroll && panelTabsBar.scrollLeft < panelTabsBar.scrollWidth - panelTabsBar.clientWidth - 1);
+    left.classList.toggle('scroll-left-visible', panelTabsBar.scrollLeft > 1);
+    right.classList.toggle('scroll-right-visible', panelTabsBar.scrollLeft < panelTabsBar.scrollWidth - panelTabsBar.clientWidth - 1);
   }
   if (panelTabsBar) {
     panelTabsBar.addEventListener('scroll', updatePanelTabsArrows);
