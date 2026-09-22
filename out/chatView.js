@@ -3624,7 +3624,7 @@ ${getModelscopeHtml()}
     const right = document.getElementById('panelTabsArrowRight');
     if (!panelTabsBar || !left || !right) return;
     const canScroll = panelTabsBar.scrollWidth > panelTabsBar.clientWidth + 1;
-    left.classList.toggle('scroll-left-visible', canScroll && panelTabsBar.scrollLeft > 1);
+    left.classList.toggle('scroll-left-visible', canScroll);
     right.classList.toggle('scroll-right-visible', canScroll && panelTabsBar.scrollLeft < panelTabsBar.scrollWidth - panelTabsBar.clientWidth - 1);
   }
   if (panelTabsBar) {
