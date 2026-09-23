@@ -24,13 +24,13 @@ export async function handleRequestTasks(cv: ChatViewLike) {
   try {
     // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
     const res = await cv.gateway.request("tasks.list", {
-      limit: 500
+      limit: 50
     });
-    // 全部任务按创建/更新时间倒序，取最近 10 条（含 completed/failed），前端据实渲染
+    // 全部任务按创建/更新时间倒序，取最近 50 条（含 completed/failed），前端据实渲染
     const allTasks = res?.tasks || [];
     const recentTasks = [...allTasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
-      .slice(0, 10);
+      .slice(0, 50);
     cv.log(`tasks.list: ${recentTasks.length} 条 (总 ${allTasks.length} 条)`);
     cv.postToWebview({ type: "tasksList", tasks: recentTasks });
   } catch (err: any) {

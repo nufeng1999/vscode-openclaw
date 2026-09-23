@@ -1139,10 +1139,10 @@
     cv.log(`handleRequestTasks called`);
     try {
       const res = await cv.gateway.request("tasks.list", {
-        limit: 500
+        limit: 50
       });
       const allTasks = res?.tasks || [];
-      const recentTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 10);
+      const recentTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
       cv.log(`tasks.list: ${recentTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
       cv.postToWebview({ type: "tasksList", tasks: recentTasks });
     } catch (err) {
@@ -5397,7 +5397,9 @@ if (resizeHandle) {
     }
     function relTime(ts) {
       if (!ts) return '';
-      const diff = Date.now() - ts;
+      // \u517C\u5BB9\u79D2\u7EA7\u65F6\u95F4\u6233\uFF08\u540E\u7AEF\u53EF\u80FD\u8FD4\u56DE Unix \u79D2\uFF09
+      const tsMs = ts < 1e12 ? ts * 1000 : ts;
+      const diff = Date.now() - tsMs;
       if (diff < 0) return '';
       const m = Math.floor(diff / 60000);
       if (m < 1) return t('Just now');

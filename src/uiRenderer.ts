@@ -3324,7 +3324,9 @@ if (resizeHandle) {
     }
     function relTime(ts) {
       if (!ts) return '';
-      const diff = Date.now() - ts;
+      // 兼容秒级时间戳（后端可能返回 Unix 秒）
+      const tsMs = ts < 1e12 ? ts * 1000 : ts;
+      const diff = Date.now() - tsMs;
       if (diff < 0) return '';
       const m = Math.floor(diff / 60000);
       if (m < 1) return t('Just now');
