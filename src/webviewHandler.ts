@@ -428,10 +428,10 @@ export async function handleWebviewMessage(
           const confirm = await vscode.window.showWarningMessage(
             vscode.l10n.t('是否删除此会话？'),
             { modal: true },
-            vscode.l10n.t('是'),
-            vscode.l10n.t('否')
+            { title: vscode.l10n.t('是') },
+            { title: vscode.l10n.t('否'), isCloseAffordance: true } as vscode.MessageItem
           );
-          if (confirm === vscode.l10n.t('是')) {
+          if (confirm?.title === vscode.l10n.t('是')) {
             await ctx.handleDeleteSession(sessionKey);
           }
           break;

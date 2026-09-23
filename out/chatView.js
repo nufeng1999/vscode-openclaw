@@ -699,10 +699,10 @@
         const confirm = await vscode2.window.showWarningMessage(
           vscode2.l10n.t("\u662F\u5426\u5220\u9664\u6B64\u4F1A\u8BDD\uFF1F"),
           { modal: true },
-          vscode2.l10n.t("\u662F"),
-          vscode2.l10n.t("\u5426")
+          { title: vscode2.l10n.t("\u662F") },
+          { title: vscode2.l10n.t("\u5426"), isCloseAffordance: true }
         );
-        if (confirm === vscode2.l10n.t("\u662F")) {
+        if (confirm?.title === vscode2.l10n.t("\u662F")) {
           await ctx.handleDeleteSession(sessionKey);
         }
         break;
@@ -7633,9 +7633,11 @@ if (resizeHandle) {
     }
     async handleDeleteSession(sessionKey) {
       try {
-        await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
+        const gwKey = sessionKey.startsWith("agent:") ? sessionKey : this.gwSessionKey(sessionKey);
+        await this.gateway.request("sessions.delete", { sessionKey: gwKey });
         await this.handleRequestSessions();
-      } catch {
+      } catch (err) {
+        this.log(`handleDeleteSession error: ${err?.message || err}`);
       }
     }
     async handleSwitchAgent(agentId) {

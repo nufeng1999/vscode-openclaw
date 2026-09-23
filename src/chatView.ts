@@ -1658,9 +1658,13 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
 
   private async handleDeleteSession(sessionKey: string) {
     try {
-      await this.gateway.request("sessions.delete", { sessionKey: this.gwSessionKey(sessionKey) });
+      // 若 key 已是完整 gateway key（以 agent: 开头），直接使用；否则加前缀
+      const gwKey = sessionKey.startsWith('agent:') ? sessionKey : this.gwSessionKey(sessionKey);
+      await this.gateway.request("sessions.delete", { sessionKey: gwKey });
       await this.handleRequestSessions();
-    } catch {}
+    } catch (err) {
+      this.log(`handleDeleteSession error: ${err?.message || err}`);
+    }
   }
 
   private async handleSwitchAgent(agentId: string) {
