@@ -382,7 +382,8 @@ export async function handleWebviewMessage(
           try {
             await ctx.handleRequestCancelTask(msg.taskId);
           } catch (err) {
-            ctx.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId: msg.taskId, message: String(err?.message || err) });
+            const errMsg = (err instanceof Error) ? err.message : String(err || '');
+            ctx.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId: msg.taskId, message: errMsg });
             ctx.log(`webviewHandler: requestCancelTask failed: ${err}`);
           }
           break;

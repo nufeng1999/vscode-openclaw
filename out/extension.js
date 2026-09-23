@@ -4395,7 +4395,13 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       await ctx.handleRequestTasks();
       break;
     case "requestCancelTask":
-      await ctx.handleRequestCancelTask(msg.taskId);
+      try {
+        await ctx.handleRequestCancelTask(msg.taskId);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err || "");
+        ctx.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId: msg.taskId, message: errMsg });
+        ctx.log(`webviewHandler: requestCancelTask failed: ${err}`);
+      }
       break;
     case "switchSession": {
       const ssGwKey = msg.sessionKey || "";
@@ -4905,11 +4911,13 @@ async function handleRequestCancelTask(cv, taskId) {
       id: taskId
     });
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
+    cv.postToWebview({ type: "requestCancelTaskResult", ok: true, taskId, message: "Task cancelled" });
     await handleRequestTasks(cv);
     return res;
   } catch (err) {
     cv.log(`tasks.cancel error: ${err.message}`);
-    throw err;
+    cv.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId, message: `Cancel failed: ${err.message}` });
+    return;
   }
 }
 async function handleRequestModels(cv) {
@@ -7823,6 +7831,15 @@ if (resizeHandle) {
       case 'tasksList':
         renderTasks(msg.tasks);
         break;
+      case 'requestCancelTaskResult': {
+        // \u53D6\u6D88\u4EFB\u52A1\u7ED3\u679C\uFF1A\u5931\u8D25\u65F6\u53D1\u9001\u901A\u77E5\u63D0\u793A\u7528\u6237
+        if (!msg.ok) {
+          vscode.postMessage({ type: 'notify', text: msg.message || 'Cancel failed' });
+        }
+        // \u6210\u529F/\u5931\u8D25\u540E\u4EFB\u52A1\u5217\u8868\u4F1A\u81EA\u52A8\u5237\u65B0\uFF08taskManager \u4E2D handleRequestTasks \u4F1A\u63A8\u9001\u65B0\u5217\u8868\uFF09\uFF0C
+        // \u6309\u94AE\u72B6\u6001\u968F\u5217\u8868\u91CD\u6E32\u67D3\u81EA\u7136\u6062\u590D\uFF0C\u65E0\u9700\u989D\u5916\u5904\u7406
+        break;
+      }
       case 'sessionsList':
         sessions = msg.sessions || [];
         renderSessions();
@@ -9162,7 +9179,7 @@ if (resizeHandle) {
           return l10nResult;
         }
       }
-      const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904', 'Running': '\u8FD0\u884C\u4E2D', 'Queued': '\u6392\u961F\u4E2D', 'Succeeded': '\u5DF2\u5B8C\u6210', 'Failed': '\u5931\u8D25', 'Cancelled': '\u5DF2\u53D6\u6D88', 'Timed out': '\u8D85\u65F6', 'Blocked': '\u963B\u585E', 'Lost': '\u4E22\u5931', 'Unknown': '\u672A\u77E5', 'Agent': '\u667A\u80FD\u4F53', 'Just now': '\u521A\u521A', '{0}m ago': '{0}\u5206\u949F\u524D', '{0}h ago': '{0}\u5C0F\u65F6\u524D', '{0}d ago': '{0}\u5929\u524D', 'Subagent': '\u5B50\u667A\u80FD\u4F53', 'Cron job': '\u5B9A\u65F6\u4EFB\u52A1' };
+      const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904', 'Running': '\u8FD0\u884C\u4E2D', 'Queued': '\u6392\u961F\u4E2D', 'Succeeded': '\u5DF2\u5B8C\u6210', 'Failed': '\u5931\u8D25', 'Cancelled': '\u5DF2\u53D6\u6D88', 'Timed out': '\u8D85\u65F6', 'Blocked': '\u963B\u585E', 'Lost': '\u4E22\u5931', 'Unknown': '\u672A\u77E5', 'Agent': '\u667A\u80FD\u4F53', 'Just now': '\u521A\u521A', '{0}m ago': '{0}\u5206\u949F\u524D', '{0}h ago': '{0}\u5C0F\u65F6\u524D', '{0}d ago': '{0}\u5929\u524D', 'Subagent': '\u5B50\u667A\u80FD\u4F53', 'Cron job': '\u5B9A\u65F6\u4EFB\u52A1', 'Cancelling\u2026': '\u53D6\u6D88\u4E2D\u2026' };
       let result = dict[str];
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
@@ -9233,20 +9250,32 @@ if (resizeHandle) {
       } else if (task.task && task.task !== task.label && task.task.length > 20) {
         html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(task.task, 100) + '</div>';
       }
-      // \u53D6\u6D88\u6309\u94AE\uFF08\u4EC5 running \u72B6\u6001\u663E\u793A\uFF09
+      // \u53D6\u6D88\u6309\u94AE\uFF08\u4EC5 running \u72B6\u6001\u663E\u793A\uFF0C\u4E14\u5FC5\u987B\u6709\u6709\u6548\u4EFB\u52A1ID\u624D\u6E32\u67D3\uFF09
       if (task.status === 'running') {
-        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + (task.id || task.taskId || '') + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">\u2715 ' + t('Cancel') + '</button></div>';
+        const cancelTaskId = task.id || task.taskId;
+        if (cancelTaskId) {
+          html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + cancelTaskId + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">\u2715 ' + t('Cancel') + '</button></div>';
+        }
       }
       html += '</div>';
     }
     container.innerHTML = html;
     
-    // \u7ED1\u5B9A\u53D6\u6D88\u6309\u94AE\u4E8B\u4EF6
+    // \u7ED1\u5B9A\u53D6\u6D88\u6309\u94AE\u4E8B\u4EF6\uFF08\u70B9\u51FB\u540E\u7ACB\u5373\u7ED9\u51FA\u89C6\u89C9\u53CD\u9988\uFF0C\u9632\u6B62\u5FEB\u901F\u91CD\u590D\u70B9\u51FB\uFF1B
+    // \u5217\u8868\u5237\u65B0\u91CD\u6E32\u67D3\u540E\u6309\u94AE\u81EA\u7136\u6062\u590D\uFF0C\u4E0D\u505A\u6301\u4E45\u5316\u72B6\u6001\uFF09
     container.querySelectorAll('.cancel-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const taskId = e.currentTarget.dataset.taskId;
-        if (taskId) vscode.postMessage({ type: 'requestCancelTask', taskId });
+        const btnEl = e.currentTarget;
+        const taskId = btnEl.dataset.taskId;
+        if (taskId) {
+          // \u5373\u65F6\u53CD\u9988\uFF1A\u6309\u94AE\u6587\u6848\u53D8\u4E3A\u300C\u53D6\u6D88\u4E2D\u2026\u300D\u5E76\u7981\u7528
+          btnEl.textContent = '\u23F3 ' + t('Cancelling\u2026');
+          btnEl.disabled = true;
+          btnEl.style.opacity = '0.6';
+          btnEl.style.cursor = 'default';
+          vscode.postMessage({ type: 'requestCancelTask', taskId });
+        }
       });
     });
   }
