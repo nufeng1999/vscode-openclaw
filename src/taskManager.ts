@@ -24,13 +24,13 @@ export async function handleRequestTasks(cv: ChatViewLike) {
   try {
     // 获取所有任务（包括运行中、已完成、失败等）
     const res = await cv.gateway.request("tasks.list", {
-      limit: 50
+      limit: 200
     });
     const allTasks = res?.tasks || [];
     // 按创建/更新时间倒序排序
     const sortedTasks = [...allTasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
-      .slice(0, 50);
+      .slice(0, 200);
     cv.log(`tasks.list: ${sortedTasks.length} 条 (运行中 ${sortedTasks.filter(t => t.status === 'running').length} / 总 ${allTasks.length} 条)`);
     cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
   } catch (err: any) {
@@ -44,7 +44,7 @@ export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) 
   try {
     // 调用后端取消任务接口
     const res = await cv.gateway.request("tasks.cancel", {
-      taskId: taskId
+      id: taskId
     });
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
     // 取消后刷新任务列表

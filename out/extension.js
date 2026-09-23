@@ -4887,10 +4887,10 @@ async function handleRequestTasks(cv) {
   cv.log(`handleRequestTasks called`);
   try {
     const res = await cv.gateway.request("tasks.list", {
-      limit: 50
+      limit: 200
     });
     const allTasks = res?.tasks || [];
-    const sortedTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
+    const sortedTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 200);
     cv.log(`tasks.list: ${sortedTasks.length} \u6761 (\u8FD0\u884C\u4E2D ${sortedTasks.filter((t) => t.status === "running").length} / \u603B ${allTasks.length} \u6761)`);
     cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
   } catch (err) {
@@ -4902,7 +4902,7 @@ async function handleRequestCancelTask(cv, taskId) {
   cv.log(`handleRequestCancelTask called for taskId: ${taskId}`);
   try {
     const res = await cv.gateway.request("tasks.cancel", {
-      taskId
+      id: taskId
     });
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
     await handleRequestTasks(cv);
@@ -9151,7 +9151,16 @@ if (resizeHandle) {
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
         const l10nResult = vscode.l10n.t(str, ...args);
-        if (l10nResult !== str) return l10nResult;
+        // l10n.t \u53EF\u80FD\u8FD4\u56DE\u4ECD\u542B {0} \u5360\u4F4D\u7B26\u7684\u5B57\u7B26\u4E32\uFF0C\u4ECD\u9700\u505A\u5360\u4F4D\u7B26\u66FF\u6362
+        if (l10nResult !== str) {
+          if (args.length) {
+            return l10nResult.replace(new RegExp('{(\\d+)}', 'g'), (match, p1) => {
+              const idx = parseInt(p1, 10);
+              return idx < args.length ? args[idx] : match;
+            });
+          }
+          return l10nResult;
+        }
       }
       const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904', 'Running': '\u8FD0\u884C\u4E2D', 'Queued': '\u6392\u961F\u4E2D', 'Succeeded': '\u5DF2\u5B8C\u6210', 'Failed': '\u5931\u8D25', 'Cancelled': '\u5DF2\u53D6\u6D88', 'Timed out': '\u8D85\u65F6', 'Blocked': '\u963B\u585E', 'Lost': '\u4E22\u5931', 'Unknown': '\u672A\u77E5', 'Agent': '\u667A\u80FD\u4F53', 'Just now': '\u521A\u521A', '{0}m ago': '{0}\u5206\u949F\u524D', '{0}h ago': '{0}\u5C0F\u65F6\u524D', '{0}d ago': '{0}\u5929\u524D', 'Subagent': '\u5B50\u667A\u80FD\u4F53', 'Cron job': '\u5B9A\u65F6\u4EFB\u52A1' };
       let result = dict[str];
@@ -9203,7 +9212,7 @@ if (resizeHandle) {
       const task = tasks[i];
       const statusInfo = statusMap[task.status] || { color: '#ff9800', text: task.status || t('Unknown') };
       // \u4F18\u5148\u7EA7\uFF1Alabel > task\uFF08\u622A\u65AD50\u5B57\u7B26\uFF09> sourceId
-      const displayName = task.label || truncate(task.task, 50) || task.sourceId || task.taskId;
+      const displayName = task.label || truncate(task.task, 50) || task.sourceId || (task.id || task.taskId);
       const timeText = relTime(task.endedAt || task.createdAt);
       html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">';
       // \u7B2C\u4E00\u884C\uFF1A\u540D\u79F0 + \u76F8\u5BF9\u65F6\u95F4
@@ -9226,7 +9235,7 @@ if (resizeHandle) {
       }
       // \u53D6\u6D88\u6309\u94AE\uFF08\u4EC5 running \u72B6\u6001\u663E\u793A\uFF09
       if (task.status === 'running') {
-        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + task.taskId + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">\u2715 ' + t('Cancel') + '</button></div>';
+        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + (task.id || task.taskId || '') + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">\u2715 ' + t('Cancel') + '</button></div>';
       }
       html += '</div>';
     }
