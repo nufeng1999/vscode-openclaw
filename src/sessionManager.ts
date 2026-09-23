@@ -82,7 +82,7 @@ export async function handleDeleteSession(cv: ChatViewLike, sessionKey: string) 
   try {
     const gwKey = sessionKey.startsWith('agent:') ? sessionKey : cv.gwSessionKey(sessionKey);
     await cv.gateway.request("sessions.delete", {
-      sessionKey: gwKey
+      key: gwKey
     });
     cv.postToWebview({ type: "sessionDeleted", sessionKey });
   } catch (err: any) {

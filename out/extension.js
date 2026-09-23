@@ -11404,7 +11404,7 @@ var OpenClawChatView = class _OpenClawChatView {
   async handleDeleteSession(sessionKey) {
     try {
       const gwKey = sessionKey.startsWith("agent:") ? sessionKey : this.gwSessionKey(sessionKey);
-      await this.gateway.request("sessions.delete", { sessionKey: gwKey });
+      await this.gateway.request("sessions.delete", { key: gwKey });
       await this.handleRequestSessions();
     } catch (err) {
       this.log(`handleDeleteSession error: ${err?.message || err}`);
