@@ -27,11 +27,13 @@ export async function handleRequestTasks(cv: ChatViewLike) {
       limit: 200
     });
     const allTasks = res?.tasks || [];
+    // 只保留运行中状态的任务
+    const runningTasks = allTasks.filter((t: any) => t.status === 'running');
     // 按创建/更新时间倒序排序
-    const sortedTasks = [...allTasks]
+    const sortedTasks = [...runningTasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
       .slice(0, 200);
-    cv.log(`tasks.list: ${sortedTasks.length} 条 (运行中 ${sortedTasks.filter(t => t.status === 'running').length} / 总 ${allTasks.length} 条)`);
+    cv.log(`tasks.list: ${sortedTasks.length} 条 (运行中)`);
     cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
   } catch (err: any) {
     cv.log(`tasks.list error: ${err.message}`);
