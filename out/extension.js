@@ -4732,10 +4732,10 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       const choice = await vscode2.window.showWarningMessage(
         vscode2.l10n.t("\u786E\u8BA4\u5220\u9664{itemType} '{name}'?", { itemType, name: fileName }),
         { modal: true },
-        vscode2.l10n.t("\u5220\u9664"),
-        vscode2.l10n.t("\u53D6\u6D88")
+        { title: vscode2.l10n.t("\u5220\u9664") },
+        { title: vscode2.l10n.t("\u53D6\u6D88"), isCloseAffordance: true }
       );
-      if (choice !== vscode2.l10n.t("\u5220\u9664")) {
+      if (choice?.title !== vscode2.l10n.t("\u5220\u9664")) {
         break;
       }
       try {
@@ -11013,7 +11013,7 @@ var OpenClawChatView = class _OpenClawChatView {
         includeGlobal: true,
         includeUnknown: true,
         includeDerivedTitles: true,
-        limit: 100
+        limit: 50
       });
       this.sessions = res?.sessions || [];
       this.log(`sessions.list: ${this.sessions.length} \u6761`);

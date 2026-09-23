@@ -1191,7 +1191,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         includeGlobal: true,
         includeUnknown: true,
         includeDerivedTitles: true,
-        limit: 100
+        limit: 50
       });
       this.sessions = res?.sessions || [];
       this.log(`sessions.list: ${this.sessions.length} 条`);
