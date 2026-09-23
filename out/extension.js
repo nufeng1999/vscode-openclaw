@@ -9236,7 +9236,7 @@ if (resizeHandle) {
     container.querySelectorAll('.cancel-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const taskId = (e.currentTarget as HTMLElement).dataset.taskId;
+        const taskId = e.currentTarget.dataset.taskId;
         if (taskId) vscode.postMessage({ type: 'requestCancelTask', taskId });
       });
     });
