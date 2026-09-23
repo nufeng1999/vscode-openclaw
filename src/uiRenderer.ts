@@ -3406,7 +3406,18 @@ if (resizeHandle) {
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
       const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
-      return dict[str] || str;
+      let result = dict[str];
+      if (result !== undefined) {
+        // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
+        if (args.length) {
+          result = result.replace(/{(\d+)}/g, (match, index) => {
+            const idx = parseInt(index, 10);
+            return idx < args.length ? args[idx] : match;
+          });
+        }
+        return result;
+      }
+      return str;
     };
     // Build a single shared HTML list so both panels stay in sync
     const buildList = (activeKey) => {
@@ -3541,7 +3552,18 @@ if (resizeHandle) {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
       // webview fallback dictionary (zh-CN)
       const dict = { 'No agents': '无智能体', 'Empty directory': '空目录' };
-      return dict[str] || str;
+      let result = dict[str];
+      if (result !== undefined) {
+        // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
+        if (args.length) {
+          result = result.replace(/{(\d+)}/g, (match, index) => {
+            const idx = parseInt(index, 10);
+            return idx < args.length ? args[idx] : match;
+          });
+        }
+        return result;
+      }
+      return str;
     };
     if (!agentsTreeData) {
       const emptyDiv = document.createElement('div');

@@ -5480,7 +5480,18 @@ if (resizeHandle) {
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
       const dict = { 'No tasks': '\u65E0\u4EFB\u52A1', 'No sessions': '\u65E0\u4F1A\u8BDD', 'Tasks': '\u4EFB\u52A1', 'Sessions': '\u4F1A\u8BDD', 'Progress Notes': '\u8FDB\u5EA6\u5907\u6CE8', 'In progress': '\u8FDB\u884C\u4E2D', 'Steps': '\u6B65\u9AA4', 'Processing...': '\u5904\u7406\u4E2D...', 'Progress notes will appear here': '\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904' };
-      return dict[str] || str;
+      let result = dict[str];
+      if (result !== undefined) {
+        // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
+        if (args.length) {
+          result = result.replace(/{(d+)}/g, (match, index) => {
+            const idx = parseInt(index, 10);
+            return idx < args.length ? args[idx] : match;
+          });
+        }
+        return result;
+      }
+      return str;
     };
     // Build a single shared HTML list so both panels stay in sync
     const buildList = (activeKey) => {
@@ -5615,7 +5626,18 @@ if (resizeHandle) {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
       // webview fallback dictionary (zh-CN)
       const dict = { 'No agents': '\u65E0\u667A\u80FD\u4F53', 'Empty directory': '\u7A7A\u76EE\u5F55' };
-      return dict[str] || str;
+      let result = dict[str];
+      if (result !== undefined) {
+        // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
+        if (args.length) {
+          result = result.replace(/{(d+)}/g, (match, index) => {
+            const idx = parseInt(index, 10);
+            return idx < args.length ? args[idx] : match;
+          });
+        }
+        return result;
+      }
+      return str;
     };
     if (!agentsTreeData) {
       const emptyDiv = document.createElement('div');
