@@ -729,11 +729,10 @@ export async function handleWebviewMessage(
           const choice = await vscode.window.showWarningMessage(
             vscode.l10n.t("确认删除{itemType} '{name}'?", { itemType, name: fileName }),
             { modal: true },
-            vscode.l10n.t("删除"),
-            vscode.l10n.t("取消")
+            { title: vscode.l10n.t("删除") },
+            { title: vscode.l10n.t("取消"), isCloseAffordance: true } as vscode.MessageItem
           );
-          
-          if (choice !== vscode.l10n.t("删除")) {
+          if (choice?.title !== vscode.l10n.t("删除")) {
             break;
           }
           
