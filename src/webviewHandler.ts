@@ -287,6 +287,7 @@ export async function handleWebviewMessage(
     handleRequestModels: any;
     handleRequestSessions: any;
     handleRequestTasks: any;
+    handleRequestCancelTask: any;
     handleSearchFiles: any;
     handleSendMessage: any;
     handleStopStream: any;
@@ -376,6 +377,9 @@ export async function handleWebviewMessage(
           break;
         case "requestTasks":
           await ctx.handleRequestTasks();
+          break;
+        case "requestCancelTask":
+          await ctx.handleRequestCancelTask(msg.taskId);
           break;
         case "switchSession": {
           const ssGwKey = msg.sessionKey || '';

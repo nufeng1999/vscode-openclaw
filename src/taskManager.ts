@@ -22,22 +22,37 @@ export interface ChatViewLike {
 export async function handleRequestTasks(cv: ChatViewLike) {
   cv.log(`handleRequestTasks called`);
   try {
-    // 获取活跃任务（通过 status 过滤 pending/running 不被接受，改为获取全部后前端过滤）
+    // 获取所有任务（包括运行中、已完成、失败等）
     const res = await cv.gateway.request("tasks.list", {
       limit: 50
     });
-    // 全部任务按创建/更新时间倒序，取最近 50 条（含 completed/failed），前端据实渲染
     const allTasks = res?.tasks || [];
-    // 只保留运行中的任务
-    const runningTasks = allTasks.filter((t: any) => t.status === 'running');
-    const recentTasks = [...runningTasks]
+    // 按创建/更新时间倒序排序
+    const sortedTasks = [...allTasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
       .slice(0, 50);
-    cv.log(`tasks.list: ${recentTasks.length} 条 (运行中 ${runningTasks.length} / 总 ${allTasks.length} 条)`);
-    cv.postToWebview({ type: "tasksList", tasks: recentTasks });
+    cv.log(`tasks.list: ${sortedTasks.length} 条 (运行中 ${sortedTasks.filter(t => t.status === 'running').length} / 总 ${allTasks.length} 条)`);
+    cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
   } catch (err: any) {
     cv.log(`tasks.list error: ${err.message}`);
     cv.postToWebview({ type: "tasksList", tasks: [] });
+  }
+}
+
+export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) {
+  cv.log(`handleRequestCancelTask called for taskId: ${taskId}`);
+  try {
+    // 调用后端取消任务接口
+    const res = await cv.gateway.request("tasks.cancel", {
+      taskId: taskId
+    });
+    cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
+    // 取消后刷新任务列表
+    await handleRequestTasks(cv);
+    return res;
+  } catch (err: any) {
+    cv.log(`tasks.cancel error: ${err.message}`);
+    throw err;
   }
 }
 

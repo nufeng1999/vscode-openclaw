@@ -2699,8 +2699,8 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
-            const idx = parseInt(index, 10);
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, p1) => {
+            const idx = parseInt(p1, 10);
             return idx < args.length ? args[idx] : match;
           });
         }
@@ -3323,8 +3323,8 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
-            const idx = parseInt(index, 10);
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, p1) => {
+            const idx = parseInt(p1, 10);
             return idx < args.length ? args[idx] : match;
           });
         }
@@ -3389,9 +3389,22 @@ if (resizeHandle) {
       } else if (task.task && task.task !== task.label && task.task.length > 20) {
         html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(task.task, 100) + '</div>';
       }
+      // 取消按钮（仅 running 状态显示）
+      if (task.status === 'running') {
+        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + task.taskId + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕ ' + t('Cancel') + '</button></div>';
+      }
       html += '</div>';
     }
     container.innerHTML = html;
+    
+    // 绑定取消按钮事件
+    container.querySelectorAll('.cancel-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const taskId = (e.currentTarget as HTMLElement).dataset.taskId;
+        if (taskId) vscode.postMessage({ type: 'requestCancelTask', taskId });
+      });
+    });
   }
 
   // 简化设备名称：从完整字符串中提取有意义的部分

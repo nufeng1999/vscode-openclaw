@@ -7,7 +7,7 @@ import * as os from "os";
 import * as path from "path";
 import { resolveAgentsDir, getMediaInfo, formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce, genId, MIME_MAP, getMimeType, stripMedia, normText, isPreamble } from "./utils";
 import { handleWebviewMessage } from "./webviewHandler";
-import { handleRequestModels, handleRequestAgents, handleRequestTasks } from "./taskManager";
+import { handleRequestModels, handleRequestAgents, handleRequestTasks, handleRequestCancelTask } from "./taskManager";
 import { getHtml } from "./uiRenderer";
 
 export interface ChatMessage {
@@ -1233,6 +1233,10 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   private async handleRequestTasks() {
     // 委托给 taskManager 统一实现（避免自实现重复逻辑）
     return handleRequestTasks(this as any);
+  }
+
+  private async handleRequestCancelTask(taskId: string) {
+    return handleRequestCancelTask(this as any, taskId);
   }
 
   private async handleLoadDefaults() {
