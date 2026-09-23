@@ -1142,8 +1142,9 @@
         limit: 50
       });
       const allTasks = res?.tasks || [];
-      const recentTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
-      cv.log(`tasks.list: ${recentTasks.length} \u6761 (\u603B ${allTasks.length} \u6761)`);
+      const runningTasks = allTasks.filter((t) => t.status === "running");
+      const recentTasks = [...runningTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
+      cv.log(`tasks.list: ${recentTasks.length} \u6761 (\u8FD0\u884C\u4E2D ${runningTasks.length} / \u603B ${allTasks.length} \u6761)`);
       cv.postToWebview({ type: "tasksList", tasks: recentTasks });
     } catch (err) {
       cv.log(`tasks.list error: ${err.message}`);

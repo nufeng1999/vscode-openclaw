@@ -28,10 +28,12 @@ export async function handleRequestTasks(cv: ChatViewLike) {
     });
     // 全部任务按创建/更新时间倒序，取最近 50 条（含 completed/failed），前端据实渲染
     const allTasks = res?.tasks || [];
-    const recentTasks = [...allTasks]
+    // 只保留运行中的任务
+    const runningTasks = allTasks.filter((t: any) => t.status === 'running');
+    const recentTasks = [...runningTasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
       .slice(0, 50);
-    cv.log(`tasks.list: ${recentTasks.length} 条 (总 ${allTasks.length} 条)`);
+    cv.log(`tasks.list: ${recentTasks.length} 条 (运行中 ${runningTasks.length} / 总 ${allTasks.length} 条)`);
     cv.postToWebview({ type: "tasksList", tasks: recentTasks });
   } catch (err: any) {
     cv.log(`tasks.list error: ${err.message}`);
