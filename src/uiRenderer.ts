@@ -2689,7 +2689,10 @@ if (resizeHandle) {
     const noteContent = document.getElementById('progress-note-panel-content');
     // vs10n: webview l10n helper with Chinese fallback
     const t = (str, ...args) => {
-      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
+        const l10nResult = vscode.l10n.t(str, ...args);
+        if (l10nResult !== str) return l10nResult;
+      }
       // webview fallback dictionary (zh-CN)
       const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务' };
       let result = dict[str];
@@ -3311,7 +3314,10 @@ if (resizeHandle) {
     if (!container) return;
     // vs10n: webview's acquireVsCodeApi() does not expose l10n; use it only if available.
     const t = (str, ...args) => {
-      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
+        const l10nResult = vscode.l10n.t(str, ...args);
+        if (l10nResult !== str) return l10nResult;
+      }
       const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务' };
       let result = dict[str];
       if (result !== undefined) {
@@ -3404,7 +3410,10 @@ if (resizeHandle) {
 
   function renderSessions() {
     const t = (str, ...args) => {
-      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
+        const l10nResult = vscode.l10n.t(str, ...args);
+        if (l10nResult !== str) return l10nResult;
+      }
       const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处' };
       let result = dict[str];
       if (result !== undefined) {
@@ -3549,7 +3558,10 @@ if (resizeHandle) {
     container.innerHTML = '';
     // vs10n: webview l10n helper with Chinese fallback
     const t = (str, ...args) => {
-      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') return vscode.l10n.t(str, ...args);
+      if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
+        const l10nResult = vscode.l10n.t(str, ...args);
+        if (l10nResult !== str) return l10nResult;
+      }
       // webview fallback dictionary (zh-CN)
       const dict = { 'No agents': '无智能体', 'Empty directory': '空目录' };
       let result = dict[str];
