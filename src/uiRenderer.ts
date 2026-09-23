@@ -2696,7 +2696,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(\d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -3317,7 +3317,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(\d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -3410,7 +3410,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(\d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -3556,7 +3556,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(\d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });

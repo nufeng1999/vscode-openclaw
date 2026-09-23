@@ -8515,7 +8515,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -9136,7 +9136,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -9229,7 +9229,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
@@ -9375,7 +9375,7 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(/{(d+)}/g, (match, index) => {
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
             const idx = parseInt(index, 10);
             return idx < args.length ? args[idx] : match;
           });
