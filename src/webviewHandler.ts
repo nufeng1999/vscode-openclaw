@@ -379,7 +379,12 @@ export async function handleWebviewMessage(
           await ctx.handleRequestTasks();
           break;
         case "requestCancelTask":
-          await ctx.handleRequestCancelTask(msg.taskId);
+          try {
+            await ctx.handleRequestCancelTask(msg.taskId);
+          } catch (err) {
+            ctx.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId: msg.taskId, message: String(err?.message || err) });
+            ctx.log(`webviewHandler: requestCancelTask failed: ${err}`);
+          }
           break;
         case "switchSession": {
           const ssGwKey = msg.sessionKey || '';

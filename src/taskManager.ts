@@ -47,12 +47,17 @@ export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) 
       id: taskId
     });
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
+    // 成功取消后向webview回传结果
+    cv.postToWebview({ type: "requestCancelTaskResult", ok: true, taskId, message: "Task cancelled" });
     // 取消后刷新任务列表
     await handleRequestTasks(cv);
     return res;
   } catch (err: any) {
     cv.log(`tasks.cancel error: ${err.message}`);
-    throw err;
+    // 失败时向webview回传结果
+    cv.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId, message: `Cancel failed: ${err.message}` });
+    // 不再抛出错误，避免未捕获的promise rejection
+    return;
   }
 }
 

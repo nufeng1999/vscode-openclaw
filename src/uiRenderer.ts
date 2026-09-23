@@ -1988,6 +1988,15 @@ if (resizeHandle) {
       case 'tasksList':
         renderTasks(msg.tasks);
         break;
+      case 'requestCancelTaskResult': {
+        // 取消任务结果：失败时发送通知提示用户
+        if (!msg.ok) {
+          vscode.postMessage({ type: 'notify', text: msg.message || 'Cancel failed' });
+        }
+        // 成功/失败后任务列表会自动刷新（taskManager 中 handleRequestTasks 会推送新列表），
+        // 按钮状态随列表重渲染自然恢复，无需额外处理
+        break;
+      }
       case 'sessionsList':
         sessions = msg.sessions || [];
         renderSessions();
@@ -3327,7 +3336,7 @@ if (resizeHandle) {
           return l10nResult;
         }
       }
-      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务' };
+      const dict = { 'No tasks': '无任务', 'No sessions': '无会话', 'Tasks': '任务', 'Sessions': '会话', 'Progress Notes': '进度备注', 'In progress': '进行中', 'Steps': '步骤', 'Processing...': '处理中...', 'Progress notes will appear here': '进度备注将显示在此处', 'Running': '运行中', 'Queued': '排队中', 'Succeeded': '已完成', 'Failed': '失败', 'Cancelled': '已取消', 'Timed out': '超时', 'Blocked': '阻塞', 'Lost': '丢失', 'Unknown': '未知', 'Agent': '智能体', 'Just now': '刚刚', '{0}m ago': '{0}分钟前', '{0}h ago': '{0}小时前', '{0}d ago': '{0}天前', 'Subagent': '子智能体', 'Cron job': '定时任务', 'Cancelling…': '取消中…' };
       let result = dict[str];
       if (result !== undefined) {
         // 简单占位符替换：{0} <- args[0], {1} <- args[1] ...
@@ -3398,20 +3407,32 @@ if (resizeHandle) {
       } else if (task.task && task.task !== task.label && task.task.length > 20) {
         html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(task.task, 100) + '</div>';
       }
-      // 取消按钮（仅 running 状态显示）
+      // 取消按钮（仅 running 状态显示，且必须有有效任务ID才渲染）
       if (task.status === 'running') {
-        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + (task.id || task.taskId || '') + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕ ' + t('Cancel') + '</button></div>';
+        const cancelTaskId = task.id || task.taskId;
+        if (cancelTaskId) {
+          html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + cancelTaskId + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕ ' + t('Cancel') + '</button></div>';
+        }
       }
       html += '</div>';
     }
     container.innerHTML = html;
     
-    // 绑定取消按钮事件
+    // 绑定取消按钮事件（点击后立即给出视觉反馈，防止快速重复点击；
+    // 列表刷新重渲染后按钮自然恢复，不做持久化状态）
     container.querySelectorAll('.cancel-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const taskId = e.currentTarget.dataset.taskId;
-        if (taskId) vscode.postMessage({ type: 'requestCancelTask', taskId });
+        const btnEl = e.currentTarget;
+        const taskId = btnEl.dataset.taskId;
+        if (taskId) {
+          // 即时反馈：按钮文案变为「取消中…」并禁用
+          btnEl.textContent = '⏳ ' + t('Cancelling…');
+          btnEl.disabled = true;
+          btnEl.style.opacity = '0.6';
+          btnEl.style.cursor = 'default';
+          vscode.postMessage({ type: 'requestCancelTask', taskId });
+        }
       });
     });
   }
