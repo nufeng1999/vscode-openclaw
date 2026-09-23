@@ -649,6 +649,9 @@
       case "requestTasks":
         await ctx.handleRequestTasks();
         break;
+      case "requestCancelTask":
+        await ctx.handleRequestCancelTask(msg.taskId);
+        break;
       case "switchSession": {
         const ssGwKey = msg.sessionKey || "";
         const agentMatch = ssGwKey.match(/^agent:([^:]+):/);
@@ -1142,13 +1145,26 @@
         limit: 50
       });
       const allTasks = res?.tasks || [];
-      const runningTasks = allTasks.filter((t) => t.status === "running");
-      const recentTasks = [...runningTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
-      cv.log(`tasks.list: ${recentTasks.length} \u6761 (\u8FD0\u884C\u4E2D ${runningTasks.length} / \u603B ${allTasks.length} \u6761)`);
-      cv.postToWebview({ type: "tasksList", tasks: recentTasks });
+      const sortedTasks = [...allTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 50);
+      cv.log(`tasks.list: ${sortedTasks.length} \u6761 (\u8FD0\u884C\u4E2D ${sortedTasks.filter((t) => t.status === "running").length} / \u603B ${allTasks.length} \u6761)`);
+      cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
     } catch (err) {
       cv.log(`tasks.list error: ${err.message}`);
       cv.postToWebview({ type: "tasksList", tasks: [] });
+    }
+  }
+  async function handleRequestCancelTask(cv, taskId) {
+    cv.log(`handleRequestCancelTask called for taskId: ${taskId}`);
+    try {
+      const res = await cv.gateway.request("tasks.cancel", {
+        taskId
+      });
+      cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
+      await handleRequestTasks(cv);
+      return res;
+    } catch (err) {
+      cv.log(`tasks.cancel error: ${err.message}`);
+      throw err;
     }
   }
   async function handleRequestModels(cv) {
@@ -4773,8 +4789,8 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
-            const idx = parseInt(index, 10);
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, p1) => {
+            const idx = parseInt(p1, 10);
             return idx < args.length ? args[idx] : match;
           });
         }
@@ -5397,8 +5413,8 @@ if (resizeHandle) {
       if (result !== undefined) {
         // \u7B80\u5355\u5360\u4F4D\u7B26\u66FF\u6362\uFF1A{0} <- args[0], {1} <- args[1] ...
         if (args.length) {
-          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, index) => {
-            const idx = parseInt(index, 10);
+          result = result.replace(new RegExp('{(\\d+)}', 'g'), (match, p1) => {
+            const idx = parseInt(p1, 10);
             return idx < args.length ? args[idx] : match;
           });
         }
@@ -5463,9 +5479,22 @@ if (resizeHandle) {
       } else if (task.task && task.task !== task.label && task.task.length > 20) {
         html += '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + truncate(task.task, 100) + '</div>';
       }
+      // \u53D6\u6D88\u6309\u94AE\uFF08\u4EC5 running \u72B6\u6001\u663E\u793A\uFF09
+      if (task.status === 'running') {
+        html += '<div style="margin-top:4px;"><button class="cancel-btn" data-task-id="' + task.taskId + '" style="background:none;border:1px solid #f44336;color:#f44336;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">\u2715 ' + t('Cancel') + '</button></div>';
+      }
       html += '</div>';
     }
     container.innerHTML = html;
+    
+    // \u7ED1\u5B9A\u53D6\u6D88\u6309\u94AE\u4E8B\u4EF6
+    container.querySelectorAll('.cancel-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const taskId = (e.currentTarget as HTMLElement).dataset.taskId;
+        if (taskId) vscode.postMessage({ type: 'requestCancelTask', taskId });
+      });
+    });
   }
 
   // \u7B80\u5316\u8BBE\u5907\u540D\u79F0\uFF1A\u4ECE\u5B8C\u6574\u5B57\u7B26\u4E32\u4E2D\u63D0\u53D6\u6709\u610F\u4E49\u7684\u90E8\u5206
@@ -7338,6 +7367,9 @@ if (resizeHandle) {
     }
     async handleRequestTasks() {
       return handleRequestTasks(this);
+    }
+    async handleRequestCancelTask(taskId) {
+      return handleRequestCancelTask(this, taskId);
     }
     async handleLoadDefaults() {
       try {
