@@ -44,7 +44,7 @@ export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) 
   try {
     // 调用后端取消任务接口
     const res = await cv.gateway.request("tasks.cancel", {
-      id: taskId
+      taskId: taskId
     });
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
     // 成功取消后向webview回传结果

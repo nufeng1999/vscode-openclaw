@@ -1163,7 +1163,7 @@
     cv.log(`handleRequestCancelTask called for taskId: ${taskId}`);
     try {
       const res = await cv.gateway.request("tasks.cancel", {
-        id: taskId
+        taskId
       });
       cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
       cv.postToWebview({ type: "requestCancelTaskResult", ok: true, taskId, message: "Task cancelled" });
