@@ -325,13 +325,6 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-#progress-note-panel-title {
-  font-weight: 600;
-  color: var(--text);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 #progress-note-panel-toggle {
   background: none;
   border: none;
@@ -357,6 +350,66 @@ body {
 .progress-resize-handle:hover { background: var(--accent); opacity: 0.5; }
 .progress-resize-handle.dragging { background: var(--accent); opacity: 0.7; }
 #progress-note-panel.collapsed + .progress-resize-handle { width: 4px; cursor: ew-resize; background: var(--accent); opacity: 0.3; }
+/* Progress note tab buttons */
+.progress-note-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+.progress-note-tabs::-webkit-scrollbar { height: 0; }
+/* Progress note tab scroll arrows */
+.progress-note-tabs-arrow {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 6px;
+  line-height: 1;
+  border-radius: 4px;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.progress-note-tabs-arrow:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.progress-note-tabs-arrow.scroll-left-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.progress-note-tabs-arrow.scroll-right-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.progress-note-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.progress-note-tab-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.progress-note-tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
 /* 右侧 overlay 样式 */
 #progress-note-panel.right-overlay { position: absolute; right: 0; top: 0; bottom: 0; z-index: 1000; }
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
@@ -1154,9 +1207,11 @@ ${getModelscopeCss()}
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode.l10n.t('Progress Notes')}</span>
+            <button class="progress-note-tabs-arrow" id="progressNoteTabsArrowLeft" title="${vscode.l10n.t('Scroll progress note tabs left')}">◀</button>
+            <div id="panelTabNotes" class="progress-note-tabs"></div>
+            <button class="progress-note-tabs-arrow" id="progressNoteTabsArrowRight" title="${vscode.l10n.t('Scroll progress note tabs right')}">▶</button>
           </div>
-          <div id="progress-note-panel-content">
+          <div id="progress-note-panel-content-default" class="progress-note-panel-content" data-session-key="default">
             <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode.l10n.t('Progress notes will appear here')}</div>
           </div>
         </div>
@@ -1436,33 +1491,29 @@ ${getModelscopeHtml()}
   }
 
   // 点击会话列表 / 收到 loadMessages / userMessage 时的 tab 路由：
-  // 1) 已有该 agent 的 tab → 直接复用；
-  // 2) tab-main 仍是占位 'main'（尚未绑定配置的 OpenClaw: Agent ID）→ 复用它绑定到该 agent；
-  // 3) 否则新建该 agent 的专属 tab。绝不把已绑定配置 agent 的 Chat tab 重新绑定到别的 agent。
+  // Chat tab（tab-main）只服务配置的 OpenClaw: Agent ID（agent.id，init 时由 msg.agent.id 注入）：
+  // 1) 请求的 agentId === 配置的 agent.id → 直接返回 Chat tab（tab-main），不改写其 label/agentId；
+  // 2) 其他 agent → 只查找/新建其专属 tab（id !== 'tab-main'），绝不触碰 tab-main。
   function getOrCreateTabByAgentId(agentId) {
-    let tab = tabs.find(t => t.agentId === agentId);
-    if (!tab) {
-      const defaultTab = tabs.find(t => t.id === 'tab-main' && t.agentId === 'main');
-      if (defaultTab) {
-        tab = defaultTab;
-        tab.agentId = agentId || 'main';
-        tab.sessionKey = 'main';
-        const ag = agents.find(a => a.id === tab.agentId);
-        if (ag) tab.label = ag.name || ag.id;
-      } else {
-        const ag = agents.find(a => a.id === agentId);
-        const resolvedAgentId = agentId || (agent && agent.id) || 'main';
-        tab = {
-          id: 'tab-agent-' + agentId + '-' + Date.now(),
-          label: (ag && (ag.name || ag.id)) || agentId,
-          agentId: agentId,
-          sessionKey: 'agent:' + resolvedAgentId + ':main',
-          messages: []
-        };
-        tabs.push(tab);
-      }
-      renderTabs();
+    const configuredAgentId = (agent && agent.id) || 'main';
+    const targetId = agentId || configuredAgentId;
+    if (targetId === configuredAgentId) {
+      return tabs.find(t => t.id === 'tab-main');
     }
+    let tab = tabs.find(t => t.agentId === targetId && t.id !== 'tab-main');
+    if (!tab) {
+      const ag = agents.find(a => a.id === targetId);
+      const resolvedAgentId = targetId;
+      tab = {
+        id: 'tab-agent-' + targetId + '-' + Date.now(),
+        label: (ag && (ag.name || ag.id)) || targetId,
+        agentId: targetId,
+        sessionKey: 'agent:' + resolvedAgentId + ':main',
+        messages: []
+      };
+      tabs.push(tab);
+    }
+    renderTabs();
     return tab;
   }
 
@@ -1561,6 +1612,7 @@ ${getModelscopeHtml()}
 
   // Tab 切换
   const panelTabsBar = document.getElementById('panelTabsBar');
+  const progressNoteTabsBar = document.getElementById('panelTabNotes');
   function updatePanelTabsArrows() {
     const left = document.getElementById('panelTabsArrowLeft');
     const right = document.getElementById('panelTabsArrowRight');
@@ -1584,6 +1636,44 @@ ${getModelscopeHtml()}
     });
     resizeObserver.observe(panelTabsBar);
     updatePanelTabsArrows();
+
+    // ── Progress note tabs scroll arrows ──
+    function updateProgressNoteTabsArrows() {
+      const left = document.getElementById('progressNoteTabsArrowLeft');
+      const right = document.getElementById('progressNoteTabsArrowRight');
+      if (!progressNoteTabsBar || !left || !right) return;
+      left.classList.toggle('scroll-left-visible', progressNoteTabsBar.scrollLeft > 1);
+      right.classList.toggle('scroll-right-visible', progressNoteTabsBar.scrollLeft < progressNoteTabsBar.scrollWidth - progressNoteTabsBar.clientWidth - 1);
+    }
+    if (progressNoteTabsBar) {
+      progressNoteTabsBar.addEventListener('scroll', updateProgressNoteTabsArrows);
+      window.addEventListener('resize', updateProgressNoteTabsArrows);
+      // 鼠标滚轮横向滚动：纵向 deltaY 转为横向 scrollLeft
+      progressNoteTabsBar.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+          e.preventDefault();
+          progressNoteTabsBar.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+      // 监听容器尺寸变化（tab 增删后宽度变化），重新检测溢出状态
+      const progressTabsResizeObserver = new ResizeObserver(() => {
+        updateProgressNoteTabsArrows();
+      });
+      progressTabsResizeObserver.observe(progressNoteTabsBar);
+      updateProgressNoteTabsArrows();
+    }
+    const progressNoteTabsArrowLeft = document.getElementById('progressNoteTabsArrowLeft');
+    const progressNoteTabsArrowRight = document.getElementById('progressNoteTabsArrowRight');
+    if (progressNoteTabsArrowLeft) {
+      progressNoteTabsArrowLeft.addEventListener('click', () => {
+        if (progressNoteTabsBar) progressNoteTabsBar.scrollBy({ left: -120, behavior: 'smooth' });
+      });
+    }
+    if (progressNoteTabsArrowRight) {
+      progressNoteTabsArrowRight.addEventListener('click', () => {
+        if (progressNoteTabsBar) progressNoteTabsBar.scrollBy({ left: 120, behavior: 'smooth' });
+      });
+    }
   }
   const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');
   const panelTabsArrowRight = document.getElementById('panelTabsArrowRight');
@@ -1959,6 +2049,10 @@ if (resizeHandle) {
         renderTabs();
         renderAgentButtons();
       }
+      // 启动时补建「默认」进度备注 tab 按钮：progressNoteTabs 状态预置 'default' 仅作记录、不建 DOM，
+      // 上轮已移除 agentsList 预建循环，此处为唯一启动建钮点；noSwitch=true 仅创建不切换，
+      // 避免触发 switchAgent 后端切换（updateProgressNoteTabsArrows 在函数尾部自动刷新箭头显隐）
+      addProgressNoteTab('default', '默认', agent.id, true);
         break;
       case 'connectionStatus':
         connected = msg.connected;
@@ -2296,6 +2390,18 @@ if (resizeHandle) {
       }
       case 'progressCard': {
         renderProgressCard(msg);
+        break;
+      }
+      case 'progressNoteTabAdded': {
+        addProgressNoteTab(msg.sessionKey, msg.title, msg.agentId);
+        break;
+      }
+      case 'progressNoteTabRemoved': {
+        removeProgressNoteTab(msg.sessionKey);
+        break;
+      }
+      case 'progressNoteContentUpdated': {
+        updateProgressNoteContent(msg.sessionKey, msg.html);
         break;
       }
       case 'setInputText':
@@ -2654,7 +2760,7 @@ if (resizeHandle) {
   const progressCopyAllBtn = document.getElementById('progressCopyAllBtn');
   if (progressCopyAllBtn) {
     progressCopyAllBtn.addEventListener('click', () => {
-      const noteContent = document.getElementById('progress-note-panel-content');
+      const noteContent = getProgressNoteContent(progressNoteActiveSessionKey);
       if (!noteContent) return;
       const clone = noteContent.cloneNode(true);
       clone.querySelectorAll('.progress-card-copy-btn').forEach(b => b.remove());
@@ -2672,7 +2778,7 @@ if (resizeHandle) {
   const progressCopyMarkdownBtn = document.getElementById('progressCopyMarkdownBtn');
   if (progressCopyMarkdownBtn) {
     progressCopyMarkdownBtn.addEventListener('click', () => {
-      const noteContent = document.getElementById('progress-note-panel-content');
+      const noteContent = getProgressNoteContent(progressNoteActiveSessionKey);
       if (!noteContent) return;
       var mdCard = noteContent.querySelector('.progress-card[data-raw-markdown]');
       var mdText = '';
@@ -2693,9 +2799,153 @@ if (resizeHandle) {
     });
   }
 
+  // ── Progress Note Tab Management ──
+  var progressNoteTabs = { 'default': '默认' };
+  var progressNoteTabAgents = { 'default': 'main' };
+  var progressNoteActiveSessionKey = 'default';
+
+  function addProgressNoteTab(sessionKey, title, agentId, noSwitch) {
+    if (!sessionKey) sessionKey = 'default';
+    if (!title) title = '默认';
+    // 归一化：后端 resolveSession 将 agent:<id>:main 解析为 'main' 后冗余推送，
+    // 统一映射回「默认」tab（main 前后端语义），避免点击 agent 按钮时多出多余 main tab
+    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+      sessionKey = 'default';
+      title = '默认';
+      agentId = agent.id;
+    }
+    // 归一化：后端 resolveSession 将 agent:<id>:main 解析为 'main' 后冗余推送，统一映射回「默认」tab
+    if (sessionKey === 'main') {
+      sessionKey = 'default';
+      title = '默认';
+      agentId = (agent && agent.id) || 'main';
+    }
+    // 去重：仅当「状态记录存在 且 DOM 按钮已存在」才提前返回；
+    // 若状态有记录但 DOM 缺失（如启动时 progressNoteTabs 预置 'default' 而按钮未建），
+    // 继续执行以补齐 DOM 按钮（补齐 title/agentId 后重建），保证启动后「默认」tab 可见
+    if (progressNoteTabs[sessionKey] && document.querySelector('.progress-note-tab-btn[data-session-key="' + sessionKey + '"]')) return;
+    progressNoteTabs[sessionKey] = title;
+    if (!agentId) {
+      var am = sessionKey.match(/^agent:([^:]+):/);
+      agentId = am ? am[1] : (sessionKey === 'default' ? 'main' : ((agent && agent.id) || 'main'));
+    }
+    progressNoteTabAgents[sessionKey] = agentId;
+    // Create tab button
+    var tabBar = document.getElementById('panelTabNotes');
+    var btn = document.createElement('div');
+    btn.className = 'progress-note-tab-btn' + (sessionKey === progressNoteActiveSessionKey ? ' active' : '');
+    btn.dataset.sessionKey = sessionKey;
+    btn.textContent = '';
+    var span = document.createElement('span');
+    span.textContent = title;
+    btn.appendChild(span);
+    btn.dataset.tabId = sessionKey;
+    btn.title = (agentId ? agentId + ' | ' : '') + sessionKey;
+    btn.addEventListener('click', function() { switchProgressNoteTab(sessionKey); });
+    // 直接追加到 tab 栏末尾（已移除 + 按钮，无需再 insertBefore）
+    if (tabBar) {
+      tabBar.appendChild(btn);
+    }
+    // Create content div if not exists
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var existing = document.getElementById(contentId);
+    if (!existing) {
+      var defaultContent = document.getElementById('progress-note-panel-content-default');
+      var placeholder = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + (title || '进度备注') + '</div>';
+      var div = document.createElement('div');
+      div.id = contentId;
+      div.className = 'progress-note-panel-content';
+      div.dataset.sessionKey = sessionKey;
+      div.innerHTML = placeholder;
+      div.style.display = 'none';
+      var parent = defaultContent ? defaultContent.parentNode : document.getElementById('tab-notes');
+      if (parent && defaultContent) {
+        parent.insertBefore(div, defaultContent.nextSibling);
+      } else if (parent) {
+        parent.appendChild(div);
+      }
+    }
+    // Switch to new tab（noSwitch=true 时仅创建不切换，用于启动批量预建，避免逐 tab 触发后端 agent 切换）
+    if (!noSwitch) switchProgressNoteTab(sessionKey);
+    // tab 增删后重新检测溢出状态，决定箭头按钮显隐
+    updateProgressNoteTabsArrows();
+  }
+
+  function removeProgressNoteTab(sessionKey) {
+    // 与 addProgressNoteTab 对称的归一化：后端 resolveSession 可能推送 agent.id 或 agent:<id>:main，统一映射回 default
+    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+      sessionKey = 'default';
+    }
+    if (sessionKey === 'default') return;
+    if (!progressNoteTabs[sessionKey]) return;
+    delete progressNoteTabs[sessionKey];
+    delete progressNoteTabAgents[sessionKey];
+    // Remove tab button
+    var btn = document.querySelector('.progress-note-tab-btn[data-session-key="' + sessionKey + '"]');
+    if (btn) btn.remove();
+    // Remove content div
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var contentDiv = document.getElementById(contentId);
+    if (contentDiv) contentDiv.remove();
+    // If removed tab was active, switch to default
+    if (progressNoteActiveSessionKey === sessionKey) {
+      switchProgressNoteTab('default');
+    }
+    // tab 增删后重新检测溢出状态，决定箭头按钮显隐
+    updateProgressNoteTabsArrows();
+  }
+
+  function switchProgressNoteTab(sessionKey) {
+    if (!sessionKey) sessionKey = 'default';
+    progressNoteActiveSessionKey = sessionKey;
+    // Update tab buttons active state
+    document.querySelectorAll('.progress-note-tab-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.sessionKey === sessionKey);
+    });
+    // Show/hide content divs
+    document.querySelectorAll('.progress-note-panel-content').forEach(function(div) {
+      div.style.display = div.dataset.sessionKey === sessionKey ? '' : 'none';
+    });
+    // 若目标 tab 绑定的 agent 与当前 agent 不同，通知后端切换 agent（与进度备注会话对应）
+    var targetAgentId = progressNoteTabAgents[sessionKey] || 'main';
+    var currentAgentId = (agent && agent.id) || 'main';
+    if (targetAgentId && targetAgentId !== currentAgentId) {
+      vscode.postMessage({ type: 'switchAgent', agentId: targetAgentId });
+    }
+  }
+
+  function updateProgressNoteContent(sessionKey, html) {
+    if (!sessionKey) sessionKey = 'default';
+    if (!progressNoteTabs[sessionKey]) {
+      addProgressNoteTab(sessionKey, sessionKey === 'default' ? '默认' : sessionKey);
+    }
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var div = document.getElementById(contentId);
+    if (div) {
+      div.innerHTML = html;
+      if (sessionKey === progressNoteActiveSessionKey) {
+        div.scrollTop = div.scrollHeight;
+      }
+    }
+  }
+
+  function getProgressNoteContent(sessionKey) {
+    if (!sessionKey) sessionKey = 'default';
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    return document.getElementById(contentId);
+  }
+
   function renderProgressCard(msg) {
     const data = msg.data;
-    const noteContent = document.getElementById('progress-note-panel-content');
+    const sessionKey = msg.sessionKey || 'default';
+    let noteContent = getProgressNoteContent(sessionKey);
+    // 若该 sessionKey 的 tab 还不存在，先创建占位 tab
+    if (!noteContent) {
+      addProgressNoteTab(sessionKey, sessionKey);
+      // 重新获取（addProgressNoteTab 已创建 content div，这里重新取一次并复用）
+      noteContent = getProgressNoteContent(sessionKey);
+      if (!noteContent) return; // 仍不存在则放弃
+    }
     // vs10n: webview l10n helper with Chinese fallback
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
@@ -3575,6 +3825,11 @@ if (resizeHandle) {
       btn.appendChild(emoji);
       btn.appendChild(name);
       btn.addEventListener('click', () => {
+        // 点击 agent 按钮时：创建/复用对应进度备注 tab（main → 'default'；其余 → 'agent:<id>:main'）
+        // addProgressNoteTab 内置去重保护，已存在则直接复用；noSwitch 缺省（false）会在新建后切换到该 tab
+        const noteKey = (a.id === 'main') ? 'default' : 'agent:' + a.id + ':main';
+        const noteTitle = (a.id === 'main') ? '默认' : ((a.name && a.name !== a.id) ? a.name : a.id);
+        addProgressNoteTab(noteKey, noteTitle, a.id);
         // Find existing tab for this agent or create new one
         let tab = tabs.find(t => t.agentId === a.id);
         if (!tab) {
@@ -4255,7 +4510,16 @@ if (resizeHandle) {
   function closeTab(tabId) {
     const idx = tabs.findIndex(t => t.id === tabId);
     if (idx < 0 || tabId === 'tab-main') return;
+    const closedTab = tabs[idx];
     tabs.splice(idx, 1);
+    // 联动：聊天 tab 关闭时，同步关闭对应的进度备注 tab
+    // 对应关系：tab.sessionKey === 'main' → 进度备注 'default'（受 removeProgressNoteTab 保护保留，属预期）；
+    //           其余直接用 tab.sessionKey（如 'agent:designinclusive:main' ↔ 同名进度备注 tab）
+    if (closedTab && closedTab.sessionKey) {
+      // sessionKey 统一为完整 gwKey（agent:<id>:main）；main 会话的 chat tab sessionKey 可能是 'main'（旧）或完整 gwKey（新），归一化到 default
+      const noteKey = (closedTab.sessionKey === 'main' || closedTab.sessionKey === agent.id || closedTab.sessionKey === ('agent:' + agent.id + ':main')) ? 'default' : closedTab.sessionKey;
+      removeProgressNoteTab(noteKey);
+    }
     if (activeTabId === tabId) {
       // Switch to the last tab, or default Chat tab
       const newTab = tabs[Math.min(idx, tabs.length - 1)] || tabs[0];

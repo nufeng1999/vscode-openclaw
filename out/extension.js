@@ -4444,6 +4444,7 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       const localSessionKey = ctx.resolveSession(msg.sessionKey || "main");
       ctx.currentSessionKey = localSessionKey;
       await ctx.handleLoadMessages(localSessionKey, void 0, msg.sessionId);
+      ctx.postToWebview({ type: "progressNoteTabAdded", sessionKey: ctx.currentSessionKey, title: ctx.currentSessionKey, agentId: ctx.activeAgent && ctx.activeAgent.id || "main" });
       ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
       break;
     case "confirmDeleteSession": {
@@ -4486,6 +4487,21 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       ctx.postToWebview({ type: "addChatTab", tab: newTab });
       ctx.currentSessionKey = ctx.resolveSession(sessionKey);
       await ctx.handleLoadMessages(ctx.currentSessionKey, tabAgentId, msg.sessionId);
+      break;
+    }
+    case "progressNoteTabAdded": {
+      const { sessionKey, title, agentId } = msg;
+      ctx.postToWebview({ type: "progressNoteTabAdded", sessionKey, title, agentId });
+      break;
+    }
+    case "progressNoteTabRemoved": {
+      const { sessionKey } = msg;
+      ctx.postToWebview({ type: "progressNoteTabRemoved", sessionKey });
+      break;
+    }
+    case "progressNoteContentUpdated": {
+      const { sessionKey, html } = msg;
+      ctx.postToWebview({ type: "progressNoteContentUpdated", sessionKey, html });
       break;
     }
     case "switchAgent":
@@ -6169,13 +6185,6 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-#progress-note-panel-title {
-  font-weight: 600;
-  color: var(--text);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 #progress-note-panel-toggle {
   background: none;
   border: none;
@@ -6201,6 +6210,66 @@ body {
 .progress-resize-handle:hover { background: var(--accent); opacity: 0.5; }
 .progress-resize-handle.dragging { background: var(--accent); opacity: 0.7; }
 #progress-note-panel.collapsed + .progress-resize-handle { width: 4px; cursor: ew-resize; background: var(--accent); opacity: 0.3; }
+/* Progress note tab buttons */
+.progress-note-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+.progress-note-tabs::-webkit-scrollbar { height: 0; }
+/* Progress note tab scroll arrows */
+.progress-note-tabs-arrow {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 6px;
+  line-height: 1;
+  border-radius: 4px;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.progress-note-tabs-arrow:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.progress-note-tabs-arrow.scroll-left-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.progress-note-tabs-arrow.scroll-right-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.progress-note-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.progress-note-tab-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.progress-note-tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
 /* \u53F3\u4FA7 overlay \u6837\u5F0F */
 #progress-note-panel.right-overlay { position: absolute; right: 0; top: 0; bottom: 0; z-index: 1000; }
 #progress-note-panel.right-overlay .tab-pane { height: 100%; overflow-y: auto; }
@@ -6998,9 +7067,11 @@ ${getModelscopeCss()}
       <div class="panel-tab-content">
         <div id="tab-notes" class="tab-pane active">
           <div id="progress-note-panel-header">
-            <span id="progress-note-panel-title">${vscode3.l10n.t("Progress Notes")}</span>
+            <button class="progress-note-tabs-arrow" id="progressNoteTabsArrowLeft" title="${vscode3.l10n.t("Scroll progress note tabs left")}">\u25C0</button>
+            <div id="panelTabNotes" class="progress-note-tabs"></div>
+            <button class="progress-note-tabs-arrow" id="progressNoteTabsArrowRight" title="${vscode3.l10n.t("Scroll progress note tabs right")}">\u25B6</button>
           </div>
-          <div id="progress-note-panel-content">
+          <div id="progress-note-panel-content-default" class="progress-note-panel-content" data-session-key="default">
             <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">${vscode3.l10n.t("Progress notes will appear here")}</div>
           </div>
         </div>
@@ -7280,33 +7351,29 @@ ${getModelscopeHtml()}
   }
 
   // \u70B9\u51FB\u4F1A\u8BDD\u5217\u8868 / \u6536\u5230 loadMessages / userMessage \u65F6\u7684 tab \u8DEF\u7531\uFF1A
-  // 1) \u5DF2\u6709\u8BE5 agent \u7684 tab \u2192 \u76F4\u63A5\u590D\u7528\uFF1B
-  // 2) tab-main \u4ECD\u662F\u5360\u4F4D 'main'\uFF08\u5C1A\u672A\u7ED1\u5B9A\u914D\u7F6E\u7684 OpenClaw: Agent ID\uFF09\u2192 \u590D\u7528\u5B83\u7ED1\u5B9A\u5230\u8BE5 agent\uFF1B
-  // 3) \u5426\u5219\u65B0\u5EFA\u8BE5 agent \u7684\u4E13\u5C5E tab\u3002\u7EDD\u4E0D\u628A\u5DF2\u7ED1\u5B9A\u914D\u7F6E agent \u7684 Chat tab \u91CD\u65B0\u7ED1\u5B9A\u5230\u522B\u7684 agent\u3002
+  // Chat tab\uFF08tab-main\uFF09\u53EA\u670D\u52A1\u914D\u7F6E\u7684 OpenClaw: Agent ID\uFF08agent.id\uFF0Cinit \u65F6\u7531 msg.agent.id \u6CE8\u5165\uFF09\uFF1A
+  // 1) \u8BF7\u6C42\u7684 agentId === \u914D\u7F6E\u7684 agent.id \u2192 \u76F4\u63A5\u8FD4\u56DE Chat tab\uFF08tab-main\uFF09\uFF0C\u4E0D\u6539\u5199\u5176 label/agentId\uFF1B
+  // 2) \u5176\u4ED6 agent \u2192 \u53EA\u67E5\u627E/\u65B0\u5EFA\u5176\u4E13\u5C5E tab\uFF08id !== 'tab-main'\uFF09\uFF0C\u7EDD\u4E0D\u89E6\u78B0 tab-main\u3002
   function getOrCreateTabByAgentId(agentId) {
-    let tab = tabs.find(t => t.agentId === agentId);
-    if (!tab) {
-      const defaultTab = tabs.find(t => t.id === 'tab-main' && t.agentId === 'main');
-      if (defaultTab) {
-        tab = defaultTab;
-        tab.agentId = agentId || 'main';
-        tab.sessionKey = 'main';
-        const ag = agents.find(a => a.id === tab.agentId);
-        if (ag) tab.label = ag.name || ag.id;
-      } else {
-        const ag = agents.find(a => a.id === agentId);
-        const resolvedAgentId = agentId || (agent && agent.id) || 'main';
-        tab = {
-          id: 'tab-agent-' + agentId + '-' + Date.now(),
-          label: (ag && (ag.name || ag.id)) || agentId,
-          agentId: agentId,
-          sessionKey: 'agent:' + resolvedAgentId + ':main',
-          messages: []
-        };
-        tabs.push(tab);
-      }
-      renderTabs();
+    const configuredAgentId = (agent && agent.id) || 'main';
+    const targetId = agentId || configuredAgentId;
+    if (targetId === configuredAgentId) {
+      return tabs.find(t => t.id === 'tab-main');
     }
+    let tab = tabs.find(t => t.agentId === targetId && t.id !== 'tab-main');
+    if (!tab) {
+      const ag = agents.find(a => a.id === targetId);
+      const resolvedAgentId = targetId;
+      tab = {
+        id: 'tab-agent-' + targetId + '-' + Date.now(),
+        label: (ag && (ag.name || ag.id)) || targetId,
+        agentId: targetId,
+        sessionKey: 'agent:' + resolvedAgentId + ':main',
+        messages: []
+      };
+      tabs.push(tab);
+    }
+    renderTabs();
     return tab;
   }
 
@@ -7405,6 +7472,7 @@ ${getModelscopeHtml()}
 
   // Tab \u5207\u6362
   const panelTabsBar = document.getElementById('panelTabsBar');
+  const progressNoteTabsBar = document.getElementById('panelTabNotes');
   function updatePanelTabsArrows() {
     const left = document.getElementById('panelTabsArrowLeft');
     const right = document.getElementById('panelTabsArrowRight');
@@ -7428,6 +7496,44 @@ ${getModelscopeHtml()}
     });
     resizeObserver.observe(panelTabsBar);
     updatePanelTabsArrows();
+
+    // \u2500\u2500 Progress note tabs scroll arrows \u2500\u2500
+    function updateProgressNoteTabsArrows() {
+      const left = document.getElementById('progressNoteTabsArrowLeft');
+      const right = document.getElementById('progressNoteTabsArrowRight');
+      if (!progressNoteTabsBar || !left || !right) return;
+      left.classList.toggle('scroll-left-visible', progressNoteTabsBar.scrollLeft > 1);
+      right.classList.toggle('scroll-right-visible', progressNoteTabsBar.scrollLeft < progressNoteTabsBar.scrollWidth - progressNoteTabsBar.clientWidth - 1);
+    }
+    if (progressNoteTabsBar) {
+      progressNoteTabsBar.addEventListener('scroll', updateProgressNoteTabsArrows);
+      window.addEventListener('resize', updateProgressNoteTabsArrows);
+      // \u9F20\u6807\u6EDA\u8F6E\u6A2A\u5411\u6EDA\u52A8\uFF1A\u7EB5\u5411 deltaY \u8F6C\u4E3A\u6A2A\u5411 scrollLeft
+      progressNoteTabsBar.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+          e.preventDefault();
+          progressNoteTabsBar.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+      // \u76D1\u542C\u5BB9\u5668\u5C3A\u5BF8\u53D8\u5316\uFF08tab \u589E\u5220\u540E\u5BBD\u5EA6\u53D8\u5316\uFF09\uFF0C\u91CD\u65B0\u68C0\u6D4B\u6EA2\u51FA\u72B6\u6001
+      const progressTabsResizeObserver = new ResizeObserver(() => {
+        updateProgressNoteTabsArrows();
+      });
+      progressTabsResizeObserver.observe(progressNoteTabsBar);
+      updateProgressNoteTabsArrows();
+    }
+    const progressNoteTabsArrowLeft = document.getElementById('progressNoteTabsArrowLeft');
+    const progressNoteTabsArrowRight = document.getElementById('progressNoteTabsArrowRight');
+    if (progressNoteTabsArrowLeft) {
+      progressNoteTabsArrowLeft.addEventListener('click', () => {
+        if (progressNoteTabsBar) progressNoteTabsBar.scrollBy({ left: -120, behavior: 'smooth' });
+      });
+    }
+    if (progressNoteTabsArrowRight) {
+      progressNoteTabsArrowRight.addEventListener('click', () => {
+        if (progressNoteTabsBar) progressNoteTabsBar.scrollBy({ left: 120, behavior: 'smooth' });
+      });
+    }
   }
   const panelTabsArrowLeft = document.getElementById('panelTabsArrowLeft');
   const panelTabsArrowRight = document.getElementById('panelTabsArrowRight');
@@ -7803,6 +7909,10 @@ if (resizeHandle) {
         renderTabs();
         renderAgentButtons();
       }
+      // \u542F\u52A8\u65F6\u8865\u5EFA\u300C\u9ED8\u8BA4\u300D\u8FDB\u5EA6\u5907\u6CE8 tab \u6309\u94AE\uFF1AprogressNoteTabs \u72B6\u6001\u9884\u7F6E 'default' \u4EC5\u4F5C\u8BB0\u5F55\u3001\u4E0D\u5EFA DOM\uFF0C
+      // \u4E0A\u8F6E\u5DF2\u79FB\u9664 agentsList \u9884\u5EFA\u5FAA\u73AF\uFF0C\u6B64\u5904\u4E3A\u552F\u4E00\u542F\u52A8\u5EFA\u94AE\u70B9\uFF1BnoSwitch=true \u4EC5\u521B\u5EFA\u4E0D\u5207\u6362\uFF0C
+      // \u907F\u514D\u89E6\u53D1 switchAgent \u540E\u7AEF\u5207\u6362\uFF08updateProgressNoteTabsArrows \u5728\u51FD\u6570\u5C3E\u90E8\u81EA\u52A8\u5237\u65B0\u7BAD\u5934\u663E\u9690\uFF09
+      addProgressNoteTab('default', '\u9ED8\u8BA4', agent.id, true);
         break;
       case 'connectionStatus':
         connected = msg.connected;
@@ -8140,6 +8250,18 @@ if (resizeHandle) {
       }
       case 'progressCard': {
         renderProgressCard(msg);
+        break;
+      }
+      case 'progressNoteTabAdded': {
+        addProgressNoteTab(msg.sessionKey, msg.title, msg.agentId);
+        break;
+      }
+      case 'progressNoteTabRemoved': {
+        removeProgressNoteTab(msg.sessionKey);
+        break;
+      }
+      case 'progressNoteContentUpdated': {
+        updateProgressNoteContent(msg.sessionKey, msg.html);
         break;
       }
       case 'setInputText':
@@ -8498,7 +8620,7 @@ if (resizeHandle) {
   const progressCopyAllBtn = document.getElementById('progressCopyAllBtn');
   if (progressCopyAllBtn) {
     progressCopyAllBtn.addEventListener('click', () => {
-      const noteContent = document.getElementById('progress-note-panel-content');
+      const noteContent = getProgressNoteContent(progressNoteActiveSessionKey);
       if (!noteContent) return;
       const clone = noteContent.cloneNode(true);
       clone.querySelectorAll('.progress-card-copy-btn').forEach(b => b.remove());
@@ -8516,7 +8638,7 @@ if (resizeHandle) {
   const progressCopyMarkdownBtn = document.getElementById('progressCopyMarkdownBtn');
   if (progressCopyMarkdownBtn) {
     progressCopyMarkdownBtn.addEventListener('click', () => {
-      const noteContent = document.getElementById('progress-note-panel-content');
+      const noteContent = getProgressNoteContent(progressNoteActiveSessionKey);
       if (!noteContent) return;
       var mdCard = noteContent.querySelector('.progress-card[data-raw-markdown]');
       var mdText = '';
@@ -8537,9 +8659,153 @@ if (resizeHandle) {
     });
   }
 
+  // \u2500\u2500 Progress Note Tab Management \u2500\u2500
+  var progressNoteTabs = { 'default': '\u9ED8\u8BA4' };
+  var progressNoteTabAgents = { 'default': 'main' };
+  var progressNoteActiveSessionKey = 'default';
+
+  function addProgressNoteTab(sessionKey, title, agentId, noSwitch) {
+    if (!sessionKey) sessionKey = 'default';
+    if (!title) title = '\u9ED8\u8BA4';
+    // \u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u5C06 agent:<id>:main \u89E3\u6790\u4E3A 'main' \u540E\u5197\u4F59\u63A8\u9001\uFF0C
+    // \u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab\uFF08main \u524D\u540E\u7AEF\u8BED\u4E49\uFF09\uFF0C\u907F\u514D\u70B9\u51FB agent \u6309\u94AE\u65F6\u591A\u51FA\u591A\u4F59 main tab
+    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+      sessionKey = 'default';
+      title = '\u9ED8\u8BA4';
+      agentId = agent.id;
+    }
+    // \u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u5C06 agent:<id>:main \u89E3\u6790\u4E3A 'main' \u540E\u5197\u4F59\u63A8\u9001\uFF0C\u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab
+    if (sessionKey === 'main') {
+      sessionKey = 'default';
+      title = '\u9ED8\u8BA4';
+      agentId = (agent && agent.id) || 'main';
+    }
+    // \u53BB\u91CD\uFF1A\u4EC5\u5F53\u300C\u72B6\u6001\u8BB0\u5F55\u5B58\u5728 \u4E14 DOM \u6309\u94AE\u5DF2\u5B58\u5728\u300D\u624D\u63D0\u524D\u8FD4\u56DE\uFF1B
+    // \u82E5\u72B6\u6001\u6709\u8BB0\u5F55\u4F46 DOM \u7F3A\u5931\uFF08\u5982\u542F\u52A8\u65F6 progressNoteTabs \u9884\u7F6E 'default' \u800C\u6309\u94AE\u672A\u5EFA\uFF09\uFF0C
+    // \u7EE7\u7EED\u6267\u884C\u4EE5\u8865\u9F50 DOM \u6309\u94AE\uFF08\u8865\u9F50 title/agentId \u540E\u91CD\u5EFA\uFF09\uFF0C\u4FDD\u8BC1\u542F\u52A8\u540E\u300C\u9ED8\u8BA4\u300Dtab \u53EF\u89C1
+    if (progressNoteTabs[sessionKey] && document.querySelector('.progress-note-tab-btn[data-session-key="' + sessionKey + '"]')) return;
+    progressNoteTabs[sessionKey] = title;
+    if (!agentId) {
+      var am = sessionKey.match(/^agent:([^:]+):/);
+      agentId = am ? am[1] : (sessionKey === 'default' ? 'main' : ((agent && agent.id) || 'main'));
+    }
+    progressNoteTabAgents[sessionKey] = agentId;
+    // Create tab button
+    var tabBar = document.getElementById('panelTabNotes');
+    var btn = document.createElement('div');
+    btn.className = 'progress-note-tab-btn' + (sessionKey === progressNoteActiveSessionKey ? ' active' : '');
+    btn.dataset.sessionKey = sessionKey;
+    btn.textContent = '';
+    var span = document.createElement('span');
+    span.textContent = title;
+    btn.appendChild(span);
+    btn.dataset.tabId = sessionKey;
+    btn.title = (agentId ? agentId + ' | ' : '') + sessionKey;
+    btn.addEventListener('click', function() { switchProgressNoteTab(sessionKey); });
+    // \u76F4\u63A5\u8FFD\u52A0\u5230 tab \u680F\u672B\u5C3E\uFF08\u5DF2\u79FB\u9664 + \u6309\u94AE\uFF0C\u65E0\u9700\u518D insertBefore\uFF09
+    if (tabBar) {
+      tabBar.appendChild(btn);
+    }
+    // Create content div if not exists
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var existing = document.getElementById(contentId);
+    if (!existing) {
+      var defaultContent = document.getElementById('progress-note-panel-content-default');
+      var placeholder = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">' + (title || '\u8FDB\u5EA6\u5907\u6CE8') + '</div>';
+      var div = document.createElement('div');
+      div.id = contentId;
+      div.className = 'progress-note-panel-content';
+      div.dataset.sessionKey = sessionKey;
+      div.innerHTML = placeholder;
+      div.style.display = 'none';
+      var parent = defaultContent ? defaultContent.parentNode : document.getElementById('tab-notes');
+      if (parent && defaultContent) {
+        parent.insertBefore(div, defaultContent.nextSibling);
+      } else if (parent) {
+        parent.appendChild(div);
+      }
+    }
+    // Switch to new tab\uFF08noSwitch=true \u65F6\u4EC5\u521B\u5EFA\u4E0D\u5207\u6362\uFF0C\u7528\u4E8E\u542F\u52A8\u6279\u91CF\u9884\u5EFA\uFF0C\u907F\u514D\u9010 tab \u89E6\u53D1\u540E\u7AEF agent \u5207\u6362\uFF09
+    if (!noSwitch) switchProgressNoteTab(sessionKey);
+    // tab \u589E\u5220\u540E\u91CD\u65B0\u68C0\u6D4B\u6EA2\u51FA\u72B6\u6001\uFF0C\u51B3\u5B9A\u7BAD\u5934\u6309\u94AE\u663E\u9690
+    updateProgressNoteTabsArrows();
+  }
+
+  function removeProgressNoteTab(sessionKey) {
+    // \u4E0E addProgressNoteTab \u5BF9\u79F0\u7684\u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u53EF\u80FD\u63A8\u9001 agent.id \u6216 agent:<id>:main\uFF0C\u7EDF\u4E00\u6620\u5C04\u56DE default
+    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+      sessionKey = 'default';
+    }
+    if (sessionKey === 'default') return;
+    if (!progressNoteTabs[sessionKey]) return;
+    delete progressNoteTabs[sessionKey];
+    delete progressNoteTabAgents[sessionKey];
+    // Remove tab button
+    var btn = document.querySelector('.progress-note-tab-btn[data-session-key="' + sessionKey + '"]');
+    if (btn) btn.remove();
+    // Remove content div
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var contentDiv = document.getElementById(contentId);
+    if (contentDiv) contentDiv.remove();
+    // If removed tab was active, switch to default
+    if (progressNoteActiveSessionKey === sessionKey) {
+      switchProgressNoteTab('default');
+    }
+    // tab \u589E\u5220\u540E\u91CD\u65B0\u68C0\u6D4B\u6EA2\u51FA\u72B6\u6001\uFF0C\u51B3\u5B9A\u7BAD\u5934\u6309\u94AE\u663E\u9690
+    updateProgressNoteTabsArrows();
+  }
+
+  function switchProgressNoteTab(sessionKey) {
+    if (!sessionKey) sessionKey = 'default';
+    progressNoteActiveSessionKey = sessionKey;
+    // Update tab buttons active state
+    document.querySelectorAll('.progress-note-tab-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.sessionKey === sessionKey);
+    });
+    // Show/hide content divs
+    document.querySelectorAll('.progress-note-panel-content').forEach(function(div) {
+      div.style.display = div.dataset.sessionKey === sessionKey ? '' : 'none';
+    });
+    // \u82E5\u76EE\u6807 tab \u7ED1\u5B9A\u7684 agent \u4E0E\u5F53\u524D agent \u4E0D\u540C\uFF0C\u901A\u77E5\u540E\u7AEF\u5207\u6362 agent\uFF08\u4E0E\u8FDB\u5EA6\u5907\u6CE8\u4F1A\u8BDD\u5BF9\u5E94\uFF09
+    var targetAgentId = progressNoteTabAgents[sessionKey] || 'main';
+    var currentAgentId = (agent && agent.id) || 'main';
+    if (targetAgentId && targetAgentId !== currentAgentId) {
+      vscode.postMessage({ type: 'switchAgent', agentId: targetAgentId });
+    }
+  }
+
+  function updateProgressNoteContent(sessionKey, html) {
+    if (!sessionKey) sessionKey = 'default';
+    if (!progressNoteTabs[sessionKey]) {
+      addProgressNoteTab(sessionKey, sessionKey === 'default' ? '\u9ED8\u8BA4' : sessionKey);
+    }
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    var div = document.getElementById(contentId);
+    if (div) {
+      div.innerHTML = html;
+      if (sessionKey === progressNoteActiveSessionKey) {
+        div.scrollTop = div.scrollHeight;
+      }
+    }
+  }
+
+  function getProgressNoteContent(sessionKey) {
+    if (!sessionKey) sessionKey = 'default';
+    var contentId = 'progress-note-panel-content-' + sessionKey;
+    return document.getElementById(contentId);
+  }
+
   function renderProgressCard(msg) {
     const data = msg.data;
-    const noteContent = document.getElementById('progress-note-panel-content');
+    const sessionKey = msg.sessionKey || 'default';
+    let noteContent = getProgressNoteContent(sessionKey);
+    // \u82E5\u8BE5 sessionKey \u7684 tab \u8FD8\u4E0D\u5B58\u5728\uFF0C\u5148\u521B\u5EFA\u5360\u4F4D tab
+    if (!noteContent) {
+      addProgressNoteTab(sessionKey, sessionKey);
+      // \u91CD\u65B0\u83B7\u53D6\uFF08addProgressNoteTab \u5DF2\u521B\u5EFA content div\uFF0C\u8FD9\u91CC\u91CD\u65B0\u53D6\u4E00\u6B21\u5E76\u590D\u7528\uFF09
+      noteContent = getProgressNoteContent(sessionKey);
+      if (!noteContent) return; // \u4ECD\u4E0D\u5B58\u5728\u5219\u653E\u5F03
+    }
     // vs10n: webview l10n helper with Chinese fallback
     const t = (str, ...args) => {
       if (vscode && vscode.l10n && typeof vscode.l10n.t === 'function') {
@@ -9419,6 +9685,11 @@ if (resizeHandle) {
       btn.appendChild(emoji);
       btn.appendChild(name);
       btn.addEventListener('click', () => {
+        // \u70B9\u51FB agent \u6309\u94AE\u65F6\uFF1A\u521B\u5EFA/\u590D\u7528\u5BF9\u5E94\u8FDB\u5EA6\u5907\u6CE8 tab\uFF08main \u2192 'default'\uFF1B\u5176\u4F59 \u2192 'agent:<id>:main'\uFF09
+        // addProgressNoteTab \u5185\u7F6E\u53BB\u91CD\u4FDD\u62A4\uFF0C\u5DF2\u5B58\u5728\u5219\u76F4\u63A5\u590D\u7528\uFF1BnoSwitch \u7F3A\u7701\uFF08false\uFF09\u4F1A\u5728\u65B0\u5EFA\u540E\u5207\u6362\u5230\u8BE5 tab
+        const noteKey = (a.id === 'main') ? 'default' : 'agent:' + a.id + ':main';
+        const noteTitle = (a.id === 'main') ? '\u9ED8\u8BA4' : ((a.name && a.name !== a.id) ? a.name : a.id);
+        addProgressNoteTab(noteKey, noteTitle, a.id);
         // Find existing tab for this agent or create new one
         let tab = tabs.find(t => t.agentId === a.id);
         if (!tab) {
@@ -10099,7 +10370,16 @@ if (resizeHandle) {
   function closeTab(tabId) {
     const idx = tabs.findIndex(t => t.id === tabId);
     if (idx < 0 || tabId === 'tab-main') return;
+    const closedTab = tabs[idx];
     tabs.splice(idx, 1);
+    // \u8054\u52A8\uFF1A\u804A\u5929 tab \u5173\u95ED\u65F6\uFF0C\u540C\u6B65\u5173\u95ED\u5BF9\u5E94\u7684\u8FDB\u5EA6\u5907\u6CE8 tab
+    // \u5BF9\u5E94\u5173\u7CFB\uFF1Atab.sessionKey === 'main' \u2192 \u8FDB\u5EA6\u5907\u6CE8 'default'\uFF08\u53D7 removeProgressNoteTab \u4FDD\u62A4\u4FDD\u7559\uFF0C\u5C5E\u9884\u671F\uFF09\uFF1B
+    //           \u5176\u4F59\u76F4\u63A5\u7528 tab.sessionKey\uFF08\u5982 'agent:designinclusive:main' \u2194 \u540C\u540D\u8FDB\u5EA6\u5907\u6CE8 tab\uFF09
+    if (closedTab && closedTab.sessionKey) {
+      // sessionKey \u7EDF\u4E00\u4E3A\u5B8C\u6574 gwKey\uFF08agent:<id>:main\uFF09\uFF1Bmain \u4F1A\u8BDD\u7684 chat tab sessionKey \u53EF\u80FD\u662F 'main'\uFF08\u65E7\uFF09\u6216\u5B8C\u6574 gwKey\uFF08\u65B0\uFF09\uFF0C\u5F52\u4E00\u5316\u5230 default
+      const noteKey = (closedTab.sessionKey === 'main' || closedTab.sessionKey === agent.id || closedTab.sessionKey === ('agent:' + agent.id + ':main')) ? 'default' : closedTab.sessionKey;
+      removeProgressNoteTab(noteKey);
+    }
     if (activeTabId === tabId) {
       // Switch to the last tab, or default Chat tab
       const newTab = tabs[Math.min(idx, tabs.length - 1)] || tabs[0];
@@ -10328,13 +10608,16 @@ var OpenClawChatView = class _OpenClawChatView {
   /**
    * 处理进度卡片更新
    * @param card 进度卡片对象，null 表示清除
+   * @param sessionKey 会话密钥，用于路由到正确的 tab
    */
-  handleProgressCardUpdate(card) {
+  handleProgressCardUpdate(card, sessionKey) {
     if (!this.view)
       return;
+    const targetSessionKey = sessionKey || card?.sessionKey || this.currentSessionKey || "default";
     if (card) {
       this.postToWebview({
         type: "progressCard",
+        sessionKey: targetSessionKey,
         data: {
           title: card.title,
           description: card.description,
@@ -10348,7 +10631,7 @@ var OpenClawChatView = class _OpenClawChatView {
         }
       });
     } else {
-      this.postToWebview({ type: "progressCard", data: null });
+      this.postToWebview({ type: "progressCard", sessionKey: targetSessionKey, data: null });
     }
   }
   // Match Obsidian plugin's handleChatEvent
@@ -10807,6 +11090,7 @@ var OpenClawChatView = class _OpenClawChatView {
     } : userMsg;
     this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
+    this.postToWebview({ type: "progressNoteTabAdded", sessionKey: "default", title: "\u9ED8\u8BA4" });
     const runId = genId();
     this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
     try {
@@ -11536,6 +11820,7 @@ var OpenClawChatView = class _OpenClawChatView {
       const gwKey = sessionKey.startsWith("agent:") ? sessionKey : this.gwSessionKey(sessionKey);
       await this.gateway.request("sessions.delete", { key: gwKey });
       await this.handleRequestSessions();
+      this.postToWebview({ type: "progressNoteTabRemoved", sessionKey });
     } catch (err) {
       this.log(`handleDeleteSession error: ${err?.message || err}`);
     }
@@ -11545,6 +11830,7 @@ var OpenClawChatView = class _OpenClawChatView {
     if (agent) {
       this.activeAgent = agent;
       this.currentSessionKey = "main";
+      this.postToWebview({ type: "progressNoteTabAdded", sessionKey: this.currentSessionKey, title: this.currentSessionKey });
       this.postToWebview({
         type: "agentSwitched",
         agent: this.activeAgent

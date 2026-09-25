@@ -224,13 +224,17 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
   /**
    * 处理进度卡片更新
    * @param card 进度卡片对象，null 表示清除
+   * @param sessionKey 会话密钥，用于路由到正确的 tab
    */
-  public handleProgressCardUpdate(card: any) {
+  public handleProgressCardUpdate(card: any, sessionKey?: string) {
     if (!this.view) return;
+    // 优先使用调用方传入的 sessionKey，其次看 card 自身是否携带，最后回退到当前会话
+    const targetSessionKey = sessionKey || card?.sessionKey || this.currentSessionKey || 'default';
     if (card) {
       // 发送给 webview 渲染
       this.postToWebview({
         type: 'progressCard',
+        sessionKey: targetSessionKey,
         data: {
           title: card.title,
           description: card.description,
@@ -244,7 +248,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       });
     } else {
       // 清除进度卡片
-      this.postToWebview({ type: 'progressCard', data: null });
+      this.postToWebview({ type: 'progressCard', sessionKey: targetSessionKey, data: null });
     }
   }
 
@@ -810,6 +814,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     } : userMsg;
     this.postToWebview({ type: "userMessage", message: msgWithAttachments, agentId: this.activeAgent.id, gwKey: this.gwSessionKey() });
     this.postToWebview({ type: "historyUpdated", messageHistory: this.messageHistory });
+    this.postToWebview({ type: 'progressNoteTabAdded', sessionKey: 'default', title: '默认' });
 
     const runId = genId();
     this.postToWebview({ type: "streamStart", runId, agentId: this.activeAgent.id });
@@ -1666,6 +1671,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       const gwKey = sessionKey.startsWith('agent:') ? sessionKey : this.gwSessionKey(sessionKey);
       await this.gateway.request("sessions.delete", { key: gwKey });
       await this.handleRequestSessions();
+      this.postToWebview({ type: 'progressNoteTabRemoved', sessionKey: sessionKey });
     } catch (err: any) {
       this.log(`handleDeleteSession error: ${err?.message || err}`);
     }
@@ -1676,6 +1682,8 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     if (agent) {
       this.activeAgent = agent;
       this.currentSessionKey = "main";
+      // 确保切换后的会话有进度备注 tab
+      this.postToWebview({ type: 'progressNoteTabAdded', sessionKey: this.currentSessionKey, title: this.currentSessionKey });
       this.postToWebview({
         type: "agentSwitched",
         agent: this.activeAgent

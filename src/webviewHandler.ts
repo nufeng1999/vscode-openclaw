@@ -430,6 +430,8 @@ export async function handleWebviewMessage(
           const localSessionKey = ctx.resolveSession(msg.sessionKey || "main");
           ctx.currentSessionKey = localSessionKey;
           await ctx.handleLoadMessages(localSessionKey, undefined, msg.sessionId);
+          // 确保切换后的会话有进度备注 tab
+          ctx.postToWebview({ type: 'progressNoteTabAdded', sessionKey: ctx.currentSessionKey, title: ctx.currentSessionKey, agentId: (ctx.activeAgent && ctx.activeAgent.id) || 'main' });
           ctx.postToWebview({ type: "agentSwitched", agent: ctx.activeAgent });
           break;
         case "confirmDeleteSession": {
@@ -473,6 +475,21 @@ export async function handleWebviewMessage(
           // 加载该会话历史（绑定到该 session 所属 agent，而不是当前 activeAgent）
           ctx.currentSessionKey = ctx.resolveSession(sessionKey);
           await ctx.handleLoadMessages(ctx.currentSessionKey, tabAgentId, msg.sessionId);
+          break;
+        }
+        case "progressNoteTabAdded": {
+          const { sessionKey, title, agentId } = msg;
+          ctx.postToWebview({ type: 'progressNoteTabAdded', sessionKey, title, agentId });
+          break;
+        }
+        case "progressNoteTabRemoved": {
+          const { sessionKey } = msg;
+          ctx.postToWebview({ type: 'progressNoteTabRemoved', sessionKey });
+          break;
+        }
+        case "progressNoteContentUpdated": {
+          const { sessionKey, html } = msg;
+          ctx.postToWebview({ type: 'progressNoteContentUpdated', sessionKey, html });
           break;
         }
         case "switchAgent":
