@@ -1,4 +1,4 @@
-import { formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce } from "./utils";
+import { formatFileSize, formatTokens, getFileIcon, simplifyDeviceName, truncate, relTime, getNonce, getProgressNoteNormalizeJs } from "./utils";
 import * as fs from "fs";
 import * as vscode from "vscode";
 import { getModelscopeCss, getModelscopeHtml, getModelscopeJs } from "./modelscopeUi";
@@ -1264,6 +1264,9 @@ ${getModelscopeHtml()}
 <script nonce="${nonce}" src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
 <script nonce="${nonce}" src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script nonce="${nonce}">
+/* ── 进度备注归一化判据：单一事实源 = src/utils.ts 的纯函数源码（由 getProgressNoteNormalizeJs() 注入）
+   本文件内 5 处归一化一律调用下列函数，**禁止**再内联复制判据，避免逻辑副本导致测试失真。── */
+${getProgressNoteNormalizeJs()}
 (function() {
   const vscode = acquireVsCodeApi();
   const $ = (sel) => document.querySelector(sel);
@@ -1293,6 +1296,8 @@ ${getModelscopeHtml()}
   let agents = [];
   let currentSession = 'main';
   let agent = { id: 'main', name: 'Agent', emoji: '🤖' };
+  // Immutable anchor: configured Openclaw Agent ID (from init), never mutated by tab switches or agentSwitched
+  let configuredAgentId = 'main';
   let currentModel = '';
   let thinkingLevel = '';
   let verboseLevel = '';
@@ -2013,6 +2018,7 @@ if (resizeHandle) {
       case 'init':
         connected = msg.connected;
         agent = msg.agent || agent;
+        configuredAgentId = (msg.agent && msg.agent.id) || 'main';
         currentModel = msg.model || '';
         thinkingLevel = msg.thinkingLevel || '';
         verboseLevel = msg.verboseLevel || '';
@@ -2808,17 +2814,12 @@ if (resizeHandle) {
     if (!sessionKey) sessionKey = 'default';
     if (!title) title = '默认';
     // 归一化：后端 resolveSession 将 agent:<id>:main 解析为 'main' 后冗余推送，
-    // 统一映射回「默认」tab（main 前后端语义），避免点击 agent 按钮时多出多余 main tab
-    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+    // 统一映射回「默认」tab（main 前后端语义），避免点击 agent 按钮时多出多余 main tab。
+    // 锚点用 configuredAgentId（配置的 Openclaw Agent ID），不可用可变的 agent.id——后者会被 switchToTab/agentSwitched 改写，导致 designer 进度误入「默认」tab
+    if (shouldNormalizeProgressNoteKey(sessionKey, configuredAgentId)) {
       sessionKey = 'default';
       title = '默认';
-      agentId = agent.id;
-    }
-    // 归一化：后端 resolveSession 将 agent:<id>:main 解析为 'main' 后冗余推送，统一映射回「默认」tab
-    if (sessionKey === 'main') {
-      sessionKey = 'default';
-      title = '默认';
-      agentId = (agent && agent.id) || 'main';
+      agentId = configuredAgentId;
     }
     // 去重：仅当「状态记录存在 且 DOM 按钮已存在」才提前返回；
     // 若状态有记录但 DOM 缺失（如启动时 progressNoteTabs 预置 'default' 而按钮未建），
@@ -2872,10 +2873,8 @@ if (resizeHandle) {
   }
 
   function removeProgressNoteTab(sessionKey) {
-    // 与 addProgressNoteTab 对称的归一化：后端 resolveSession 可能推送 agent.id 或 agent:<id>:main，统一映射回 default
-    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
-      sessionKey = 'default';
-    }
+    // 与 addProgressNoteTab 对称的归一化：后端 resolveSession 可能推送 configuredAgentId 或 agent:<id>:main，统一映射回 default（锚点用不可变的 configuredAgentId）
+    sessionKey = normalizeProgressNoteSessionKey(sessionKey, configuredAgentId);
     if (sessionKey === 'default') return;
     if (!progressNoteTabs[sessionKey]) return;
     delete progressNoteTabs[sessionKey];
@@ -2937,11 +2936,37 @@ if (resizeHandle) {
 
   function renderProgressCard(msg) {
     const data = msg.data;
-    const sessionKey = msg.sessionKey || 'default';
+    let sessionKey = msg.sessionKey || 'default';
+    // 与 addProgressNoteTab 对称的归一化：main 会话（'main' / configuredAgentId / agent:<configuredAgentId>:main / agent:<configuredAgentId>:*）统一映射回「默认」tab
+    // 锚点用 configuredAgentId（不可变），不用会随切 tab 改写的 agent.id——否则 designer 进度会被误映射进「默认」tab
+    sessionKey = normalizeProgressNoteSessionKey(sessionKey, configuredAgentId);
     let noteContent = getProgressNoteContent(sessionKey);
     // 若该 sessionKey 的 tab 还不存在，先创建占位 tab
     if (!noteContent) {
-      addProgressNoteTab(sessionKey, sessionKey);
+      // 推导友好标题：优先从 progressNoteTabAgents / agents 列表取名称；若无则用 sessionKey 解析
+      let friendlyTitle = sessionKey;
+      if (sessionKey === 'default' || sessionKey === 'main') {
+        friendlyTitle = '默认';
+      } else {
+        const m = sessionKey.match(/^agent:([^:]+):/);
+        if (m) {
+          const agentId = m[1];
+          const ag = agents.find(a => a.id === agentId);
+          if (ag) {
+            friendlyTitle = (ag.name && ag.name !== ag.id) ? ag.name : ag.id;
+          } else {
+            const knownAgentId = progressNoteTabAgents[sessionKey];
+            if (knownAgentId && knownAgentId !== 'main') {
+              const knownAg = agents.find(a => a.id === knownAgentId);
+              if (knownAg) friendlyTitle = (knownAg.name && knownAg.name !== knownAg.id) ? knownAg.name : knownAg.id;
+              else friendlyTitle = knownAgentId;
+            } else {
+              friendlyTitle = agentId;
+            }
+          }
+        }
+      }
+      addProgressNoteTab(sessionKey, friendlyTitle);
       // 重新获取（addProgressNoteTab 已创建 content div，这里重新取一次并复用）
       noteContent = getProgressNoteContent(sessionKey);
       if (!noteContent) return; // 仍不存在则放弃
@@ -3825,10 +3850,9 @@ if (resizeHandle) {
       btn.appendChild(emoji);
       btn.appendChild(name);
       btn.addEventListener('click', () => {
-        // 点击 agent 按钮时：创建/复用对应进度备注 tab（main → 'default'；其余 → 'agent:<id>:main'）
+        // 点击 agent 按钮时：创建/复用对应进度备注 tab（configuredAgentId → 'default'；其余 → 'agent:<id>:main'）
         // addProgressNoteTab 内置去重保护，已存在则直接复用；noSwitch 缺省（false）会在新建后切换到该 tab
-        const noteKey = (a.id === 'main') ? 'default' : 'agent:' + a.id + ':main';
-        const noteTitle = (a.id === 'main') ? '默认' : ((a.name && a.name !== a.id) ? a.name : a.id);
+        const { noteKey, noteTitle } = resolveProgressNoteTabForAgent(a.id, a.name, configuredAgentId);
         addProgressNoteTab(noteKey, noteTitle, a.id);
         // Find existing tab for this agent or create new one
         let tab = tabs.find(t => t.agentId === a.id);
@@ -4517,7 +4541,7 @@ if (resizeHandle) {
     //           其余直接用 tab.sessionKey（如 'agent:designinclusive:main' ↔ 同名进度备注 tab）
     if (closedTab && closedTab.sessionKey) {
       // sessionKey 统一为完整 gwKey（agent:<id>:main）；main 会话的 chat tab sessionKey 可能是 'main'（旧）或完整 gwKey（新），归一化到 default
-      const noteKey = (closedTab.sessionKey === 'main' || closedTab.sessionKey === agent.id || closedTab.sessionKey === ('agent:' + agent.id + ':main')) ? 'default' : closedTab.sessionKey;
+      const noteKey = isChatTabMainNoteKey(closedTab.sessionKey, configuredAgentId) ? 'default' : closedTab.sessionKey;
       removeProgressNoteTab(noteKey);
     }
     if (activeTabId === tabId) {

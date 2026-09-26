@@ -3969,6 +3969,39 @@ function isPreamble(text, seenPreambleTexts) {
     return false;
   return seenPreambleTexts.some((p) => normText(p) === norm);
 }
+function shouldNormalizeProgressNoteKey(sessionKey, configuredAgentId) {
+  if (!sessionKey)
+    return false;
+  return sessionKey === "main" || sessionKey === configuredAgentId || sessionKey === "agent:" + configuredAgentId + ":main" || sessionKey.startsWith("agent:" + configuredAgentId + ":");
+}
+function normalizeProgressNoteSessionKey(sessionKey, configuredAgentId) {
+  const key = sessionKey || "default";
+  if (key === "main" || key === configuredAgentId || key === "agent:" + configuredAgentId + ":main" || key.startsWith("agent:" + configuredAgentId + ":")) {
+    return "default";
+  }
+  return key;
+}
+function isChatTabMainNoteKey(tabSessionKey, configuredAgentId) {
+  if (!tabSessionKey)
+    return false;
+  return tabSessionKey === "main" || tabSessionKey === configuredAgentId || tabSessionKey === "agent:" + configuredAgentId + ":main";
+}
+function resolveProgressNoteTabForAgent(agentId, agentName, configuredAgentId) {
+  if (agentId === configuredAgentId)
+    return { noteKey: "default", noteTitle: "\u9ED8\u8BA4" };
+  return {
+    noteKey: "agent:" + agentId + ":main",
+    noteTitle: agentName && agentName !== agentId ? agentName : agentId
+  };
+}
+function getProgressNoteNormalizeJs() {
+  return [
+    shouldNormalizeProgressNoteKey.toString(),
+    normalizeProgressNoteSessionKey.toString(),
+    isChatTabMainNoteKey.toString(),
+    resolveProgressNoteTabForAgent.toString()
+  ].join("\n");
+}
 
 // src/webviewHandler.ts
 var fs2 = __toESM(require("fs"));
@@ -7124,6 +7157,9 @@ ${getModelscopeHtml()}
 <script nonce="${nonce}" src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
 <script nonce="${nonce}" src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script nonce="${nonce}">
+/* \u2500\u2500 \u8FDB\u5EA6\u5907\u6CE8\u5F52\u4E00\u5316\u5224\u636E\uFF1A\u5355\u4E00\u4E8B\u5B9E\u6E90 = src/utils.ts \u7684\u7EAF\u51FD\u6570\u6E90\u7801\uFF08\u7531 getProgressNoteNormalizeJs() \u6CE8\u5165\uFF09
+   \u672C\u6587\u4EF6\u5185 5 \u5904\u5F52\u4E00\u5316\u4E00\u5F8B\u8C03\u7528\u4E0B\u5217\u51FD\u6570\uFF0C**\u7981\u6B62**\u518D\u5185\u8054\u590D\u5236\u5224\u636E\uFF0C\u907F\u514D\u903B\u8F91\u526F\u672C\u5BFC\u81F4\u6D4B\u8BD5\u5931\u771F\u3002\u2500\u2500 */
+${getProgressNoteNormalizeJs()}
 (function() {
   const vscode = acquireVsCodeApi();
   const $ = (sel) => document.querySelector(sel);
@@ -7153,6 +7189,8 @@ ${getModelscopeHtml()}
   let agents = [];
   let currentSession = 'main';
   let agent = { id: 'main', name: 'Agent', emoji: '\u{1F916}' };
+  // Immutable anchor: configured Openclaw Agent ID (from init), never mutated by tab switches or agentSwitched
+  let configuredAgentId = 'main';
   let currentModel = '';
   let thinkingLevel = '';
   let verboseLevel = '';
@@ -7873,6 +7911,7 @@ if (resizeHandle) {
       case 'init':
         connected = msg.connected;
         agent = msg.agent || agent;
+        configuredAgentId = (msg.agent && msg.agent.id) || 'main';
         currentModel = msg.model || '';
         thinkingLevel = msg.thinkingLevel || '';
         verboseLevel = msg.verboseLevel || '';
@@ -8668,17 +8707,12 @@ if (resizeHandle) {
     if (!sessionKey) sessionKey = 'default';
     if (!title) title = '\u9ED8\u8BA4';
     // \u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u5C06 agent:<id>:main \u89E3\u6790\u4E3A 'main' \u540E\u5197\u4F59\u63A8\u9001\uFF0C
-    // \u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab\uFF08main \u524D\u540E\u7AEF\u8BED\u4E49\uFF09\uFF0C\u907F\u514D\u70B9\u51FB agent \u6309\u94AE\u65F6\u591A\u51FA\u591A\u4F59 main tab
-    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
+    // \u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab\uFF08main \u524D\u540E\u7AEF\u8BED\u4E49\uFF09\uFF0C\u907F\u514D\u70B9\u51FB agent \u6309\u94AE\u65F6\u591A\u51FA\u591A\u4F59 main tab\u3002
+    // \u951A\u70B9\u7528 configuredAgentId\uFF08\u914D\u7F6E\u7684 Openclaw Agent ID\uFF09\uFF0C\u4E0D\u53EF\u7528\u53EF\u53D8\u7684 agent.id\u2014\u2014\u540E\u8005\u4F1A\u88AB switchToTab/agentSwitched \u6539\u5199\uFF0C\u5BFC\u81F4 designer \u8FDB\u5EA6\u8BEF\u5165\u300C\u9ED8\u8BA4\u300Dtab
+    if (shouldNormalizeProgressNoteKey(sessionKey, configuredAgentId)) {
       sessionKey = 'default';
       title = '\u9ED8\u8BA4';
-      agentId = agent.id;
-    }
-    // \u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u5C06 agent:<id>:main \u89E3\u6790\u4E3A 'main' \u540E\u5197\u4F59\u63A8\u9001\uFF0C\u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab
-    if (sessionKey === 'main') {
-      sessionKey = 'default';
-      title = '\u9ED8\u8BA4';
-      agentId = (agent && agent.id) || 'main';
+      agentId = configuredAgentId;
     }
     // \u53BB\u91CD\uFF1A\u4EC5\u5F53\u300C\u72B6\u6001\u8BB0\u5F55\u5B58\u5728 \u4E14 DOM \u6309\u94AE\u5DF2\u5B58\u5728\u300D\u624D\u63D0\u524D\u8FD4\u56DE\uFF1B
     // \u82E5\u72B6\u6001\u6709\u8BB0\u5F55\u4F46 DOM \u7F3A\u5931\uFF08\u5982\u542F\u52A8\u65F6 progressNoteTabs \u9884\u7F6E 'default' \u800C\u6309\u94AE\u672A\u5EFA\uFF09\uFF0C
@@ -8732,10 +8766,8 @@ if (resizeHandle) {
   }
 
   function removeProgressNoteTab(sessionKey) {
-    // \u4E0E addProgressNoteTab \u5BF9\u79F0\u7684\u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u53EF\u80FD\u63A8\u9001 agent.id \u6216 agent:<id>:main\uFF0C\u7EDF\u4E00\u6620\u5C04\u56DE default
-    if (sessionKey === agent.id || sessionKey.startsWith('agent:' + agent.id + ':')) {
-      sessionKey = 'default';
-    }
+    // \u4E0E addProgressNoteTab \u5BF9\u79F0\u7684\u5F52\u4E00\u5316\uFF1A\u540E\u7AEF resolveSession \u53EF\u80FD\u63A8\u9001 configuredAgentId \u6216 agent:<id>:main\uFF0C\u7EDF\u4E00\u6620\u5C04\u56DE default\uFF08\u951A\u70B9\u7528\u4E0D\u53EF\u53D8\u7684 configuredAgentId\uFF09
+    sessionKey = normalizeProgressNoteSessionKey(sessionKey, configuredAgentId);
     if (sessionKey === 'default') return;
     if (!progressNoteTabs[sessionKey]) return;
     delete progressNoteTabs[sessionKey];
@@ -8797,11 +8829,37 @@ if (resizeHandle) {
 
   function renderProgressCard(msg) {
     const data = msg.data;
-    const sessionKey = msg.sessionKey || 'default';
+    let sessionKey = msg.sessionKey || 'default';
+    // \u4E0E addProgressNoteTab \u5BF9\u79F0\u7684\u5F52\u4E00\u5316\uFF1Amain \u4F1A\u8BDD\uFF08'main' / configuredAgentId / agent:<configuredAgentId>:main / agent:<configuredAgentId>:*\uFF09\u7EDF\u4E00\u6620\u5C04\u56DE\u300C\u9ED8\u8BA4\u300Dtab
+    // \u951A\u70B9\u7528 configuredAgentId\uFF08\u4E0D\u53EF\u53D8\uFF09\uFF0C\u4E0D\u7528\u4F1A\u968F\u5207 tab \u6539\u5199\u7684 agent.id\u2014\u2014\u5426\u5219 designer \u8FDB\u5EA6\u4F1A\u88AB\u8BEF\u6620\u5C04\u8FDB\u300C\u9ED8\u8BA4\u300Dtab
+    sessionKey = normalizeProgressNoteSessionKey(sessionKey, configuredAgentId);
     let noteContent = getProgressNoteContent(sessionKey);
     // \u82E5\u8BE5 sessionKey \u7684 tab \u8FD8\u4E0D\u5B58\u5728\uFF0C\u5148\u521B\u5EFA\u5360\u4F4D tab
     if (!noteContent) {
-      addProgressNoteTab(sessionKey, sessionKey);
+      // \u63A8\u5BFC\u53CB\u597D\u6807\u9898\uFF1A\u4F18\u5148\u4ECE progressNoteTabAgents / agents \u5217\u8868\u53D6\u540D\u79F0\uFF1B\u82E5\u65E0\u5219\u7528 sessionKey \u89E3\u6790
+      let friendlyTitle = sessionKey;
+      if (sessionKey === 'default' || sessionKey === 'main') {
+        friendlyTitle = '\u9ED8\u8BA4';
+      } else {
+        const m = sessionKey.match(/^agent:([^:]+):/);
+        if (m) {
+          const agentId = m[1];
+          const ag = agents.find(a => a.id === agentId);
+          if (ag) {
+            friendlyTitle = (ag.name && ag.name !== ag.id) ? ag.name : ag.id;
+          } else {
+            const knownAgentId = progressNoteTabAgents[sessionKey];
+            if (knownAgentId && knownAgentId !== 'main') {
+              const knownAg = agents.find(a => a.id === knownAgentId);
+              if (knownAg) friendlyTitle = (knownAg.name && knownAg.name !== knownAg.id) ? knownAg.name : knownAg.id;
+              else friendlyTitle = knownAgentId;
+            } else {
+              friendlyTitle = agentId;
+            }
+          }
+        }
+      }
+      addProgressNoteTab(sessionKey, friendlyTitle);
       // \u91CD\u65B0\u83B7\u53D6\uFF08addProgressNoteTab \u5DF2\u521B\u5EFA content div\uFF0C\u8FD9\u91CC\u91CD\u65B0\u53D6\u4E00\u6B21\u5E76\u590D\u7528\uFF09
       noteContent = getProgressNoteContent(sessionKey);
       if (!noteContent) return; // \u4ECD\u4E0D\u5B58\u5728\u5219\u653E\u5F03
@@ -9685,10 +9743,9 @@ if (resizeHandle) {
       btn.appendChild(emoji);
       btn.appendChild(name);
       btn.addEventListener('click', () => {
-        // \u70B9\u51FB agent \u6309\u94AE\u65F6\uFF1A\u521B\u5EFA/\u590D\u7528\u5BF9\u5E94\u8FDB\u5EA6\u5907\u6CE8 tab\uFF08main \u2192 'default'\uFF1B\u5176\u4F59 \u2192 'agent:<id>:main'\uFF09
+        // \u70B9\u51FB agent \u6309\u94AE\u65F6\uFF1A\u521B\u5EFA/\u590D\u7528\u5BF9\u5E94\u8FDB\u5EA6\u5907\u6CE8 tab\uFF08configuredAgentId \u2192 'default'\uFF1B\u5176\u4F59 \u2192 'agent:<id>:main'\uFF09
         // addProgressNoteTab \u5185\u7F6E\u53BB\u91CD\u4FDD\u62A4\uFF0C\u5DF2\u5B58\u5728\u5219\u76F4\u63A5\u590D\u7528\uFF1BnoSwitch \u7F3A\u7701\uFF08false\uFF09\u4F1A\u5728\u65B0\u5EFA\u540E\u5207\u6362\u5230\u8BE5 tab
-        const noteKey = (a.id === 'main') ? 'default' : 'agent:' + a.id + ':main';
-        const noteTitle = (a.id === 'main') ? '\u9ED8\u8BA4' : ((a.name && a.name !== a.id) ? a.name : a.id);
+        const { noteKey, noteTitle } = resolveProgressNoteTabForAgent(a.id, a.name, configuredAgentId);
         addProgressNoteTab(noteKey, noteTitle, a.id);
         // Find existing tab for this agent or create new one
         let tab = tabs.find(t => t.agentId === a.id);
@@ -10377,7 +10434,7 @@ if (resizeHandle) {
     //           \u5176\u4F59\u76F4\u63A5\u7528 tab.sessionKey\uFF08\u5982 'agent:designinclusive:main' \u2194 \u540C\u540D\u8FDB\u5EA6\u5907\u6CE8 tab\uFF09
     if (closedTab && closedTab.sessionKey) {
       // sessionKey \u7EDF\u4E00\u4E3A\u5B8C\u6574 gwKey\uFF08agent:<id>:main\uFF09\uFF1Bmain \u4F1A\u8BDD\u7684 chat tab sessionKey \u53EF\u80FD\u662F 'main'\uFF08\u65E7\uFF09\u6216\u5B8C\u6574 gwKey\uFF08\u65B0\uFF09\uFF0C\u5F52\u4E00\u5316\u5230 default
-      const noteKey = (closedTab.sessionKey === 'main' || closedTab.sessionKey === agent.id || closedTab.sessionKey === ('agent:' + agent.id + ':main')) ? 'default' : closedTab.sessionKey;
+      const noteKey = isChatTabMainNoteKey(closedTab.sessionKey, configuredAgentId) ? 'default' : closedTab.sessionKey;
       removeProgressNoteTab(noteKey);
     }
     if (activeTabId === tabId) {
@@ -12151,10 +12208,10 @@ async function activate(context) {
           const card = result?.card;
           if (card) {
             outputChannel.appendLine(`progressCard.get: got card (revision=${card.revision}, markdown=${(card.markdown || "").substring(0, 80)}...)`);
-            chatView.handleProgressCardUpdate(card);
+            chatView.handleProgressCardUpdate(card, changedSessionKey);
           } else {
             outputChannel.appendLine("progressCard.get: card is null (cleared)");
-            chatView.handleProgressCardUpdate(null);
+            chatView.handleProgressCardUpdate(null, changedSessionKey);
           }
         } catch (err) {
           outputChannel.appendLine(`progressCard.get failed: ${err.message}`);

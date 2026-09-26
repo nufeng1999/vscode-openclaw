@@ -240,10 +240,10 @@ export async function activate(context: vscode.ExtensionContext) {
           const card = result?.card;
           if (card) {
             outputChannel.appendLine(`progressCard.get: got card (revision=${card.revision}, markdown=${(card.markdown || '').substring(0, 80)}...)`);
-            chatView.handleProgressCardUpdate(card);
+            chatView.handleProgressCardUpdate(card, changedSessionKey);
           } else {
             outputChannel.appendLine('progressCard.get: card is null (cleared)');
-            chatView.handleProgressCardUpdate(null);
+            chatView.handleProgressCardUpdate(null, changedSessionKey);
           }
         } catch (err: any) {
           outputChannel.appendLine(`progressCard.get failed: ${err.message}`);

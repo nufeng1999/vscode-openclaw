@@ -227,7 +227,9 @@
 	},
 	"scripts": {
 		"build": "node esbuild.mjs",
-		"watch": "node esbuild.mjs --watch"
+		"watch": "node esbuild.mjs --watch",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"devDependencies": {
 		"@types/adm-zip": "^0.5.8",
@@ -235,7 +237,8 @@
 		"@types/vscode": "^1.80.0",
 		"@types/ws": "^8.5.10",
 		"esbuild": "^0.20.2",
-		"typescript": "^5.3.0"
+		"typescript": "^5.3.0",
+		"vitest": "^2.1.9"
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.15",
