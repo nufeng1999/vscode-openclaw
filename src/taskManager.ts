@@ -5,6 +5,9 @@ import { OpenClawGateway } from './gateway';
  * 任务管理相关方法
  * 设计模式与 agentTree.ts 一致：以 chatView 实例为第一个参数导出独立函数
  * ChatViewLike 为结构化类型（鸭子类型），避免在 taskManager.ts 中引入循环依赖
+ *
+ * 注意：Gateway WS 协议中不存在 tasks.list 方法，实际使用 sessions.list（activeOnly:true）获取运行中的会话。
+ * tasksList webview 消息类型保留不变，仅内部请求方法名调整。
  */
 export interface ChatViewLike {
   gateway: OpenClawGateway;
@@ -22,21 +25,47 @@ export interface ChatViewLike {
 export async function handleRequestTasks(cv: ChatViewLike) {
   cv.log(`handleRequestTasks called`);
   try {
-    // 获取所有任务（包括运行中、已完成、失败等）
-    const res = await cv.gateway.request("tasks.list", {
+    // Gateway WS 协议无 tasks.list；改用 sessions.list(activeOnly:true) 获取当前运行的会话/任务
+    const res = await cv.gateway.request("sessions.list", {
+      activeOnly: true,
       limit: 200
     });
-    const allTasks = res?.tasks || [];
-    // 只保留运行中状态的任务
-    const runningTasks = allTasks.filter((t: any) => t.status === 'running');
+    const sessions: any[] = res?.sessions || [];
+    // 只保留运行中状态的任务（status === 'running'）
+    const runningTasks = sessions.filter((s: any) => s.status === 'running');
+    // 将会话映射为渲染期望的任务行格式
+    const tasks = runningTasks.map(session => ({
+      // 标题：优先使用 displayName，然后是 label，然后是 device-info 中的 device-name，最后使用 key
+      label: session.displayName || session.label || session['device-info']?.['device-name'] || session.key || '',
+      // 任务描述：与标题相同或可从其他字段推导
+      task: session.displayName || session.label || session['device-info']?.['device-name'] || session.key || '',
+      // 来源ID：用于显示名称的后备选项
+      sourceId: session.key || '',
+      // 任务ID：用于取消按钮和显示
+      id: session.sessionId || session.id || session.key || '',
+      taskId: session.sessionId || session.id || session.key || '',
+      // 运行状态
+      status: session.status,
+      // 运行类型
+      runtime: session.runtime || session.mode || '',
+      // 智能体ID
+      agentId: session.agentId,
+      // 时间戳
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      endedAt: session.endedAt,
+      // 摘要字段（如果可用）
+      terminalSummary: session.terminalSummary,
+      progressSummary: session.progressSummary
+    }));
     // 按创建/更新时间倒序排序
-    const sortedTasks = [...runningTasks]
+    const sortedTasks = [...tasks]
       .sort((a: any, b: any) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0))
       .slice(0, 200);
-    cv.log(`tasks.list: ${sortedTasks.length} 条 (运行中)`);
+    cv.log(`sessions.list: ${sortedTasks.length} 条 (运行中)`);
     cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
   } catch (err: any) {
-    cv.log(`tasks.list error: ${err.message}`);
+    cv.log(`sessions.list error: ${err.message}`);
     cv.postToWebview({ type: "tasksList", tasks: [] });
   }
 }
@@ -48,6 +77,7 @@ export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) 
     const res = await cv.gateway.request("tasks.cancel", {
       taskId: taskId
     });
+    // Gateway WS 协议目前无 tasks.cancel；此处先保留原有逻辑，日志标记待确认
     cv.log(`tasks.cancel result: ${JSON.stringify(res)}`);
     // 成功取消后向webview回传结果
     cv.postToWebview({ type: "requestCancelTaskResult", ok: true, taskId, message: "Task cancelled" });
@@ -55,7 +85,7 @@ export async function handleRequestCancelTask(cv: ChatViewLike, taskId: string) 
     await handleRequestTasks(cv);
     return res;
   } catch (err: any) {
-    cv.log(`tasks.cancel error: ${err.message}`);
+    cv.log(`tasks.cancel error (method may be unimplemented in gateway): ${err.message}`);
     // 失败时向webview回传结果
     cv.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId, message: `Cancel failed: ${err.message}` });
     // 不再抛出错误，避免未捕获的promise rejection

@@ -1196,16 +1196,41 @@
   async function handleRequestTasks(cv) {
     cv.log(`handleRequestTasks called`);
     try {
-      const res = await cv.gateway.request("tasks.list", {
+      const res = await cv.gateway.request("sessions.list", {
+        activeOnly: true,
         limit: 200
       });
-      const allTasks = res?.tasks || [];
-      const runningTasks = allTasks.filter((t) => t.status === "running");
-      const sortedTasks = [...runningTasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 200);
-      cv.log(`tasks.list: ${sortedTasks.length} \u6761 (\u8FD0\u884C\u4E2D)`);
+      const sessions = res?.sessions || [];
+      const runningTasks = sessions.filter((s) => s.status === "running");
+      const tasks = runningTasks.map((session) => ({
+        // 标题：优先使用 displayName，然后是 label，然后是 device-info 中的 device-name，最后使用 key
+        label: session.displayName || session.label || session["device-info"]?.["device-name"] || session.key || "",
+        // 任务描述：与标题相同或可从其他字段推导
+        task: session.displayName || session.label || session["device-info"]?.["device-name"] || session.key || "",
+        // 来源ID：用于显示名称的后备选项
+        sourceId: session.key || "",
+        // 任务ID：用于取消按钮和显示
+        id: session.sessionId || session.id || session.key || "",
+        taskId: session.sessionId || session.id || session.key || "",
+        // 运行状态
+        status: session.status,
+        // 运行类型
+        runtime: session.runtime || session.mode || "",
+        // 智能体ID
+        agentId: session.agentId,
+        // 时间戳
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        endedAt: session.endedAt,
+        // 摘要字段（如果可用）
+        terminalSummary: session.terminalSummary,
+        progressSummary: session.progressSummary
+      }));
+      const sortedTasks = [...tasks].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).slice(0, 200);
+      cv.log(`sessions.list: ${sortedTasks.length} \u6761 (\u8FD0\u884C\u4E2D)`);
       cv.postToWebview({ type: "tasksList", tasks: sortedTasks });
     } catch (err) {
-      cv.log(`tasks.list error: ${err.message}`);
+      cv.log(`sessions.list error: ${err.message}`);
       cv.postToWebview({ type: "tasksList", tasks: [] });
     }
   }
@@ -1220,7 +1245,7 @@
       await handleRequestTasks(cv);
       return res;
     } catch (err) {
-      cv.log(`tasks.cancel error: ${err.message}`);
+      cv.log(`tasks.cancel error (method may be unimplemented in gateway): ${err.message}`);
       cv.postToWebview({ type: "requestCancelTaskResult", ok: false, taskId, message: `Cancel failed: ${err.message}` });
       return;
     }
