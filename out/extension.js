@@ -2043,8 +2043,8 @@ var require_adm_zip = __commonJS({
         return null;
       }
       function fixPath(zipPath) {
-        const { join: join5, normalize, sep: sep2 } = pth.posix;
-        return join5(pth.isAbsolute(zipPath) ? "/" : ".", normalize(sep2 + zipPath.split("\\").join(sep2) + sep2));
+        const { join: join6, normalize, sep: sep2 } = pth.posix;
+        return join6(pth.isAbsolute(zipPath) ? "/" : ".", normalize(sep2 + zipPath.split("\\").join(sep2) + sep2));
       }
       function filenameFilter(filterfn) {
         if (filterfn instanceof RegExp) {
@@ -3802,6 +3802,7 @@ function base64UrlDecode(str) {
 // src/chatView.ts
 var vscode4 = __toESM(require("vscode"));
 var fs3 = __toESM(require("fs"));
+var os3 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
 
 // src/utils.ts
@@ -4549,8 +4550,8 @@ async function handleWebviewMessage(msg, ctx, webviewView) {
       if (dataUrl && typeof dataUrl === "string") {
         try {
           const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
-          const os4 = require("os");
-          const tmpB64 = path3.join(os4.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
+          const os5 = require("os");
+          const tmpB64 = path3.join(os5.tmpdir(), "openclaw-clip-" + Date.now() + ".b64");
           fs2.writeFileSync(tmpB64, base64Data, "utf8");
           const psScript = "$b64 = [IO.File]::ReadAllText('" + tmpB64 + "').Trim(); Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $bytes = [Convert]::FromBase64String($b64); $ms = New-Object System.IO.MemoryStream(,$bytes); $img = [System.Drawing.Image]::FromStream($ms); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose(); $ms.Dispose(); Write-Output 'CLIP_SET_OK';";
           const encoded = Buffer.from(psScript, "utf16le").toString("base64");
@@ -10692,6 +10693,40 @@ var OpenClawChatView = class _OpenClawChatView {
    * @param card 进度卡片对象，null 表示清除
    * @param sessionKey 会话密钥，用于路由到正确的 tab
    */
+  /**
+   * 将进度卡片数据转为 HTML 内容（用于 progressNoteContentUpdated）
+   */
+  buildProgressNoteHTML(card) {
+    const title = card.title || "";
+    const description = card.description || "";
+    const progress = card.progress || 0;
+    const status = card.status || "";
+    const steps = card.steps || card.plan || [];
+    let html = '<div class="progress-note">';
+    if (title)
+      html += `<h3>${this.escapeHtml(title)}</h3>`;
+    if (description)
+      html += `<p>${this.escapeHtml(description)}</p>`;
+    html += `<div class="progress-bar">${progress}%</div>`;
+    if (status)
+      html += `<div class="status">${this.escapeHtml(status)}</div>`;
+    if (steps && steps.length > 0) {
+      html += "<ul>";
+      for (const step of steps) {
+        const stepText = typeof step === "object" && step !== null ? step.step || JSON.stringify(step) : String(step);
+        html += `<li>${this.escapeHtml(stepText)}</li>`;
+      }
+      html += "</ul>";
+    }
+    html += "</div>";
+    return html;
+  }
+  /**
+   * 转义 HTML 特殊字符
+   */
+  escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
   handleProgressCardUpdate(card, sessionKey) {
     if (!this.view)
       return;
@@ -10712,8 +10747,19 @@ var OpenClawChatView = class _OpenClawChatView {
           revision: card.revision
         }
       });
+      const html = this.buildProgressNoteHTML(card);
+      this.postToWebview({
+        type: "progressNoteContentUpdated",
+        sessionKey: targetSessionKey,
+        html
+      });
     } else {
       this.postToWebview({ type: "progressCard", sessionKey: targetSessionKey, data: null });
+      this.postToWebview({
+        type: "progressNoteContentUpdated",
+        sessionKey: targetSessionKey,
+        html: '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">\u8FDB\u5EA6\u5907\u6CE8\u5C06\u663E\u793A\u5728\u6B64\u5904</div>'
+      });
     }
   }
   // Match Obsidian plugin's handleChatEvent
@@ -10941,10 +10987,15 @@ var OpenClawChatView = class _OpenClawChatView {
         }
         return tag2;
       }
-      const normalizedPath = mediaPath.replace(/\\/g, "/");
+      let filePath = mediaPath;
+      if (mediaPath.startsWith("__openclaw__/media/")) {
+        const relativePath = mediaPath.substring("__openclaw__/".length);
+        filePath = path4.join(os3.homedir(), ".openclaw", relativePath);
+      }
+      const normalizedPath = filePath.replace(/\\/g, "/");
       let buffer;
       try {
-        buffer = fs3.readFileSync(mediaPath);
+        buffer = fs3.readFileSync(filePath);
       } catch {
         try {
           buffer = fs3.readFileSync(normalizedPath);
@@ -10952,7 +11003,7 @@ var OpenClawChatView = class _OpenClawChatView {
           return null;
         }
       }
-      const ext = path4.extname(mediaPath).toLowerCase();
+      const ext = path4.extname(filePath).toLowerCase();
       const mediaInfo = getMediaInfo(ext);
       let mimeType = mediaInfo.mimeType;
       let tag = mediaInfo.tag;
@@ -12025,7 +12076,7 @@ var OpenClawChatView = class _OpenClawChatView {
 var https = __toESM(require("https"));
 var http = __toESM(require("http"));
 var fs4 = __toESM(require("fs"));
-var os3 = __toESM(require("os"));
+var os4 = __toESM(require("os"));
 var path5 = __toESM(require("path"));
 var import_adm_zip = __toESM(require_adm_zip());
 var gateway;
@@ -12316,7 +12367,7 @@ async function _handleDownloadModelscopeAgent(ctx, agentId, destType) {
       /* overwrite */
     );
     ctx.log(`[MS-Download] Extraction complete to: ${agentTargetDir}`);
-    const relativePath = path5.relative(os3.homedir(), agentTargetDir);
+    const relativePath = path5.relative(os4.homedir(), agentTargetDir);
     const displayPath = relativePath.startsWith("..") ? agentTargetDir : `~/${relativePath}`;
     ctx.log(`[MS-Download] Successfully downloaded to: ${displayPath}`);
     ctx.postToWebview({

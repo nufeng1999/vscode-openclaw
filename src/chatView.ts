@@ -226,6 +226,46 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
    * @param card 进度卡片对象，null 表示清除
    * @param sessionKey 会话密钥，用于路由到正确的 tab
    */
+  /**
+   * 将进度卡片数据转为 HTML 内容（用于 progressNoteContentUpdated）
+   */
+  private buildProgressNoteHTML(card: any): string {
+    const title = card.title || '';
+    const description = card.description || '';
+    const progress = card.progress || 0;
+    const status = card.status || '';
+    const steps = card.steps || card.plan || [];
+
+    let html = '<div class="progress-note">';
+    if (title) html += `<h3>${this.escapeHtml(title)}</h3>`;
+    if (description) html += `<p>${this.escapeHtml(description)}</p>`;
+    html += `<div class="progress-bar">${progress}%</div>`;
+    if (status) html += `<div class="status">${this.escapeHtml(status)}</div>`;
+
+    if (steps && steps.length > 0) {
+      html += '<ul>';
+      for (const step of steps) {
+        const stepText = (typeof step === 'object' && step !== null) ? (step.step || JSON.stringify(step)) : String(step);
+        html += `<li>${this.escapeHtml(stepText)}</li>`;
+      }
+      html += '</ul>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  /**
+   * 转义 HTML 特殊字符
+   */
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   public handleProgressCardUpdate(card: any, sessionKey?: string) {
     if (!this.view) return;
     // 优先使用调用方传入的 sessionKey，其次看 card 自身是否携带，最后回退到当前会话
@@ -246,9 +286,22 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
           revision: card.revision
         }
       });
+      // 同时发送 progressNoteContentUpdated，更新进度备注 tab 的内容
+      const html = this.buildProgressNoteHTML(card);
+      this.postToWebview({
+        type: 'progressNoteContentUpdated',
+        sessionKey: targetSessionKey,
+        html
+      });
     } else {
       // 清除进度卡片
       this.postToWebview({ type: 'progressCard', sessionKey: targetSessionKey, data: null });
+      // 清空进度备注内容
+      this.postToWebview({
+        type: 'progressNoteContentUpdated',
+        sessionKey: targetSessionKey,
+        html: '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px 10px;">进度备注将显示在此处</div>'
+      });
     }
   }
 
@@ -517,14 +570,22 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
         return tag;
       }
 
+      // 支持 __openclaw__/media/... 路径格式（OpenClaw 网关媒体路径）
+      let filePath = mediaPath;
+      if (mediaPath.startsWith("__openclaw__/media/")) {
+        // 将 __openclaw__/media/... 转换为用户主目录下的 .openclaw/media/...
+        const relativePath = mediaPath.substring("__openclaw__/".length); // media/...
+        filePath = path.join(os.homedir(), ".openclaw", relativePath);
+      }
+
       // 否则处理本地文件（现有 base64 逻辑）
       // Normalize path: handle both forward and backward slashes
-      const normalizedPath = mediaPath.replace(/\\/g, "/");
+      const normalizedPath = filePath.replace(/\\/g, "/");
       
       // Try to read file as buffer
       let buffer: Buffer;
       try {
-        buffer = fs.readFileSync(mediaPath);
+        buffer = fs.readFileSync(filePath);
       } catch {
         // Try with forward slashes
         try {
@@ -536,7 +597,7 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
       }
       
       // Detect MIME type from extension
-      const ext = path.extname(mediaPath).toLowerCase();
+      const ext = path.extname(filePath).toLowerCase();
       const mediaInfo = getMediaInfo(ext);
       let mimeType = mediaInfo.mimeType;
       let tag = mediaInfo.tag;
