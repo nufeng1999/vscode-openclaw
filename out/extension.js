@@ -9047,8 +9047,17 @@ if (resizeHandle) {
     div.className = 'msg msg-' + msg.role;
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
-    if (msg.role === 'assistant' && typeof marked !== 'undefined') {
-      bubble.innerHTML = marked.parse(msg.text);
+    if (msg.role === 'assistant') {
+      // \u68C0\u67E5\u6D88\u606F\u4E2D\u662F\u5426\u5305\u542B\u5A92\u4F53\u6807\u7B7E\uFF08\u6765\u81EAconvertMediaToMarkdown\u7684\u8F93\u51FA\uFF09
+      // \u5982\u679C\u5305\u542B\u5A92\u4F53\u6807\u7B7E\uFF0C\u76F4\u63A5\u4F7F\u7528innerHTML\uFF0C\u907F\u514Dmarked.parse\u5904\u7406HTML
+      if (msg.text.includes('<img') || msg.text.includes('<audio') || msg.text.includes('<video')) {
+        bubble.innerHTML = msg.text;
+      } else if (typeof marked !== 'undefined') {
+        // \u5426\u5219\uFF0C\u4F7F\u7528marked.parse\u5904\u7406markdown
+        bubble.innerHTML = marked.parse(msg.text);
+      } else {
+        bubble.textContent = msg.text;
+      }
     } else {
       bubble.textContent = msg.text;
     }
@@ -10979,10 +10988,16 @@ var OpenClawChatView = class _OpenClawChatView {
     try {
       if (!mediaPath)
         return null;
-      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
-        const tag2 = await this.buildRemoteMediaTag(mediaPath);
+      let cleanUrl;
+      if (mediaPath.startsWith("blob:")) {
+        cleanUrl = mediaPath.substring(5);
+      } else {
+        cleanUrl = mediaPath;
+      }
+      if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://") || cleanUrl.startsWith("/api/chat/media/")) {
+        const tag2 = await this.buildRemoteMediaTag(cleanUrl);
         if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
-          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
+          const absoluteUrl = cleanUrl.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(cleanUrl) : cleanUrl;
           return this.buildMediaTag(forcedTag, absoluteUrl);
         }
         return tag2;

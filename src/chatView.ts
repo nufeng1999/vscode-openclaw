@@ -559,12 +559,20 @@ export class OpenClawChatView implements vscode.WebviewViewProvider {
     try {
       if (!mediaPath) return null;
 
+      // ── blob: URL 支持：刷新对话后 webview 将图片转为 blob: URL，需剥除前缀后继续远程媒体处理 ──
+      let cleanUrl: string;
+      if (mediaPath.startsWith("blob:")) {
+        cleanUrl = mediaPath.substring(5); // 去掉 "blob:" 前缀，得到原始 http/https URL
+      } else {
+        cleanUrl = mediaPath;
+      }
+
       // ── 远程 URL 支持：http://、https:// 或网关媒体相对路径 /api/chat/media/ ──
-      if (mediaPath.startsWith("http://") || mediaPath.startsWith("https://") || mediaPath.startsWith("/api/chat/media/")) {
-        const tag = await this.buildRemoteMediaTag(mediaPath);
+      if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://") || cleanUrl.startsWith("/api/chat/media/")) {
+        const tag = await this.buildRemoteMediaTag(cleanUrl);
         // forcedTag 优先（如 MEDIA:audio: 前缀强制音频），相对路径同样转绝对 HTTP URL
         if (forcedTag && (forcedTag === "audio" || forcedTag === "video")) {
-          const absoluteUrl = mediaPath.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(mediaPath) : mediaPath;
+          const absoluteUrl = cleanUrl.startsWith("/api/chat/media/") ? await this.toAbsoluteMediaUrl(cleanUrl) : cleanUrl;
           return this.buildMediaTag(forcedTag, absoluteUrl);
         }
         return tag;

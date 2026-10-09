@@ -3128,8 +3128,17 @@ if (resizeHandle) {
     div.className = 'msg msg-' + msg.role;
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
-    if (msg.role === 'assistant' && typeof marked !== 'undefined') {
-      bubble.innerHTML = marked.parse(msg.text);
+    if (msg.role === 'assistant') {
+      // 检查消息中是否包含媒体标签（来自convertMediaToMarkdown的输出）
+      // 如果包含媒体标签，直接使用innerHTML，避免marked.parse处理HTML
+      if (msg.text.includes('<img') || msg.text.includes('<audio') || msg.text.includes('<video')) {
+        bubble.innerHTML = msg.text;
+      } else if (typeof marked !== 'undefined') {
+        // 否则，使用marked.parse处理markdown
+        bubble.innerHTML = marked.parse(msg.text);
+      } else {
+        bubble.textContent = msg.text;
+      }
     } else {
       bubble.textContent = msg.text;
     }
